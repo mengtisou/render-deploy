@@ -143,7 +143,8 @@ ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
 ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (BTrader Concept 2.0): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
 ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (BTrader Concept 2.0): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (BTrader Concept 2.0): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
-ob2Bars = input.int(1, "Candles counted for buy / sell activity", minval=1, maxval=10, group=grpO2, tooltip="Volume = only the 1-minute candles of these 5-minute candles that traded INSIDE the block (1 = the orderblock candle only).")
+ob2Vol  = input.string("Whole leg (swing → break)", "Volume interval", options=["Whole leg (swing → break)", "Orderblock candle + next"], group=grpO2, tooltip="Whole leg (BTrader Concept 2.0 / LuxAlgo 'volume accumulated within the interval used to construct the order block'): every 1-minute candle from the swing that started the leg up to the candle that broke structure, counted only where it traded INSIDE the block. Orderblock candle + next: only the orderblock candle and the number of candles below.")
+ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 
@@ -1340,7 +1341,7 @@ if fvgMode and blocks.size() > 0
 // ORDERBLOCK 2.0 (volumetric, like BTrader Concept 2.0)
 //   structure break of its own swings (internal 5 / swing 50) → the extreme candle of the leg
 //   (lowest low for bullish, highest high for bearish) = the block, full candle ("precise")
-//   buy / sell activity = that candle + the next ones
+//   volume + buy / sell activity = the 1-minute candles of the whole leg (swing → break) that traded inside the block
 // ════════════════════════════════════════════════════════════════════
 int ob2Len = ob2Src == "Internal" ? ob2Int : ob2Sw
 ph2 = ta.pivothigh(high, ob2Len, ob2Len)
@@ -1403,7 +1404,9 @@ f_ob2(int dir, int fromBar, int id) =>
         // internal buy / sell activity: the 1-minute candles that traded inside the block
         float bv = 0.0
         float sv = 0.0
-        for k = best to math.max(best - ob2Bars + 1, 0)
+        int kFrom = ob2Vol == "Orderblock candle + next" ? best : span
+        int kTo   = ob2Vol == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : 0
+        for k = kFrom to kTo
             [zb, zs] = f_ibInside(k, zTop, zBot)
             bv += zb
             sv += zs
