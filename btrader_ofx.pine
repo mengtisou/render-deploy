@@ -177,6 +177,8 @@ inspectOn = input.bool(false, "Inspect a candle (show every value)", group=grpI,
 inspectT  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "Candle time", group=grpI)
 
 grpT = "⑪ Structure"
+cdStyle   = input.bool(true, "Reference style: CDL / CDS breaks with ★ grade", group=grpT, tooltip="Like Sn1P3r: a bullish change of direction prints 'CDL 1-3★', a bearish one 'CDS 1-3★'. ★ grade: +1 if the break candle is a strong body (≥ 60% of its range), +1 if its volume is above its 20-bar average.")
+showProt  = input.bool(true, "Show protected levels (CDL SL / CDS SH)", group=grpT, tooltip="After a CDL, the low that started the move is protected (CDL SL). After a CDS, the high is protected (CDS SH). Removed when price closes through it.")
 showChoch = input.bool(true, "Show CHoCH", group=grpT)
 showBos   = input.bool(false, "Show BOS", group=grpT)
 cChBull   = input.color(#089981, "Bullish CHoCH / BOS", group=grpT)
@@ -1028,7 +1030,7 @@ f_trimSide(int kind) =>
 if blocks.size() > 0
     for i = blocks.size() - 1 to 0
         Block b = blocks.get(i)
-        bool broken = fvgMode ? (b.born < bar_index and (b.kind == 1 ? low <= b.bot : high >= b.top)) : (b.kind == 1 ? close < b.bot : close > b.top)
+        bool broken = b.kind == 1 ? close < b.bot : close > b.top
         if broken
             f_deleteBlock(b)
             blocks.remove(i)
@@ -1055,21 +1057,89 @@ bool bullBreak = not shUsed and not na(shPrice) and close > shPrice
 bool bearBreak = not slUsed and not na(slPrice) and close < slPrice
 
 // CHoCH = first break against the current trend · BOS = break with the trend
+// reference names: CDL = change of direction long (bullish CHoCH), CDS = change of direction short
 var int trendDir = 0
+float volMa20 = ta.sma(volume, 20)
+f_grade() =>
+    int g = 1
+    if barRange > 0 and math.abs(close - open) / barRange >= 0.6
+        g += 1
+    if volume > nz(volMa20[1])
+        g += 1
+    g
+
+// protected level: a thin band + text, extended right until price closes through it
+type ProtLvl
+    box   bx
+    float px
+    int   dir
+
+var ProtLvl protL = na
+var ProtLvl protH = na
+
+f_newProt(int x1, float px, int dir, string txt, color col) =>
+    float h = nz(atr14) * 0.12
+    box b = box.new(x1, dir == 1 ? px + h : px, bar_index + 10, dir == 1 ? px : px - h, border_color=color.new(col, 100), bgcolor=color.new(col, 70), text=txt, text_color=col, text_size=size.tiny, text_halign=text.align_right, text_valign=dir == 1 ? text.align_top : text.align_bottom)
+    ProtLvl.new(b, px, dir)
+
 if bullBreak
     shUsed := true
     bool isCh = trendDir == -1
-    if (isCh and showChoch) or (not isCh and trendDir == 1 and showBos)
+    if isCh and cdStyle
+        line.new(shBar, shPrice, bar_index, shPrice, color=cChBull, style=line.style_dashed, width=1)
+        label.new(int(math.round((shBar + bar_index) / 2.0)), shPrice, "CDL " + str.tostring(f_grade()) + "★", style=label.style_label_down, color=color.new(color.white, 100), textcolor=cChBull, size=size.tiny)
+    else if (isCh and showChoch) or (not isCh and trendDir == 1 and showBos)
         line.new(shBar, shPrice, bar_index, shPrice, color=cChBull, style=line.style_dashed, width=1)
         label.new(int(math.round((shBar + bar_index) / 2.0)), shPrice, isCh ? "CHoCH" : "BOS", style=label.style_label_down, color=color.new(color.white, 100), textcolor=cChBull, size=size.tiny)
+    if isCh and showProt
+        // the low of the move that broke structure is now protected
+        int   lb  = math.max(1, math.min(bar_index - shBar, 150))
+        float lo  = low
+        int   lox = bar_index
+        for k = 1 to lb
+            if low[k] < lo
+                lo  := low[k]
+                lox := bar_index - k
+        if not na(protL)
+            box.delete(protL.bx)
+        protL := f_newProt(lox, lo, 1, "CDL SL", cChBull)
     trendDir := 1
 if bearBreak
     slUsed := true
     bool isCh = trendDir == 1
-    if (isCh and showChoch) or (not isCh and trendDir == -1 and showBos)
+    if isCh and cdStyle
+        line.new(slBar, slPrice, bar_index, slPrice, color=cChBear, style=line.style_dashed, width=1)
+        label.new(int(math.round((slBar + bar_index) / 2.0)), slPrice, "CDS " + str.tostring(f_grade()) + "★", style=label.style_label_up, color=color.new(color.white, 100), textcolor=cChBear, size=size.tiny)
+    else if (isCh and showChoch) or (not isCh and trendDir == -1 and showBos)
         line.new(slBar, slPrice, bar_index, slPrice, color=cChBear, style=line.style_dashed, width=1)
         label.new(int(math.round((slBar + bar_index) / 2.0)), slPrice, isCh ? "CHoCH" : "BOS", style=label.style_label_up, color=color.new(color.white, 100), textcolor=cChBear, size=size.tiny)
+    if isCh and showProt
+        // the high of the move that broke structure is now protected
+        int   lb  = math.max(1, math.min(bar_index - slBar, 150))
+        float hi  = high
+        int   hix = bar_index
+        for k = 1 to lb
+            if high[k] > hi
+                hi  := high[k]
+                hix := bar_index - k
+        if not na(protH)
+            box.delete(protH.bx)
+        protH := f_newProt(hix, hi, -1, "CDS SH", cChBear)
     trendDir := -1
+
+// keep protected levels alive until price closes through them
+if not na(protL)
+    if close < protL.px
+        box.delete(protL.bx)
+        protL := na
+    else
+        box.set_right(protL.bx, bar_index + 10)
+if not na(protH)
+    if close > protH.px
+        box.delete(protH.bx)
+        protH := na
+    else
+        box.set_right(protH.bx, bar_index + 10)
 
 // Bullish OB: close breaks above the last swing high → last down candle of the leg
 if showBlocks and not fvgMode and bullBreak
@@ -1142,7 +1212,7 @@ float fvgEma   = ta.ema(close, fvgEmaLen)
 f_fvgScore(int kind, float gap) =>
     float vr = nz(fvgVolMa[1]) > 0 ? volume[1] / fvgVolMa[1] : 1.0
     bool  tr = kind == 1 ? close > fvgEma : close < fvgEma
-    vr * (tr ? 1.5 : 1.0) * (1 + (nz(atr14) > 0 ? gap / atr14 : 0))
+    vr * (tr ? 1.5 : 1.0)
 
 if showBlocks and fvgMode and bar_index > 2
     float gMin = nz(atr14) * fvgMinAtr
