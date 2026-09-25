@@ -56,9 +56,9 @@ synMode    = input.string(SYN_BODY, "Synthetic method", options=[SYN_BODY, SYN_C
 
 grpA = "② Accelerator · Gate 3"
 rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
-rangeLen  = input.int(10, "Range average length", minval=2, maxval=40, group=grpA)
+rangeLen  = input.int(10, "Range average length", minval=2, maxval=50, group=grpA)
 deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
-lookback  = input.int(20, "Delta / volume average length", minval=2, maxval=40, group=grpA)
+lookback  = input.int(20, "Delta / volume average length", minval=2, maxval=50, group=grpA)
 trendFilter = input.string(TF_OFF, "Trend filter", options=[TF_OFF, TF_STRUCT, TF_EMA], group=grpA, tooltip="Structure: BuAx+ only while structure is bullish (or on the CHoCH candle itself), BeAx+ only while bearish. Removes counter-trend accelerators inside a move.")
 emaLen    = input.int(50, "EMA length (EMA filter)", minval=5, group=grpA)
 calib     = input.bool(false, "Calibration lines in tooltip", group=grpA, tooltip="Shows the range average and delta for several formulas, so you can match the reference indicator's numbers on the same candle.")
@@ -300,7 +300,7 @@ if ibHist.size() > 170
 //   Delta avg types: 0 SMA incl · 1 SMA prev · 2 same-side incl · 3 same-side prev
 //                    4 EMA incl · 5 EMA prev · 6 RMA incl
 // ════════════════════════════════════════════════════════════════════
-const int CAL_N = 40
+const int CAL_N = 50
 float trS      = na(close[1]) ? barRange : math.max(barRange, math.abs(high - close[1]), math.abs(low - close[1]))
 float deltaSrc = delta
 float dBody    = barRange > 0 ? volume * (close - open) / barRange : 0.0
@@ -1265,18 +1265,21 @@ calOn = input.bool(true, "Show auto-calibration result", group=grpC, tooltip="Ne
 r1On = input.bool(true, "Ref 1", inline="r1a", group=grpC)
 r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
 r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
+r1Rg = input.float(12.54, "Range", inline="r1b", group=grpC)
 r1R  = input.float(6.81, "Range avg", inline="r1b", group=grpC)
 r1D  = input.float(-4800, "Delta", inline="r1b", group=grpC)
 r1DA = input.float(3100, "Delta avg", inline="r1b", group=grpC)
 r2On = input.bool(true, "Ref 2", inline="r2a", group=grpC)
 r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
 r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
+r2Rg = input.float(14.5, "Range", inline="r2b", group=grpC)
 r2R  = input.float(8.75, "Range avg", inline="r2b", group=grpC)
 r2D  = input.float(2900, "Delta", inline="r2b", group=grpC)
 r2DA = input.float(1800, "Delta avg", inline="r2b", group=grpC)
 r3On = input.bool(true, "Ref 3", inline="r3a", group=grpC)
 r3T  = input.time(timestamp("25 Sep 2026 05:50 +0000"), "", inline="r3a", group=grpC)
 r3V  = input.int(3968, "Vol", inline="r3a", group=grpC)
+r3Rg = input.float(5.82, "Range", inline="r3b", group=grpC)
 r3R  = input.float(3.56, "Range avg", inline="r3b", group=grpC)
 r3D  = input.float(2800, "Delta", inline="r3b", group=grpC)
 r3DA = input.float(1115, "Delta avg", inline="r3b", group=grpC, tooltip="Tip: Delta avg = Delta ÷ the reference's delta Ratio is more precise than its rounded 'Avg' (2.8K ÷ 2.51 = 1115).")
@@ -1300,7 +1303,53 @@ bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
 var float cRErr = na
 var float cFErr = na
 var float cDErr = na
+// per reference candle: what matches THIS candle alone (shows if one reading is inconsistent)
+var array<string> calDiag = array.new<string>(3, "not found on chart")
+int calNeed = math.max(1, math.min(2, (r1On ? 1 : 0) + (r2On ? 1 : 0) + (r3On ? 1 : 0)))
 if (isA or isB or isC) and bar_index > CAL_N + 2
+    float refRg   = isA ? r1Rg : isB ? r2Rg : r3Rg
+    float refAvg0 = isA ? r1R : isB ? r2R : r3R
+    float refD0   = isA ? r1D : isB ? r2D : r3D
+    float refDA0  = isA ? r1DA : isB ? r2DA : r3DA
+    float bRe = 1e9
+    int   bRt = 0
+    int   bRn = 0
+    float bRv = na
+    for t = 0 to NT - 1
+        for n = 2 to CAL_N
+            float v = f_rangeCand(t, n)
+            float e = na(v) ? 1e9 : math.abs(v - refAvg0) / refAvg0
+            if e < bRe
+                bRe := e
+                bRt := t
+                bRn := n
+                bRv := v
+    float bFe = 1e9
+    int   bF  = 0
+    for f = 0 to NF - 1
+        float e = math.abs(nz(f_dAt(f, 0)) - refD0) / math.abs(refD0)
+        if e < bFe
+            bFe := e
+            bF  := f
+    float bDe = 1e9
+    int   bDt = 0
+    int   bDn = 0
+    float bDv = na
+    for t = 0 to NT - 1
+        for n = 2 to CAL_N
+            float v = f_deltaCand(bF, t, n)
+            float e = na(v) ? 1e9 : math.abs(v - refDA0) / refDA0
+            if e < bDe
+                bDe := e
+                bDt := t
+                bDn := n
+                bDv := v
+    string d = "OHLC " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
+    d += " · range " + str.tostring(barRange, "#.##") + (math.abs(barRange - refRg) < 0.02 ? " ✓" : " ✗ ref " + str.tostring(refRg, "#.##")) + " · vol " + str.tostring(volume, "#")
+    d += "\nRange avg: " + f_raName(bRt) + " " + str.tostring(bRn) + " = " + str.tostring(bRv, "#.##") + " (" + str.tostring(bRe * 100, "#.#") + "%)"
+    d += "\nDelta: " + f_fName(bF) + " = " + f_ks(f_dAt(bF, 0)) + " (" + str.tostring(bFe * 100, "#.#") + "%) · body " + f_ks(dBody) + " · CLV " + f_ks(dClv)
+    d += "\nDelta avg: " + f_daName(bDt) + " " + str.tostring(bDn) + " = " + f_k(bDv) + " (" + str.tostring(bDe * 100, "#.#") + "%)"
+    calDiag.set(isA ? 0 : isB ? 1 : 2, d)
     float refAvg  = isA ? r1R : isB ? r2R : r3R
     float refD    = isA ? r1D : isB ? r2D : r3D
     float refDAvg = isA ? r1DA : isB ? r2DA : r3DA
@@ -1321,7 +1370,7 @@ if (isA or isB or isC) and bar_index > CAL_N + 2
                 float v = f_deltaCand(f, t, n)
                 int   j = (f * NT + t) * (CAL_N + 1) + n
                 eD.set(j, eD.get(j) + (na(v) or v <= 0 ? 10.0 : math.abs(v - refDAvg) / refDAvg))
-    if calHits >= 2
+    if calHits >= calNeed
         float bE = 1e9
         for t = 0 to NT - 1
             for n = 5 to CAL_N
@@ -1353,7 +1402,7 @@ if (isA or isB or isC) and bar_index > CAL_N + 2
 var table calTbl = na
 if calOn and barstate.islast
     if na(calTbl)
-        calTbl := table.new(position.bottom_left, 2, 6, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
+        calTbl := table.new(position.bottom_left, 2, 9, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
     color cg = #E3B341
     color ct = #D1D4DC
     table.cell(calTbl, 0, 0, "AUTO-CALIBRATION", text_color=cg, text_size=size.small)
@@ -1373,6 +1422,9 @@ if calOn and barstate.islast
         table.cell(calTbl, 1, 4, stTxt, text_color=calApply and (calROK or calDOK) ? #26A69A : #F23645, text_size=size.small)
         table.cell(calTbl, 0, 5, "Use on ALL candles", text_color=ct, text_size=size.small)
         table.cell(calTbl, 1, 5, "Set these 3 lines in ① / ② settings, then turn Apply off", text_color=ct, text_size=size.small)
+    for k = 0 to 2
+        table.cell(calTbl, 0, 6 + k, "Ref " + str.tostring(k + 1) + " alone", text_color=ct, text_size=size.tiny)
+        table.cell(calTbl, 1, 6 + k, calDiag.get(k), text_color=ct, text_size=size.tiny, text_halign=text.align_left)
 
 // ---- advance the recursive averages (only on confirmed bars, so realtime ticks don't compound) ----
 if barstate.isconfirmed
