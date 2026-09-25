@@ -70,7 +70,7 @@ useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group
 minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
 
 grpV = "④ Signal Display"
-sigMode     = input.string(MODE_ALL, "Show signals", options=[MODE_ALL, MODE_ANY, MODE_BLK], group=grpV, tooltip="Reference: accelerators only print when the candle touches a shown supply/demand block. Mid-move candles away from any block are hidden.")
+sigMode     = input.string(MODE_ANY, "Show signals", options=[MODE_ALL, MODE_ANY, MODE_BLK], group=grpV, tooltip="Reference: accelerators only print when the candle touches a shown supply/demand block. Mid-move candles away from any block are hidden.")
 showSigText = input.bool(true, "Show 'D: / R:' text on signal", group=grpV)
 labelSize   = input.string("Small", "Triangle size", options=["Tiny", "Small", "Normal", "Large"], group=grpV)
 bullColor   = input.color(#1FA84F, "Bullish signal", group=grpV)
@@ -193,6 +193,8 @@ float ibBuy   = 0.0
 float ibSell  = 0.0
 float ibaBuy  = 0.0
 float ibaSell = 0.0
+float ibClvD  = 0.0
+float ibTickD = 0.0
 int   ibN    = array.size(ibC)
 if ibN > 0
     for i = 0 to ibN - 1
@@ -203,6 +205,9 @@ if ibN > 0
         float bFrac = r > 0 ? 0.5 + 0.5 * (c - o) / r : 0.5
         ibaBuy  += v * bFrac
         ibaSell += v * (1 - bFrac)
+        ibClvD  += r > 0 ? v * (2 * c - array.get(ibH, i) - array.get(ibL, i)) / r : 0.0
+        float pc = i == 0 ? nz(close[1], o) : array.get(ibC, i - 1)
+        ibTickD += c > pc ? v : c < pc ? -v : 0.0
         if c > o
             ibBuy += v
         else if c < o
@@ -284,6 +289,12 @@ float dBody    = barRange > 0 ? volume * (close - open) / barRange : 0.0
 float dClv     = barRange > 0 ? volume * (2 * close - high - low) / barRange : 0.0
 float dIb      = ibBuy - ibSell
 float dIa      = ibaBuy - ibaSell
+float hiT      = na(close[1]) ? high : math.max(high, close[1])
+float loT      = na(close[1]) ? low : math.min(low, close[1])
+float dTrClv   = hiT - loT > 0 ? volume * (2 * close - hiT - loT) / (hiT - loT) : 0.0
+float dIbClv   = ibClvD
+float dIbTick  = ibTickD
+const int NF   = 7   // candidate delta formulas 0..6 · index NF = delta source input
 
 f_raType(string m) =>
     m == RA_SMA_INC ? 0 : m == RA_SMA_PRE ? 1 : m == RA_TR_INC ? 2 : m == RA_TR_PRE ? 3 : m == RA_EMA_INC ? 4 : m == RA_EMA_PRE ? 5 : 6
@@ -294,17 +305,17 @@ f_raName(int t) =>
 f_daName(int t) =>
     t == 0 ? DA_SMA_INC : t == 1 ? DA_SMA_PRE : t == 2 ? DA_SIDE_INC : t == 3 ? DA_SIDE_PRE : t == 4 ? DA_EMA_INC : t == 5 ? DA_EMA_PRE : DA_RMA
 f_fName(int f) =>
-    f == 0 ? "Synthetic · Body (close - open)" : f == 1 ? "Synthetic · Close location" : f == 2 ? "Intrabar (lower TF)" : f == 3 ? "Intrabar anatomy" : "Delta source input"
+    f == 0 ? "Synthetic · Body (close - open)" : f == 1 ? "Synthetic · Close location" : f == 2 ? "Intrabar (lower TF)" : f == 3 ? "Intrabar anatomy" : f == 4 ? "Synthetic · Close location vs true range" : f == 5 ? "Intrabar close location" : f == 6 ? "Intrabar tick rule (close vs prev close)" : "Delta source input"
 
 // delta of formula f, k bars ago
 f_dAt(int f, int k) =>
-    f == 0 ? dBody[k] : f == 1 ? dClv[k] : f == 2 ? dIb[k] : f == 3 ? dIa[k] : deltaSrc[k]
+    f == 0 ? dBody[k] : f == 1 ? dClv[k] : f == 2 ? dIb[k] : f == 3 ? dIa[k] : f == 4 ? dTrClv[k] : f == 5 ? dIbClv[k] : f == 6 ? dIbTick[k] : deltaSrc[k]
 
 // recursive averages: value up to the PREVIOUS confirmed bar (updated at the end of the script)
 var array<float> stEmaHL = array.new<float>(CAL_N + 1, na)
 var array<float> stRmaTR = array.new<float>(CAL_N + 1, na)
-var array<float> stEmaD  = array.new<float>(5 * (CAL_N + 1), na)
-var array<float> stRmaD  = array.new<float>(5 * (CAL_N + 1), na)
+var array<float> stEmaD  = array.new<float>((NF + 1) * (CAL_N + 1), na)
+var array<float> stRmaD  = array.new<float>((NF + 1) * (CAL_N + 1), na)
 
 f_step(float prev, float x, float a) =>
     na(prev) ? x : a * x + (1 - a) * prev
@@ -348,17 +359,21 @@ f_deltaCand(int f, int t, int n) =>
     v
 
 // ---- active settings: inputs, replaced by the auto-calibration result once it is ready ----
-calApply = input.bool(true, "Apply calibrated settings automatically", group="⑬ Auto-calibrate", tooltip="Once 2 of the 3 reference candles are found on the chart, every later candle uses the formula that best reproduces the reference's numbers. To use it on ALL candles, copy the result shown in the calibration table into ① and ②.")
+calApply = input.bool(true, "Apply calibrated settings automatically", group="⑬ Auto-calibrate", tooltip="Once 2 reference candles are found on the chart, every later candle uses the formula that best reproduces the reference's numbers — but only if it really matches (error under the limit below). To use it on ALL candles, copy the result shown in the calibration table into ① and ②.")
+calMaxErr = input.float(5.0, "Only apply if error under (%)", minval=0.5, step=0.5, group="⑬ Auto-calibrate", tooltip="A bigger error means none of the tested formulas is the reference's formula, so applying it would only make the numbers worse.")
 var bool calReady = false
+var bool calROK   = false
+var bool calDOK   = false
 var int  cRT = 1
 var int  cRN = 10
 var int  cF  = 1
 var int  cDT = 1
 var int  cDN = 20
-bool useCal = calApply and calReady
-int  uRT = useCal ? cRT : f_raType(rangeAvgMode)
-int  uRN = useCal ? cRN : rangeLen
-int  uF  = useCal ? cF : 4
+bool useCalR = calApply and calReady and calROK
+bool useCal  = calApply and calReady and calDOK
+int  uRT = useCalR ? cRT : f_raType(rangeAvgMode)
+int  uRN = useCalR ? cRN : rangeLen
+int  uF  = useCal ? cF : NF
 int  uDT = useCal ? cDT : f_daType(deltaAvgMode)
 int  uDN = useCal ? cDN : lookback
 
@@ -368,7 +383,7 @@ if useCal
     sellVol := (volume - delta) / 2
     curIB.cb := buyVol
     curIB.cs := sellVol
-    srcUsed := cF <= 1 ? "SYNTHETIC (candle anatomy)" : cF == 2 ? "INTRABAR (" + ltf + ")" : "INTRABAR ANATOMY (" + ltf + ")"
+    srcUsed := cF <= 1 or cF == 4 ? "SYNTHETIC (candle anatomy)" : cF == 2 or cF == 6 ? "INTRABAR (" + ltf + ")" : "INTRABAR ANATOMY (" + ltf + ")"
 
 float avgRange    = f_rangeCand(uRT, uRN)
 float avgAbsDelta = f_deltaCand(uF, uDT, uDN)
@@ -417,7 +432,9 @@ f_calib() =>
     c += "\nAvg range prev SMA 5/10/14/20: " + str.tostring(cR5, "#.##") + " / " + str.tostring(cR10, "#.##") + " / " + str.tostring(cR14, "#.##") + " / " + str.tostring(cR20, "#.##")
     c += "\nAvg range incl SMA 10/20: " + str.tostring(cR10i, "#.##") + " / " + str.tostring(cR20i, "#.##") + " | ATR14: " + str.tostring(cAtr, "#.##")
     c += "\nDelta body: " + f_ks(dBody) + " | CLV: " + f_ks(dClv)
+    c += "\nDelta TR-CLV: " + f_ks(dTrClv) + " | Volume: " + str.tostring(volume, "#")
     c += "\nDelta intrabar: " + f_ks(dIb) + " | IB anatomy: " + f_ks(dIa)
+    c += "\nDelta IB close-loc: " + f_ks(dIbClv) + " | IB tick rule: " + f_ks(dIbTick)
     c += "\nOHLC: " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
     c
 
@@ -1024,6 +1041,10 @@ plot(deltaRatio,  "Delta ratio (in use)", display=display.data_window)
 plot(dBody,       "Delta body formula",   display=display.data_window)
 plot(dClv,        "Delta CLV formula",    display=display.data_window)
 plot(dIa,         "Delta intrabar anatomy", display=display.data_window)
+plot(dTrClv,      "Delta TR close-location", display=display.data_window)
+plot(dIbClv,      "Delta intrabar close-location", display=display.data_window)
+plot(dIbTick,     "Delta intrabar tick rule", display=display.data_window)
+plot(volume,      "Volume",               display=display.data_window)
 plot(dwD5i,       "Delta avg SMA5 incl",  display=display.data_window)
 plot(dwD10p,      "Delta avg SMA10 prev", display=display.data_window)
 plot(dwD20p,      "Delta avg SMA20 prev", display=display.data_window)
@@ -1039,28 +1060,51 @@ plot(dwD20i,      "Delta avg SMA20 incl", display=display.data_window)
 grpC  = "⑬ Auto-calibrate"
 calOn = input.bool(true, "Show auto-calibration result", group=grpC, tooltip="Needs OANDA XAUUSD 5M with history back to 22 Sep 2026 loaded.")
 
+// Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
+// Volume > 0 → the candle with exactly that volume within ±12 h of the time is used (safe if the time zone is off).
+// Volume = 0 → the candle that contains the time is used.
+r1On = input.bool(true, "Ref 1", inline="r1a", group=grpC)
+r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
+r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
+r1R  = input.float(6.81, "Range avg", inline="r1b", group=grpC)
+r1D  = input.float(-4800, "Delta", inline="r1b", group=grpC)
+r1DA = input.float(3100, "Delta avg", inline="r1b", group=grpC)
+r2On = input.bool(true, "Ref 2", inline="r2a", group=grpC)
+r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
+r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
+r2R  = input.float(8.75, "Range avg", inline="r2b", group=grpC)
+r2D  = input.float(2900, "Delta", inline="r2b", group=grpC)
+r2DA = input.float(1800, "Delta avg", inline="r2b", group=grpC)
+r3On = input.bool(true, "Ref 3", inline="r3a", group=grpC)
+r3T  = input.time(timestamp("25 Sep 2026 05:50 +0000"), "", inline="r3a", group=grpC)
+r3V  = input.int(3968, "Vol", inline="r3a", group=grpC)
+r3R  = input.float(3.56, "Range avg", inline="r3b", group=grpC)
+r3D  = input.float(2800, "Delta", inline="r3b", group=grpC)
+r3DA = input.float(1115, "Delta avg", inline="r3b", group=grpC, tooltip="Tip: Delta avg = Delta ÷ the reference's delta Ratio is more precise than its rounded 'Avg' (2.8K ÷ 2.51 = 1115).")
+
 const int NT = 7
 var array<float> eR = array.new<float>(NT * (CAL_N + 1), 0.0)
-var array<float> eF = array.new<float>(4, 0.0)
-var array<float> eD = array.new<float>(4 * NT * (CAL_N + 1), 0.0)
+var array<float> eF = array.new<float>(NF, 0.0)
+var array<float> eD = array.new<float>(NF * NT * (CAL_N + 1), 0.0)
 var int    calHits  = 0
 var string calFound = ""
 var bool   gotA = false
 var bool   gotB = false
 var bool   gotC = false
 
-int  calWin = 3600 * 1000
-bool isA = calOn and not gotA and math.abs(time - timestamp("23 Sep 2026 13:30 +0000")) <= calWin and volume == 6881 and math.abs(barRange - 12.54) < 0.06
-bool isB = calOn and not gotB and math.abs(time - timestamp("22 Sep 2026 08:35 +0000")) <= calWin and volume == 5126 and math.abs(barRange - 14.5) < 0.06
-bool isC = calOn and not gotC and time >= timestamp("24 Sep 2026 17:00 +0000") and time < timestamp("26 Sep 2026 00:00 +0000") and volume == 3968 and math.abs(barRange - 5.82) < 0.011
+f_isRef(bool on, int t, int v) =>
+    on and (v > 0 ? math.abs(time - t) <= 12 * 3600 * 1000 and volume == v : time <= t and time_close > t)
+bool isA = calOn and not gotA and f_isRef(r1On, r1T, r1V)
+bool isB = calOn and not gotB and f_isRef(r2On, r2T, r2V)
+bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
 
 var float cRErr = na
 var float cFErr = na
 var float cDErr = na
 if (isA or isB or isC) and bar_index > CAL_N + 2
-    float refAvg  = isA ? 6.81 : isB ? 8.75 : 3.56
-    float refD    = isA ? -4800.0 : isB ? 2900.0 : 2800.0
-    float refDAvg = isA ? 3100.0 : isB ? 1800.0 : 1115.0
+    float refAvg  = isA ? r1R : isB ? r2R : r3R
+    float refD    = isA ? r1D : isB ? r2D : r3D
+    float refDAvg = isA ? r1DA : isB ? r2DA : r3DA
     gotA := gotA or isA
     gotB := gotB or isB
     gotC := gotC or isC
@@ -1071,7 +1115,7 @@ if (isA or isB or isC) and bar_index > CAL_N + 2
             float v = f_rangeCand(t, n)
             int   j = t * (CAL_N + 1) + n
             eR.set(j, eR.get(j) + (na(v) or v <= 0 ? 10.0 : math.abs(v - refAvg) / refAvg))
-    for f = 0 to 3
+    for f = 0 to NF - 1
         eF.set(f, eF.get(f) + math.abs(nz(f_dAt(f, 0)) - refD) / math.abs(refD))
         for t = 0 to NT - 1
             for n = 2 to CAL_N
@@ -1088,7 +1132,7 @@ if (isA or isB or isC) and bar_index > CAL_N + 2
                     cRT := t
                     cRN := n
         float fE = 1e9
-        for f = 0 to 3
+        for f = 0 to NF - 1
             if eF.get(f) < fE
                 fE := eF.get(f)
                 cF := f
@@ -1103,12 +1147,14 @@ if (isA or isB or isC) and bar_index > CAL_N + 2
         cRErr := bE / calHits * 100
         cFErr := fE / calHits * 100
         cDErr := dE / calHits * 100
+        calROK := cRErr <= calMaxErr
+        calDOK := cFErr <= calMaxErr and cDErr <= calMaxErr
         calReady := true
 
 var table calTbl = na
 if calOn and barstate.islast
     if na(calTbl)
-        calTbl := table.new(position.top_center, 2, 6, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
+        calTbl := table.new(position.bottom_left, 2, 6, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
     color cg = #E3B341
     color ct = #D1D4DC
     table.cell(calTbl, 0, 0, "AUTO-CALIBRATION", text_color=cg, text_size=size.small)
@@ -1118,13 +1164,14 @@ if calOn and barstate.islast
         table.cell(calTbl, 1, 1, "Use OANDA XAUUSD 5M and scroll back to 22 Sep so the candles load", text_color=ct, text_size=size.small)
     else
         table.cell(calTbl, 0, 1, "Range average", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 1, f_raName(cRT) + " · length " + str.tostring(cRN) + "  (error " + str.tostring(cRErr, "#.#") + "%)", text_color=cg, text_size=size.small)
+        table.cell(calTbl, 1, 1, f_raName(cRT) + " · length " + str.tostring(cRN) + "  (error " + str.tostring(cRErr, "#.#") + "%)" + (calROK ? " ✓" : " ✗ no match"), text_color=calROK ? #26A69A : #F23645, text_size=size.small)
         table.cell(calTbl, 0, 2, "Delta formula", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 2, f_fName(cF) + "  (error " + str.tostring(cFErr, "#.#") + "%)", text_color=cg, text_size=size.small)
+        table.cell(calTbl, 1, 2, f_fName(cF) + "  (error " + str.tostring(cFErr, "#.#") + "%)" + (cFErr <= calMaxErr ? " ✓" : " ✗ no match"), text_color=cFErr <= calMaxErr ? #26A69A : #F23645, text_size=size.small)
         table.cell(calTbl, 0, 3, "Delta average", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 3, f_daName(cDT) + " · length " + str.tostring(cDN) + "  (error " + str.tostring(cDErr, "#.#") + "%)", text_color=cg, text_size=size.small)
+        table.cell(calTbl, 1, 3, f_daName(cDT) + " · length " + str.tostring(cDN) + "  (error " + str.tostring(cDErr, "#.#") + "%)" + (cDErr <= calMaxErr ? " ✓" : " ✗ no match"), text_color=cDErr <= calMaxErr ? #26A69A : #F23645, text_size=size.small)
         table.cell(calTbl, 0, 4, "Status", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 4, calApply ? "APPLIED to every candle after the 2nd reference candle" : "Not applied (turn on ⑬ Apply)", text_color=calApply ? #26A69A : #F23645, text_size=size.small)
+        string stTxt = not calApply ? "Not applied (turn on ⑬ Apply)" : calROK and calDOK ? "APPLIED (range + delta)" : calROK ? "Range APPLIED · delta NOT (no formula matches)" : calDOK ? "Delta APPLIED · range NOT (no formula matches)" : "NOT applied — no tested formula matches the reference"
+        table.cell(calTbl, 1, 4, stTxt, text_color=calApply and (calROK or calDOK) ? #26A69A : #F23645, text_size=size.small)
         table.cell(calTbl, 0, 5, "Use on ALL candles", text_color=ct, text_size=size.small)
         table.cell(calTbl, 1, 5, "Set these 3 lines in ① / ② settings, then turn Apply off", text_color=ct, text_size=size.small)
 
@@ -1133,7 +1180,7 @@ if barstate.isconfirmed
     for n = 2 to CAL_N
         stEmaHL.set(n, f_step(stEmaHL.get(n), barRange, 2.0 / (n + 1)))
         stRmaTR.set(n, f_step(stRmaTR.get(n), trS, 1.0 / n))
-        for f = 0 to 4
+        for f = 0 to NF
             int   k  = f * (CAL_N + 1) + n
             float ad = math.abs(nz(f_dAt(f, 0)))
             stEmaD.set(k, f_step(stEmaD.get(k), ad, 2.0 / (n + 1)))
