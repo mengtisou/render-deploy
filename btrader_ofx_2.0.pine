@@ -987,10 +987,11 @@ f_drawBlock(Block b) =>
             b.bBuy  := box.new(b.left, b.top, b.left + wB, midY, border_color=color.new(cBlkBull, 100), bgcolor=color.new(cBlkBull, barTransp))
             b.bSell := box.new(b.left, midY, b.left + wS, b.bot, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, barTransp))
             b.info  := label.new(bar_index + blockExt, midY, "", style=label.style_label_right, color=color.new(color.white, 100), textcolor=base, size=size.small, textalign=text.align_right)
+            if b.ver == 2 and ob2Mid
+                b.mid := line.new(b.left, midY, bar_index + blockExt, midY, color=color.new(base, 30), style=line.style_dotted, width=1)
             if b.ver == 1
                 b.tag := label.new(bar_index + blockExt, midY, "", style=label.style_label_left, color=base, textcolor=color.white, size=size.tiny)
-            else if ob2Mid
-                b.mid := line.new(b.left, midY, bar_index + blockExt, midY, color=color.new(base, 30), style=line.style_dotted, width=1)
+            b.tag := b.tag   // both style branches end with a label (Pine needs matching block types)
 
 f_deleteBlock(Block b) =>
     line.delete(b.mid)
