@@ -81,8 +81,9 @@ grpV = "④ Signal Display"
 sigMode     = input.string(MODE_ALL, "Show signals", options=[MODE_ALL, MODE_ANY, MODE_BLK], group=grpV, tooltip="Reference: accelerators only print when the candle touches a shown supply/demand block. Mid-move candles away from any block are hidden.")
 showSigText = input.bool(true, "Show 'D: / R:' text on signal", group=grpV)
 labelSize   = input.string("Tiny", "Triangle size", options=["Tiny", "Small", "Normal", "Large"], group=grpV)
-bullColor   = input.color(#1FA84F, "Bullish signal", group=grpV)
-bearColor   = input.color(#F23645, "Bearish signal", group=grpV)
+sigPos      = input.string("At close (reference)", "Triangle position", options=["At close (reference)", "Outside the candle"], group=grpV, tooltip="Reference: the triangle sits on the accelerator's close and the D:/R: text is printed right under it (above it for bearish).")
+bullColor   = input.color(#1E8E3E, "Bullish signal", group=grpV)
+bearColor   = input.color(#D32F2F, "Bearish signal", group=grpV)
 sigHalo     = input.bool(false, "Outline triangle (visible on top of blocks)", group=grpV)
 sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
 maxSigShown = input.int(1, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference only shows the most recent accelerator (1). Raise it to see history. Alerts and the dashboard still use every signal.")
@@ -414,6 +415,16 @@ float cR20  = ta.sma(barRange, 20)[1]
 float cR10i = ta.sma(barRange, 10)
 float cR20i = ta.sma(barRange, 20)
 float cAtr  = ta.atr(14)
+float cR30  = ta.sma(barRange, 30)[1]
+float cR50  = ta.sma(barRange, 50)[1]
+float cRE20 = ta.ema(barRange, 20)[1]
+float cD10  = ta.sma(math.abs(delta), 10)[1]
+float cD14  = ta.sma(math.abs(delta), 14)[1]
+float cD20  = ta.sma(math.abs(delta), 20)[1]
+float cD30  = ta.sma(math.abs(delta), 30)[1]
+float cD50  = ta.sma(math.abs(delta), 50)[1]
+float cD20i = ta.sma(math.abs(delta), 20)
+float cDE20 = ta.ema(math.abs(delta), 20)[1]
 
 float rangeRatio = nz(avgRange) > 0 ? barRange / avgRange : 0.0
 float deltaRatio = nz(avgAbsDelta) > 0 ? math.abs(delta) / avgAbsDelta : 0.0
@@ -448,6 +459,9 @@ f_calib() =>
     string c = "\n── Calibration (match reference) ──"
     c += "\nAvg range prev SMA 5/10/14/20: " + str.tostring(cR5, "#.##") + " / " + str.tostring(cR10, "#.##") + " / " + str.tostring(cR14, "#.##") + " / " + str.tostring(cR20, "#.##")
     c += "\nAvg range incl SMA 10/20: " + str.tostring(cR10i, "#.##") + " / " + str.tostring(cR20i, "#.##") + " | ATR14: " + str.tostring(cAtr, "#.##")
+    c += "\nAvg range prev SMA 30/50: " + str.tostring(cR30, "#.##") + " / " + str.tostring(cR50, "#.##") + " | EMA20: " + str.tostring(cRE20, "#.##")
+    c += "\nAvg |delta| prev SMA 10/14/20: " + f_k(cD10) + " / " + f_k(cD14) + " / " + f_k(cD20)
+    c += "\nAvg |delta| prev SMA 30/50: " + f_k(cD30) + " / " + f_k(cD50) + " | incl 20: " + f_k(cD20i) + " | EMA20: " + f_k(cDE20)
     c += "\nDelta body: " + f_ks(dBody) + " | CLV: " + f_ks(dClv)
     c += "\nDelta TR-CLV: " + f_ks(dTrClv) + " | Volume: " + str.tostring(volume, "#")
     c += "\nDelta intrabar: " + f_ks(dIb) + " | IB anatomy: " + f_ks(dIa)
@@ -854,6 +868,12 @@ f_blockLine(int idx) =>
         s += b.bias != 0 ? " ✓ (≥" + str.tostring(ownerPct, "#") + "%)" : " ✗ (under " + str.tostring(ownerPct, "#") + "%)"
     s
 
+bool  sigAtClose = sigPos == "At close (reference)"
+float bullTriY = sigAtClose ? close : low - atr14 * 0.2
+float bullTxtY = sigAtClose ? close - atr14 * 0.15 : low - atr14 * 0.45
+float bearTriY = sigAtClose ? close : high + atr14 * 0.2
+float bearTxtY = sigAtClose ? close + atr14 * 0.15 : high + atr14 * 0.45
+
 if drawBull
     SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>())
     sigHist.unshift(sd)
@@ -873,10 +893,10 @@ if drawBull
     tt += calib ? f_calib() : ""
     // Gate 5: structure stop (near/inside block → below block, far → below entry candle)
     if sigHalo
-        sd.lbs.push(label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt))
-    sd.lbs.push(label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt))
+        sd.lbs.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.lbs.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt))
     if showSigText
-        sd.lbs.push(label.new(bar_index, low - atr14 * 0.45, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
+        sd.lbs.push(label.new(bar_index, bullTxtY, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
     if comboLong
         Block b = blocks.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
@@ -904,10 +924,10 @@ if drawBear
     tt += calib ? f_calib() : ""
     // Gate 5: structure stop (near/inside block → above block, far → above entry candle)
     if sigHalo
-        sd.lbs.push(label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt))
-    sd.lbs.push(label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt))
+        sd.lbs.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.lbs.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt))
     if showSigText
-        sd.lbs.push(label.new(bar_index, high + atr14 * 0.45, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
+        sd.lbs.push(label.new(bar_index, bearTxtY, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
     if comboShort
         Block b = blocks.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
