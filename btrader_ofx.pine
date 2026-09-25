@@ -152,6 +152,7 @@ vpWidth    = input.int(40, "Max width (bars)", minval=5, maxval=150, group=grpP)
 vpOffset   = input.int(45, "Offset from last bar", minval=0, maxval=200, group=grpP)
 
 grpM = "⑨ Extras"
+mobileView = input.bool(false, "Mobile view (clean & compact)", group=grpM, tooltip="For phones: small 3-line dashboard, no volume profile, smaller ENTER boxes.")
 showDash = input.bool(true, "Show 5-gate dashboard", group=grpM)
 dashPos  = input.string("Bottom Right", "Dashboard position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grpM)
 
@@ -499,7 +500,7 @@ var int  cRN = 20
 var int  cDF = 1
 var int  cDN = 20
 grpC  = "⑬ Auto-calibrate"
-calOn = input.bool(true, "Show auto-calibration result", group=grpC, tooltip="Needs OANDA XAUUSD 5M with history back to 22 Sep 2026 loaded.")
+calOn = input.bool(false, "Show calculation panels (calibration table + REF CHECK)", group="⑨ Extras", tooltip="Debug panels used to match the reference. Off = clean chart.")
 
 // Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
 // Volume > 0 → the candle with exactly that volume within ±12 h of the time is used.
@@ -1214,7 +1215,7 @@ if drawBull
         Block b = blocks.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
-        sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small, tooltip=tt))
+        sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=mobileView ? size.tiny : size.small, tooltip=tt))
         if showSL
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
@@ -1245,7 +1246,7 @@ if drawBear
         Block b = blocks.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
-        sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small, tooltip=tt))
+        sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=mobileView ? size.tiny : size.small, tooltip=tt))
         if showSL
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
@@ -1436,7 +1437,7 @@ if barstate.islast
     for bx in vpBoxes
         box.delete(bx)
     vpBoxes.clear()
-    if showVP
+    if showVP and not mobileView
         int   n   = math.min(vpLookback, bar_index + 1)
         float pHi = high
         float pLo = low
@@ -1485,7 +1486,7 @@ if barstate.islast
 var table dash = na
 if showDash and na(dash)
     pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(pos, 2, 7, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 2 : 7, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
 if showDash and barstate.islast
     color gold = #E3B341
@@ -1506,20 +1507,27 @@ if showDash and barstate.islast
     string sig = na(lastSigBar) ? "—" : lastSigTxt + " · " + str.tostring(bar_index - lastSigBar) + " bars ago"
     string st  = comboLong and drawBull ? "ENTER LONG" : comboShort and drawBear ? "ENTER SHORT" : "NO PASS, NO TRADE"
 
-    table.cell(dash, 0, 0, "BTrader OFX", text_color=gold, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
-    table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=size.small)
-    table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=size.small)
-    table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 3, sig, text_color=txt, text_size=size.small)
-    table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=size.small)
-    table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
-    table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
-    table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
+    if mobileView
+        // compact: last accelerator + status only
+        table.cell(dash, 0, 0, sig, text_color=txt, text_size=size.tiny)
+        table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
+    else
+        table.cell(dash, 0, 0, "BTrader OFX", text_color=gold, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
+        table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=size.small)
+        table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 3, sig, text_color=txt, text_size=size.small)
+        table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
 
 // ════════════════════════════════════════════════════════════════════
 // ALERTS  (set "Once Per Bar Close" when creating the alert)
