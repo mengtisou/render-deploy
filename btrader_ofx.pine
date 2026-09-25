@@ -1411,6 +1411,42 @@ if (isA or isB or isC) and bar_index > CAL_N + 2
         calDOK := cFErr <= calMaxErr and cDErr <= calMaxErr
         calReady := true
 
+// ---- REF CHECK: on each reference candle, print our numbers next to the reference's and why it fired / did not ----
+f_refWhy() =>
+    string w = ""
+    if not (close > open)
+        w += "\n✗ candle is not green"
+    if not bodyOK
+        w += "\n✗ body " + str.tostring(barRange > 0 ? math.abs(close - open) / barRange * 100 : 0, "#") + "% < " + str.tostring(bodyNeed, "#") + "%"
+    if rangeRatio < rangeNeed
+        w += "\n✗ range ratio " + f_x(rangeRatio) + " < " + f_x(rangeNeed) + "  → our range avg is too big"
+    if deltaConf and delta <= 0
+        w += "\n✗ delta is not positive"
+    if deltaConf and deltaRatio < deltaNeed
+        w += "\n✗ delta ratio " + f_x(deltaRatio) + " < " + f_x(deltaNeed) + "  → our delta avg is too big"
+    if not volOK
+        w += "\n✗ volume ratio"
+    if not sizeOK
+        w += "\n✗ min size"
+    if not trendBullOK
+        w += "\n✗ trend filter"
+    if bullAx and not bullAxOK
+        w += "\n✗ cooldown"
+    w
+
+if isA or isB or isC
+    float rA  = isA ? r1R : isB ? r2R : r3R
+    float rD  = isA ? r1D : isB ? r2D : r3D
+    float rDA = isA ? r1DA : isB ? r2DA : r3DA
+    string t = "REF CHECK · Ref " + (isA ? "1" : isB ? "2" : "3") + "   (ours  |  reference)"
+    t += "\nRange " + str.tostring(barRange, "#.##") + "  |  " + str.tostring(isA ? r1Rg : isB ? r2Rg : r3Rg, "#.##")
+    t += "\nRange avg " + str.tostring(avgRange, "#.##") + "  |  " + str.tostring(rA, "#.##") + "   ratio " + f_x(rangeRatio) + "  |  " + f_x(barRange / rA)
+    t += "\nDelta " + f_ks(delta) + "  |  " + f_ks(rD)
+    t += "\nDelta avg " + f_k(avgAbsDelta) + "  |  " + f_k(rDA) + "   ratio " + f_x(deltaRatio) + "  |  " + f_x(math.abs(rD) / rDA)
+    bool fired = rD > 0 ? drawBull : drawBear
+    t += "\n" + (fired ? "✓ ours fired here too" : "✗ ours did NOT fire:" + (rD > 0 ? f_refWhy() : ""))
+    label.new(bar_index, rD > 0 ? low - atr14 * 1.2 : high + atr14 * 1.2, t, style=rD > 0 ? label.style_label_up : label.style_label_down, color=color.new(#131722, 0), textcolor=fired ? #26A69A : #E3B341, size=size.small, textalign=text.align_left)
+
 var table calTbl = na
 if calOn and barstate.islast
     if na(calTbl)
