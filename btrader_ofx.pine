@@ -1269,7 +1269,8 @@ if fvgMode and blocks.size() > 0
                 bestD := d
                 bestI := i
         if bestI >= 0
-            blocks.get(bestI).vis := true
+            Block bShow = blocks.get(bestI)
+            bShow.vis := true
     for n = 1 to fvgTop
         int   bestI = -1
         float bestS = na
@@ -1279,7 +1280,8 @@ if fvgMode and blocks.size() > 0
                 bestS := b.score
                 bestI := i
         if bestI >= 0
-            blocks.get(bestI).rank := n
+            Block bRank = blocks.get(bestI)
+            bRank.rank := n
 
 // ---- orderblocks: show the N nearest unbroken blocks per side ----
 if not fvgMode and blocks.size() > 0
