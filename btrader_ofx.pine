@@ -35,6 +35,10 @@ const string DA_SIDE_PRE = "Same-side |delta| (previous bars)"
 const string DA_EMA_INC  = "EMA |delta| (incl. current)"
 const string DA_EMA_PRE  = "EMA |delta| (previous bars)"
 const string DA_RMA      = "RMA |delta| (incl. current)"
+const string ZT_FVG   = "FVG zones (Sn1P3r)"
+const string ZT_OB    = "Orderblocks (swing break)"
+const string SENT_FORM   = "Formation candle only"
+const string SENT_RETEST = "Formation + every candle that trades inside"
 const string BS_REF   = "Reference (tag + split bar)"
 const string BS_CLASS = "Classic (volume text)"
 const string SYN_BODY = "Body (close - open)"
@@ -57,11 +61,14 @@ lookback  = input.int(20, "Delta / volume average length", minval=2, maxval=40, 
 trendFilter = input.string(TF_OFF, "Trend filter", options=[TF_OFF, TF_STRUCT, TF_EMA], group=grpA, tooltip="Structure: BuAx+ only while structure is bullish (or on the CHoCH candle itself), BeAx+ only while bearish. Removes counter-trend accelerators inside a move.")
 emaLen    = input.int(50, "EMA length (EMA filter)", minval=5, group=grpA)
 calib     = input.bool(false, "Calibration lines in tooltip", group=grpA, tooltip="Shows the range average and delta for several formulas, so you can match the reference indicator's numbers on the same candle.")
-rangeNeed = input.float(1.5, "Range ratio need (x avg)", step=0.1, group=grpA)
-deltaNeed = input.float(1.5, "Delta ratio need (x avg)", step=0.1, group=grpA)
+rangeNeed = input.float(1.5, "Range expansion factor (x avg)", step=0.1, group=grpA)
+deltaNeed = input.float(1.5, "Delta expansion factor (x avg)", step=0.1, group=grpA)
 volNeed   = input.float(0.0, "Volume ratio need (0 = off)", step=0.1, group=grpA)
 minSize   = input.float(0.0, "Min candle range (x ATR 100) · 0 = off", minval=0, step=0.1, group=grpA, tooltip="A real accelerator is a big candle for the whole session, not only compared with the last few quiet bars. Hover a signal: the 'Size' line shows its value, so you can set this between the signals you want and the ones you don't.")
 cooldown  = input.int(3, "Cooldown bars (same side)", minval=0, group=grpA, tooltip="Stops back-to-back triangles on consecutive candles.")
+plusOnly  = input.bool(false, "Plus velocity only (BuAx+/BeAx+)", group=grpA, tooltip="Off (reference default): also show BuAx/BeAx whose close is not past the candle middle.")
+wickless  = input.bool(false, "Strict: accelerator must be wickless", group=grpA, tooltip="Bullish: no upper wick (close = high). Bearish: no lower wick (close = low).")
+deltaConf = input.bool(true, "Enable delta confirmation", group=grpA, tooltip="Off: range expansion alone makes an accelerator.")
 showBull  = input.bool(true, "Show BuAx+ (bullish)", group=grpA)
 showBear  = input.bool(true, "Show BeAx+ (bearish)", group=grpA)
 
@@ -70,9 +77,9 @@ useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group
 minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
 
 grpV = "④ Signal Display"
-sigMode     = input.string(MODE_ANY, "Show signals", options=[MODE_ALL, MODE_ANY, MODE_BLK], group=grpV, tooltip="Reference: accelerators only print when the candle touches a shown supply/demand block. Mid-move candles away from any block are hidden.")
+sigMode     = input.string(MODE_ALL, "Show signals", options=[MODE_ALL, MODE_ANY, MODE_BLK], group=grpV, tooltip="Reference: accelerators only print when the candle touches a shown supply/demand block. Mid-move candles away from any block are hidden.")
 showSigText = input.bool(true, "Show 'D: / R:' text on signal", group=grpV)
-labelSize   = input.string("Small", "Triangle size", options=["Tiny", "Small", "Normal", "Large"], group=grpV)
+labelSize   = input.string("Tiny", "Triangle size", options=["Tiny", "Small", "Normal", "Large"], group=grpV)
 bullColor   = input.color(#1FA84F, "Bullish signal", group=grpV)
 bearColor   = input.color(#F23645, "Bearish signal", group=grpV)
 sigHalo     = input.bool(false, "Outline triangle (visible on top of blocks)", group=grpV)
@@ -80,7 +87,15 @@ sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
 refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
-showBlocks = input.bool(true, "Show orderblocks", group=grpB)
+showBlocks = input.bool(true, "Show zones", group=grpB)
+zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
+fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
+fvgMax     = input.int(50, "FVG · Max stored", minval=5, maxval=150, group=grpB)
+fvgVolLen  = input.int(20, "FVG · Volume MA length", minval=2, group=grpB)
+fvgEmaLen  = input.int(50, "FVG · Trend EMA length", minval=2, group=grpB)
+fvgMinAtr  = input.float(0.0, "FVG · Min gap (x ATR) · 0 = any", minval=0, step=0.05, group=grpB)
+fvgSent    = input.string(SENT_RETEST, "FVG · Sentiment volume", options=[SENT_RETEST, SENT_FORM], group=grpB, tooltip="Which candles' buy/sell volume fills the sentiment bar. The reference often shows bearish zones with few sellers (e.g. ▼24%), which only happens when later candles trading inside the zone are counted.")
+sentH      = input.float(15, "Sentiment bar height %", minval=5, maxval=100, group=grpB)
 blockStyle = input.string(BS_REF, "Block style", options=[BS_REF, BS_CLASS], group=grpB, tooltip="Reference: '#3 ▼ 67%' tag (own-side %: buyers for demand ▲, sellers for supply ▼), buyer|seller split bar and a bias word.")
 biasNeutral = input.float(45, "Neutral from own-side %", minval=0, maxval=60, group=grpB, tooltip="Own-side % ≥ owner threshold → Bull/Bear Bias · ≥ this → Neutral · below → Weak Bull/Bear.")
 swingLen   = input.int(5, "Swing length", minval=2, group=grpB)
@@ -111,11 +126,11 @@ grpD = "⑦ Delta Candle Colors"
 colorCandles = input.bool(true, "Color candles by delta strength", group=grpD)
 strongMult   = input.float(1.5, "Strong threshold (x avg delta)", step=0.1, group=grpD)
 neutralMult  = input.float(0.3, "Neutral threshold (x avg delta)", step=0.1, group=grpD)
-cStrongBull  = input.color(#00E5CC, "Strong bullish", group=grpD)
-cWeakBull    = input.color(color.white, "Weak bullish", group=grpD)
-cNeutral     = input.color(#787B86, "Neutral", group=grpD)
-cWeakBear    = input.color(#9C27B0, "Weak bearish", group=grpD)
-cStrongBear  = input.color(#F23645, "Strong bearish", group=grpD)
+cStrongBull  = input.color(#2EF5C8, "BuBC · bullish unfair (strong)", group=grpD)
+cWeakBull    = input.color(color.white, "Weak bullish (fair)", group=grpD)
+cNeutral     = input.color(color.white, "NBC · fair pricing", group=grpD)
+cWeakBear    = input.color(color.white, "Weak bearish (fair)", group=grpD)
+cStrongBear  = input.color(#9C27B0, "BeBC · bearish unfair (strong)", group=grpD)
 
 grpP = "⑧ Volume Profile (buy / sell split)"
 showVP     = input.bool(true, "Show profile", group=grpP)
@@ -456,7 +471,12 @@ type Block
     int   bias
     int   kind
     int   id
-    bool  vis = false
+    bool  vis   = false
+    float score = 0.0
+    float bvAcc = 0.0
+    float svAcc = 0.0
+    int   born  = 0
+    int   rank  = 0
 
 var array<Block> blocks = array.new<Block>()
 var int blockId = 0
@@ -466,7 +486,20 @@ f_newBlock(float top, float bot, int left, float bv, float sv, int kind, int id)
     float bp   = tot > 0 ? bv / tot * 100 : 50.0
     float sp   = 100 - bp
     int   bias = bp >= ownerPct ? 1 : sp >= ownerPct ? -1 : 0
-    Block.new(na, na, na, na, na, top, bot, left, tot, bp, sp, bias, kind, id, false)
+    Block.new(na, na, na, na, na, top, bot, left, tot, bp, sp, bias, kind, id, false, 0.0, bv, sv, bar_index, 0)
+
+bool fvgMode = zoneType == ZT_FVG
+
+// number shown on the zone: strength rank for FVG zones (reference), creation id for orderblocks
+f_num(Block b) =>
+    str.tostring(fvgMode ? b.rank : b.id)
+
+f_setPct(Block b) =>
+    float tot = b.bvAcc + b.svAcc
+    b.vol     := tot
+    b.buyPct  := tot > 0 ? b.bvAcc / tot * 100 : 50.0
+    b.sellPct := 100 - b.buyPct
+    b.bias    := b.buyPct >= ownerPct ? 1 : b.sellPct >= ownerPct ? -1 : 0
 
 // own-side % = buyers for a demand block (▲), sellers for a supply block (▼)
 f_ownPct(Block b) =>
@@ -486,8 +519,8 @@ f_drawBlock(Block b) =>
         if blockStyle == BS_REF
             // one split bar in the lower part of the zone: buyers (left) | sellers (right), % written inside
             float h    = b.top - b.bot
-            float yTop = b.bot + h * 0.45
-            float yBot = b.bot + h * 0.15
+            float yBot = b.bot
+            float yTop = b.bot + h * sentH / 100
             int   wB   = math.max(1, int(math.round(barLen * b.buyPct / 100)))
             int   wS   = math.max(1, barLen - wB)
             b.bx    := box.new(b.left, b.top, bar_index + blockExt, b.bot, border_color=color.new(base, 40), border_width=1, bgcolor=color.new(base, 85), text=f_biasWord(b), text_color=color.new(base, 10), text_size=size.small, text_halign=text.align_right, text_valign=text.align_bottom)
@@ -526,12 +559,12 @@ f_refreshBlock(Block b, float totalAll) =>
     txt += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
     if blockStyle == BS_REF
         // reference tag: arrow by block type, own-side %
-        label.set_text(b.tag, "#" + str.tostring(b.id) + " " + (b.kind == 1 ? "▲" : "▼") + " " + str.tostring(f_ownPct(b), "#") + "%")
+        label.set_text(b.tag, "#" + f_num(b) + " " + (b.kind == 1 ? "▲" : "▼") + " " + str.tostring(f_ownPct(b), "#") + "%")
     else
         label.set_text(b.info, txt)
         float  dom   = math.max(b.buyPct, b.sellPct)
         string arrow = b.buyPct >= b.sellPct ? "▲" : "▼"
-        label.set_text(b.tag, "#" + str.tostring(b.id) + " " + arrow + " " + str.tostring(dom, "#") + "%")
+        label.set_text(b.tag, "#" + f_num(b) + " " + arrow + " " + str.tostring(dom, "#") + "%")
         label.set_x(b.info, bar_index + blockExt)
     box.set_right(b.bx, bar_index + blockExt)
     label.set_x(b.tag, bar_index + blockExt)
@@ -566,7 +599,7 @@ f_trimSide(int kind) =>
 if blocks.size() > 0
     for i = blocks.size() - 1 to 0
         Block b = blocks.get(i)
-        bool broken = b.kind == 1 ? close < b.bot : close > b.top
+        bool broken = fvgMode ? (b.born < bar_index and (b.kind == 1 ? low <= b.bot : high >= b.top)) : (b.kind == 1 ? close < b.bot : close > b.top)
         if broken
             f_deleteBlock(b)
             blocks.remove(i)
@@ -610,7 +643,7 @@ if bearBreak
     trendDir := -1
 
 // Bullish OB: close breaks above the last swing high → last down candle of the leg
-if showBlocks and bullBreak
+if showBlocks and not fvgMode and bullBreak
     int   span    = math.min(bar_index - shBar, 150)
     int   best    = -1
     float bestLow = na
@@ -641,7 +674,7 @@ if showBlocks and bullBreak
         f_trimSide(1)
 
 // Bearish OB: close breaks below the last swing low → last up candle of the leg
-if showBlocks and bearBreak
+if showBlocks and not fvgMode and bearBreak
     int   span     = math.min(bar_index - slBar, 150)
     int   best     = -1
     float bestHigh = na
@@ -671,8 +704,64 @@ if showBlocks and bearBreak
         blocks.unshift(f_newBlock(zTop, zBot, bar_index - best, bv, sv, -1, blockId))
         f_trimSide(-1)
 
-// ---- show the N nearest unbroken blocks per side ----
-if blocks.size() > 0
+// ════════════════════════════════════════════════════════════════════
+// FVG ZONES (reference: Sn1P3r "FVG Zones" · strength = volume vs MA × trend × gap size)
+// ════════════════════════════════════════════════════════════════════
+float fvgVolMa = ta.sma(volume, fvgVolLen)
+float fvgEma   = ta.ema(close, fvgEmaLen)
+
+f_fvgScore(int kind, float gap) =>
+    float vr = nz(fvgVolMa[1]) > 0 ? volume[1] / fvgVolMa[1] : 1.0
+    bool  tr = kind == 1 ? close > fvgEma : close < fvgEma
+    vr * (tr ? 1.5 : 1.0) * (1 + (nz(atr14) > 0 ? gap / atr14 : 0))
+
+if showBlocks and fvgMode and bar_index > 2
+    float gMin = nz(atr14) * fvgMinAtr
+    bool  gBull = low > high[2] and low - high[2] > gMin
+    bool  gBear = high < low[2] and low[2] - high > gMin
+    if gBull or gBear
+        int   kind = gBull ? 1 : -1
+        float zTop = gBull ? low : low[2]
+        float zBot = gBull ? high[2] : high
+        // formation = middle (displacement) candle, share of it inside the gap
+        float ov = barRange[1] > 0 ? math.max(0.0, math.min(high[1], zTop) - math.max(low[1], zBot)) / barRange[1] : 0.0
+        blockId += 1
+        Block nb = f_newBlock(zTop, zBot, bar_index - 1, nz(buyVol[1]) * ov, nz(sellVol[1]) * ov, kind, blockId)
+        nb.score := f_fvgScore(kind, zTop - zBot)
+        blocks.unshift(nb)
+        while blocks.size() > fvgMax
+            f_deleteBlock(blocks.pop())
+
+// sentiment: add every later confirmed candle's buy/sell volume that traded inside the zone
+if showBlocks and fvgMode and fvgSent == SENT_RETEST and barstate.isconfirmed and barRange > 0 and blocks.size() > 0
+    for b in blocks
+        if b.born < bar_index
+            float ov = math.max(0.0, math.min(high, b.top) - math.max(low, b.bot)) / barRange
+            if ov > 0
+                b.bvAcc += buyVol * ov
+                b.svAcc += sellVol * ov
+                f_setPct(b)
+
+// ---- FVG: show the strongest N zones, numbered by rank ----
+if fvgMode and blocks.size() > 0
+    for b in blocks
+        b.vis  := false
+        b.rank := 0
+    for n = 1 to fvgTop
+        int   bestI = -1
+        float bestS = na
+        for i = 0 to blocks.size() - 1
+            Block b = blocks.get(i)
+            if not b.vis and (na(bestS) or b.score > bestS)
+                bestS := b.score
+                bestI := i
+        if bestI >= 0
+            Block bShow = blocks.get(bestI)
+            bShow.vis  := true
+            bShow.rank := n
+
+// ---- orderblocks: show the N nearest unbroken blocks per side ----
+if not fvgMode and blocks.size() > 0
     for b in blocks
         b.vis := false
     for side in array.from(1, -1)
@@ -698,14 +787,21 @@ bool volOK = volNeed <= 0 or volRatio >= volNeed
 float atrLong   = ta.atr(100)
 float sizeRatio = nz(atrLong) > 0 ? barRange / atrLong : 0.0
 bool  sizeOK    = minSize <= 0 or sizeRatio >= minSize
-bool meters = rangeRatio >= rangeNeed and deltaRatio >= deltaNeed and volOK and sizeOK
+bool meters = rangeRatio >= rangeNeed and (not deltaConf or deltaRatio >= deltaNeed) and volOK and sizeOK
 
 float emaT = ta.ema(close, emaLen)
 bool trendBullOK = trendFilter == TF_OFF or (trendFilter == TF_STRUCT ? trendDir >= 0 : close > emaT)
 bool trendBearOK = trendFilter == TF_OFF or (trendFilter == TF_STRUCT ? trendDir <= 0 : close < emaT)
 
-bool bullAx = showBull and close > mid and delta > 0 and meters and trendBullOK
-bool bearAx = showBear and close < mid and delta < 0 and meters and trendBearOK
+// direction from the candle, "+" (plus velocity) when the close is past the candle middle
+bool bullPlus = close > mid
+bool bearPlus = close < mid
+bool bullWk   = not wickless or high - close <= syminfo.mintick
+bool bearWk   = not wickless or close - low <= syminfo.mintick
+bool bullAx = showBull and close > open and (not deltaConf or delta > 0) and (bullPlus or not plusOnly) and bullWk and meters and trendBullOK
+bool bearAx = showBear and close < open and (not deltaConf or delta < 0) and (bearPlus or not plusOnly) and bearWk and meters and trendBearOK
+string bullTag = bullPlus ? "BuAx+" : "BuAx"
+string bearTag = bearPlus ? "BeAx+" : "BeAx"
 
 bool bullGate4 = not useDeltaGate or delta >= minDelta
 bool bearGate4 = not useDeltaGate or delta <= -minDelta
@@ -735,16 +831,16 @@ f_blockLine(int idx) =>
     string s = "none at price"
     if idx >= 0
         Block b = blocks.get(idx)
-        s := "#" + str.tostring(b.id) + " Buyers " + str.tostring(b.buyPct, "#.##") + "% | Sellers " + str.tostring(b.sellPct, "#.##") + "%"
+        s := "#" + f_num(b) + " Buyers " + str.tostring(b.buyPct, "#.##") + "% | Sellers " + str.tostring(b.sellPct, "#.##") + "%"
         s += b.bias != 0 ? " ✓ (≥" + str.tostring(ownerPct, "#") + "%)" : " ✗ (under " + str.tostring(ownerPct, "#") + "%)"
     s
 
 if drawBull
     lastBullBar := bar_index
     lastSigBar  := bar_index
-    lastSigTxt  := comboLong ? "BuAx+ COMBO" : "BuAx+"
+    lastSigTxt  := comboLong ? bullTag + " COMBO" : bullTag
     int anyIdx = bullIdx >= 0 ? bullIdx : f_findBlock(0, tol)
-    string tt = "Bullish Accelerator | BuAx+\nVelocity: Plus (close > mid)\nDelta Source: " + srcUsed
+    string tt = "Bullish Accelerator | " + bullTag + "\nVelocity: " + (bullPlus ? "Plus (close > mid)" : "Normal (close ≤ mid)") + "\nDelta Source: " + srcUsed
     tt += "\nRange: " + str.tostring(barRange, "#.##") + " | Avg: " + str.tostring(avgRange, "#.##") + " | Ratio: " + f_x(rangeRatio) + " | Need: " + f_x(rangeNeed)
     tt += "\nDelta: " + f_ks(delta) + " | Avg: +" + f_k(avgAbsDelta) + " | Ratio: " + f_x(deltaRatio) + " | Need: " + f_x(deltaNeed)
     tt += "\nVolume: " + str.tostring(volume, "#")
@@ -759,7 +855,7 @@ if drawBull
         label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt)
     label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt)
     if showSigText
-        label.new(bar_index, low - atr14 * 0.45, "BuAx+\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt)
+        label.new(bar_index, low - atr14 * 0.45, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt)
     if comboLong
         Block b = blocks.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
@@ -771,9 +867,9 @@ if drawBull
 if drawBear
     lastBearBar := bar_index
     lastSigBar  := bar_index
-    lastSigTxt  := comboShort ? "BeAx+ COMBO" : "BeAx+"
+    lastSigTxt  := comboShort ? bearTag + " COMBO" : bearTag
     int anyIdx = bearIdx >= 0 ? bearIdx : f_findBlock(0, tol)
-    string tt = "Bearish Accelerator | BeAx+\nVelocity: Plus (close < mid)\nDelta Source: " + srcUsed
+    string tt = "Bearish Accelerator | " + bearTag + "\nVelocity: " + (bearPlus ? "Plus (close < mid)" : "Normal (close ≥ mid)") + "\nDelta Source: " + srcUsed
     tt += "\nRange: " + str.tostring(barRange, "#.##") + " | Avg: " + str.tostring(avgRange, "#.##") + " | Ratio: " + f_x(rangeRatio) + " | Need: " + f_x(rangeNeed)
     tt += "\nDelta: " + f_ks(delta) + " | Avg: +" + f_k(avgAbsDelta) + " | Ratio: " + f_x(deltaRatio) + " | Need: " + f_x(deltaNeed)
     tt += "\nVolume: " + str.tostring(volume, "#")
@@ -788,7 +884,7 @@ if drawBear
         label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt)
     label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt)
     if showSigText
-        label.new(bar_index, high + atr14 * 0.45, "BeAx+\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt)
+        label.new(bar_index, high + atr14 * 0.45, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt)
     if comboShort
         Block b = blocks.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
@@ -797,19 +893,74 @@ if drawBear
         if showSL
             line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1)
 
+// ════════════════════════════════════════════════════════════════════
+// UN-AUCTIONED PRICE (UH / UL): a candle with no wick on one side leaves a level
+// that was never auctioned. It stays until price trades through it.
+// ════════════════════════════════════════════════════════════════════
+grpU     = "⑭ Un-auctioned price (UH / UL)"
+showUHUL = input.bool(true, "Enable UH/UL detection", group=grpU)
+showUSym = input.bool(true, "Show $$$ sign", inline="u1", group=grpU)
+showUTxt = input.bool(true, "Show UH/UL text", inline="u1", group=grpU)
+uStrict  = input.bool(false, "Strict: accelerator candles only", group=grpU)
+cUH      = input.color(#F23645, "UH color", inline="u2", group=grpU)
+cUL      = input.color(#00E676, "UL color", inline="u2", group=grpU)
+uMax     = input.int(30, "Max active levels", minval=1, maxval=100, group=grpU)
+
+type ULvl
+    line  ln
+    label lb
+    float px
+    int   dir
+    int   born
+
+var array<ULvl> uLv = array.new<ULvl>()
+
+if showUHUL and barstate.isconfirmed
+    // remove levels price has now traded through, extend the rest
+    if uLv.size() > 0
+        for i = uLv.size() - 1 to 0
+            ULvl u = uLv.get(i)
+            bool hit = u.born < bar_index and (u.dir == 1 ? high > u.px : low < u.px)
+            if hit
+                line.delete(u.ln)
+                label.delete(u.lb)
+                uLv.remove(i)
+            else
+                line.set_x2(u.ln, bar_index + 3)
+    float eps = syminfo.mintick / 2
+    bool  axOK = not uStrict or drawBull or drawBear
+    bool  isUH = barRange > 0 and axOK and high - math.max(open, close) <= eps
+    bool  isUL = barRange > 0 and axOK and math.min(open, close) - low <= eps
+    if isUH
+        string t = (showUTxt ? "UH" : "") + (showUTxt and showUSym ? "\n" : "") + (showUSym ? "$$$" : "")
+        uLv.unshift(ULvl.new(line.new(bar_index, high, bar_index + 3, high, color=cUH, width=1), t != "" ? label.new(bar_index, high, t, style=label.style_label_down, color=color.new(color.white, 100), textcolor=cUH, size=size.tiny) : na, high, 1, bar_index))
+    if isUL
+        string t = (showUSym ? "$$$" : "") + (showUTxt and showUSym ? "\n" : "") + (showUTxt ? "UL" : "")
+        uLv.unshift(ULvl.new(line.new(bar_index, low, bar_index + 3, low, color=cUL, width=1), t != "" ? label.new(bar_index, low, t, style=label.style_label_up, color=color.new(color.white, 100), textcolor=cUL, size=size.tiny) : na, low, -1, bar_index))
+    while uLv.size() > uMax
+        ULvl u = uLv.pop()
+        line.delete(u.ln)
+        label.delete(u.lb)
+
 // ---- Inspect a candle: why it fired / did not fire ----
 bool inspectBar = inspectOn and time <= inspectT and time_close > inspectT
 if inspectBar
     bool   up   = delta >= 0
     string res  = drawBull ? "RESULT: BuAx+ fired" : drawBear ? "RESULT: BeAx+ fired" : "RESULT: no signal"
     string fl   = ""
-    if up and not (close > mid)
-        fl += "\n✗ velocity: close not above mid"
-    if not up and not (close < mid)
-        fl += "\n✗ velocity: close not below mid"
+    if up and not (close > open)
+        fl += "\n✗ candle is not green"
+    if not up and not (close < open)
+        fl += "\n✗ candle is not red"
+    if plusOnly and up and not bullPlus
+        fl += "\n✗ plus velocity only: close not above mid"
+    if plusOnly and not up and not bearPlus
+        fl += "\n✗ plus velocity only: close not below mid"
+    if wickless and ((up and not bullWk) or (not up and not bearWk))
+        fl += "\n✗ strict wickless: candle has a wick"
     if rangeRatio < rangeNeed
         fl += "\n✗ range ratio " + f_x(rangeRatio) + " < " + f_x(rangeNeed)
-    if deltaRatio < deltaNeed
+    if deltaConf and deltaRatio < deltaNeed
         fl += "\n✗ delta ratio " + f_x(deltaRatio) + " < " + f_x(deltaNeed)
     if not volOK
         fl += "\n✗ volume ratio " + f_x(volRatio) + " < " + f_x(volNeed)
@@ -912,6 +1063,8 @@ if barstate.islast
                 totBear += b.vol
     for b in blocks
         if b.vis
+            if fvgMode
+                f_hideBlock(b)
             f_drawBlock(b)
             f_refreshBlock(b, b.kind == 1 ? totBull : totBear)
         else
@@ -985,7 +1138,7 @@ if showDash and barstate.islast
             float d = math.abs(close - (b.top + b.bot) / 2)
             if na(best) or d < best
                 best := d
-                nb   := "#" + str.tostring(b.id) + (b.bias == 1 ? " Buyers " + str.tostring(b.buyPct, "#") : " Sellers " + str.tostring(b.sellPct, "#")) + "%"
+                nb   := "#" + f_num(b) + (b.bias == 1 ? " Buyers " + str.tostring(b.buyPct, "#") : " Sellers " + str.tostring(b.sellPct, "#")) + "%"
 
     bool dPass = math.abs(delta) >= minDelta
     string sig = na(lastSigBar) ? "—" : lastSigTxt + " · " + str.tostring(bar_index - lastSigBar) + " bars ago"
