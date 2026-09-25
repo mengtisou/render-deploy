@@ -1451,6 +1451,67 @@ if drawBull or drawBear
     f_keepSignals()
 
 // ════════════════════════════════════════════════════════════════════
+// BACKTEST · WIN / LOSS  (follows the 5-gate rule: enter on ENTER LONG / SHORT
+// at the signal close, SL = the rule's stop, TP = entry ± R multiple)
+// ════════════════════════════════════════════════════════════════════
+grpW    = "⑮ Backtest · Win / Loss"
+showWL  = input.bool(true, "Show W / L on the chart", group=grpW)
+tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="2 = TP at twice the risk (entry → SL distance).")
+oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
+bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
+cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
+cLoss   = input.color(#F23645, "Loss color", inline="wl", group=grpW)
+
+type Trade
+    int   dir
+    float entry
+    float sl
+    float tp
+    int   bar
+    line  lTp
+    line  lSl
+
+var Trade trd    = na
+var int   wins   = 0
+var int   losses = 0
+var float netR   = 0.0
+
+// 1) manage the open trade (from the candle after entry, on closed candles only)
+if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
+    bool hitSL = trd.dir == 1 ? low <= trd.sl : high >= trd.sl
+    bool hitTP = trd.dir == 1 ? high >= trd.tp : low <= trd.tp
+    if hitSL or hitTP
+        bool win = hitTP and (not hitSL or bothBar == "Win")
+        wins   += win ? 1 : 0
+        losses += win ? 0 : 1
+        netR   += win ? tpR : -1.0
+        if showWL
+            float px = win ? trd.tp : trd.sl
+            bool  up = (trd.dir == 1) == win
+            label.new(bar_index, px, win ? "W" : "L", style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.small, tooltip=(trd.dir == 1 ? "LONG" : "SHORT") + " " + (win ? "WIN +" + str.tostring(tpR, "#.#") + "R" : "LOSS −1R") + "\nEntry " + str.tostring(trd.entry, format.mintick) + " · SL " + str.tostring(trd.sl, format.mintick) + " · TP " + str.tostring(trd.tp, format.mintick))
+            line.set_x2(trd.lTp, bar_index)
+            line.set_x2(trd.lSl, bar_index)
+        trd := na
+    else if showWL
+        line.set_x2(trd.lTp, bar_index)
+        line.set_x2(trd.lSl, bar_index)
+
+// 2) open a trade on a confirmed ENTER signal
+bool enterL = drawBull and comboLong
+bool enterS = drawBear and comboShort
+if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
+    Block eb   = blocks.get(enterL ? bullIdx : bearIdx)
+    bool  near = low <= eb.top and high >= eb.bot
+    float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
+    float risk = math.abs(close - sl)
+    if risk > 0
+        int   d  = enterL ? 1 : -1
+        float tp = close + d * tpR * risk
+        line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
+        line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
+        trd := Trade.new(d, close, sl, tp, bar_index, l1, l2)
+
+// ════════════════════════════════════════════════════════════════════
 // UN-AUCTIONED PRICE (UH / UL): a candle with no wick on one side leaves a level
 // that was never auctioned. It stays until price trades through it.
 // ════════════════════════════════════════════════════════════════════
@@ -1683,7 +1744,7 @@ if barstate.islast
 var table dash = na
 if showDash and na(dash)
     pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 2 : 7, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 3 : 8, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
 if showDash and barstate.islast
     color gold = #E3B341
@@ -1701,6 +1762,8 @@ if showDash and barstate.islast
                 nb   := "#" + f_num(b) + (b.bias == 1 ? " Buyers " + str.tostring(b.buyPct, "#") : " Sellers " + str.tostring(b.sellPct, "#")) + "%"
 
     bool dPass = math.abs(delta) >= minDelta
+    int    nTr   = wins + losses
+    string wlTxt = str.tostring(wins) + "W " + str.tostring(losses) + "L" + (nTr > 0 ? " (" + str.tostring(wins * 100.0 / nTr, "#") + "%)" : "") + (na(trd) ? "" : " · open")
     string sig = na(lastSigBar) ? "—" : lastSigTxt + " · " + str.tostring(bar_index - lastSigBar) + " bars ago"
     string st  = comboLong and drawBull ? "ENTER LONG" : comboShort and drawBear ? "ENTER SHORT" : "NO PASS, NO TRADE"
 
@@ -1710,6 +1773,8 @@ if showDash and barstate.islast
         table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
         table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 0, 2, wlTxt, text_color=netR >= 0 ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 2, str.tostring(netR, "+#.#;-#.#") + "R", text_color=netR >= 0 ? ok : bad, text_size=size.tiny)
     else
         table.cell(dash, 0, 0, "BTrader OFX", text_color=gold, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
@@ -1725,6 +1790,8 @@ if showDash and barstate.islast
         table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
         table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
+        table.cell(dash, 0, 7, "W / L · " + str.tostring(tpR, "#.#") + "R", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netR, "+#.#;-#.#") + "R", text_color=netR >= 0 ? ok : bad, text_size=size.small)
 
 // ════════════════════════════════════════════════════════════════════
 // ALERTS  (set "Once Per Bar Close" when creating the alert)
