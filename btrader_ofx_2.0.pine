@@ -140,8 +140,8 @@ ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], g
 ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
 ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
 ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
-ob2Mit  = input.string("Absolute", "Mitigation", options=["Absolute", "Close"], group=grpO2, tooltip="Absolute: removed when a wick trades through the whole block. Close: removed when a candle closes through it.")
-ob2Pos  = input.string("Precise (wick)", "Positioning", options=["Precise (wick)", "Full candle"], group=grpO2, tooltip="Precise (BTrader Concept 2.0): bullish block = lower wick of the extreme candle (low → body), bearish = upper wick (body → high). Full: the whole candle.")
+ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (BTrader Concept 2.0): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
+ob2Pos  = input.string("Full candle", "Positioning", options=["Full candle", "Precise (wick)"], group=grpO2, tooltip="Full (matches BTrader Concept 2.0 on 25 Sep: 4256-4259.5 and 4313.5-4316): the whole high-low of the orderblock candle. Precise (wick): only the wick on the extreme side.")
 ob2Bars = input.int(1, "Candles counted for buy / sell activity", minval=1, maxval=10, group=grpO2, tooltip="Volume = only the 1-minute candles of these 5-minute candles that traded INSIDE the block (1 = the orderblock candle only).")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
@@ -1422,7 +1422,7 @@ if not sl2U and not na(sl2P) and close < sl2P
 if obs2.size() > 0
     for i = obs2.size() - 1 to 0
         Block b = obs2.get(i)
-        bool gone = ob2Mit == "Absolute" ? (b.kind == 1 ? low < b.bot : high > b.top) : (b.kind == 1 ? close < b.bot : close > b.top)
+        bool gone = ob2Mit == "Wick through" ? (b.kind == 1 ? low < b.bot : high > b.top) : (b.kind == 1 ? close < b.bot : close > b.top)
         if gone and b.born < bar_index
             f_deleteBlock(b)
             obs2.remove(i)
