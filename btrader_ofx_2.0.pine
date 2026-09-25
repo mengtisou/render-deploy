@@ -141,7 +141,8 @@ ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
 ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
 ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
 ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (BTrader Concept 2.0): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
-ob2Pos  = input.string("Full candle", "Positioning", options=["Full candle", "Precise (wick)"], group=grpO2, tooltip="Full (matches BTrader Concept 2.0 on 25 Sep: 4256-4259.5 and 4313.5-4316): the whole high-low of the orderblock candle. Precise (wick): only the wick on the extreme side.")
+ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (BTrader Concept 2.0): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
+ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (BTrader Concept 2.0): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
 ob2Bars = input.int(1, "Candles counted for buy / sell activity", minval=1, maxval=10, group=grpO2, tooltip="Volume = only the 1-minute candles of these 5-minute candles that traded INSIDE the block (1 = the orderblock candle only).")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
@@ -305,9 +306,10 @@ type IBar
     float cl
     float cb
     float cs
+    array<float> ud
 
 var array<IBar> ibHist = array.new<IBar>()
-IBar curIB = IBar.new(array.new<float>(), array.new<float>(), array.new<float>(), array.new<float>(), high, low, buyVol, sellVol)
+IBar curIB = IBar.new(array.new<float>(), array.new<float>(), array.new<float>(), array.new<float>(), high, low, buyVol, sellVol, array.new<float>())
 if ibN > 0
     for i = 0 to ibN - 1
         float o  = array.get(ibO, i)
@@ -319,6 +321,7 @@ if ibN > 0
         curIB.l.push(ll)
         curIB.v.push(nz(array.get(ibV, i)))
         curIB.bf.push(deltaSrcIn == SRC_IB ? (c > o ? 1.0 : c < o ? 0.0 : 0.5) : (r > 0 ? 0.5 + 0.5 * (c - o) / r : 0.5))
+        curIB.ud.push(c > o ? 1.0 : c < o ? 0.0 : 0.5)
 ibHist.unshift(curIB)
 if ibHist.size() > 320
     ibHist.pop()
@@ -1370,8 +1373,9 @@ f_ibInside(int k, float zTop, float zBot) =>
                 float l   = ib.l.get(i)
                 float rng = h - l
                 float ov  = rng > 0 ? math.max(0.0, math.min(h, zTop) - math.max(l, zBot)) / rng : (l <= zTop and l >= zBot ? 1.0 : 0.0)
-                bv += ib.v.get(i) * ov * ib.bf.get(i)
-                sv += ib.v.get(i) * ov * (1 - ib.bf.get(i))
+                float f = ob2Split == "1-minute up / down" ? ib.ud.get(i) : ib.bf.get(i)
+                bv += ib.v.get(i) * ov * f
+                sv += ib.v.get(i) * ov * (1 - f)
         else
             float rng = ib.ch - ib.cl
             float ov  = rng > 0 ? math.max(0.0, math.min(ib.ch, zTop) - math.max(ib.cl, zBot)) / rng : 1.0
@@ -1392,9 +1396,10 @@ f_ob2(int dir, int fromBar, int id) =>
         // precise = the wick on the extreme side; if there is no wick, the whole candle
         float bodyLo = math.min(open[best], close[best])
         float bodyHi = math.max(open[best], close[best])
-        bool  prec   = ob2Pos == "Precise (wick)"
-        float zTop   = dir == 1 ? (prec and bodyLo > low[best] ? bodyLo : high[best]) : high[best]
-        float zBot   = dir == 1 ? low[best] : (prec and bodyHi < high[best] ? bodyHi : low[best])
+        bool  wick   = ob2Pos == "Wick only"
+        bool  prec   = ob2Pos == "Precise"
+        float zTop   = dir == 1 ? (wick and bodyLo > low[best] ? bodyLo : prec and bodyHi > low[best] ? bodyHi : high[best]) : high[best]
+        float zBot   = dir == 1 ? low[best] : (wick and bodyHi < high[best] ? bodyHi : prec and bodyLo < high[best] ? bodyLo : low[best])
         // internal buy / sell activity: the 1-minute candles that traded inside the block
         float bv = 0.0
         float sv = 0.0
