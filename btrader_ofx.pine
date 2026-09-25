@@ -71,6 +71,7 @@ volNeed   = input.float(0.0, "Volume ratio need (0 = off)", step=0.1, group=grpA
 minSize   = input.float(0.0, "Min candle range (x ATR 100) · 0 = off", minval=0, step=0.1, group=grpA, tooltip="A real accelerator is a big candle for the whole session, not only compared with the last few quiet bars. Hover a signal: the 'Size' line shows its value, so you can set this between the signals you want and the ones you don't.")
 cooldown  = input.int(0, "Cooldown bars (same side)", minval=0, group=grpA, tooltip="Stops back-to-back triangles on consecutive candles.")
 plusOnly  = input.bool(false, "Plus velocity only (BuAx+/BeAx+)", group=grpA, tooltip="Off (reference default): also show BuAx/BeAx whose close is not past the candle middle.")
+bodyNeed  = input.float(50, "Min body % of candle range", minval=0, maxval=100, step=5, group=grpA, tooltip="An accelerator must be a real body candle. Every reference accelerator checked has a body of 88-92% of its range; long-wick candles (e.g. a red candle with a big upper wick) are rejected. 0 = off.")
 wickless  = input.bool(false, "Strict: accelerator must be wickless", group=grpA, tooltip="Bullish: no upper wick (close = high). Bearish: no lower wick (close = low).")
 deltaConf = input.bool(true, "Enable delta confirmation", group=grpA, tooltip="Off: range expansion alone makes an accelerator.")
 showBull  = input.bool(true, "Show BuAx+ (bullish)", group=grpA)
@@ -823,8 +824,9 @@ bool bullPlus = close > mid
 bool bearPlus = close < mid
 bool bullWk   = not wickless or high - close <= syminfo.mintick
 bool bearWk   = not wickless or close - low <= syminfo.mintick
-bool bullAx = showBull and close > open and (not deltaConf or delta > 0) and (bullPlus or not plusOnly) and bullWk and meters and trendBullOK
-bool bearAx = showBear and close < open and (not deltaConf or delta < 0) and (bearPlus or not plusOnly) and bearWk and meters and trendBearOK
+bool bodyOK = barRange > 0 and math.abs(close - open) / barRange * 100 >= bodyNeed
+bool bullAx = showBull and bodyOK and close > open and (not deltaConf or delta > 0) and (bullPlus or not plusOnly) and bullWk and meters and trendBullOK
+bool bearAx = showBear and bodyOK and close < open and (not deltaConf or delta < 0) and (bearPlus or not plusOnly) and bearWk and meters and trendBearOK
 string bullTag = bullPlus ? "BuAx+" : "BuAx"
 string bearTag = bearPlus ? "BeAx+" : "BeAx"
 
@@ -1011,6 +1013,8 @@ if inspectBar
         fl += "\n✗ plus velocity only: close not below mid"
     if wickless and ((up and not bullWk) or (not up and not bearWk))
         fl += "\n✗ strict wickless: candle has a wick"
+    if not bodyOK
+        fl += "\n✗ body " + str.tostring(barRange > 0 ? math.abs(close - open) / barRange * 100 : 0, "#") + "% of range < " + str.tostring(bodyNeed, "#") + "%"
     if rangeRatio < rangeNeed
         fl += "\n✗ range ratio " + f_x(rangeRatio) + " < " + f_x(rangeNeed)
     if deltaConf and deltaRatio < deltaNeed
