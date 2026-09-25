@@ -41,6 +41,7 @@ const string ZT_OB    = "Orderblocks (swing break)"
 const string SENT_FORM   = "Formation candle only"
 const string SENT_RETEST = "Formation + every candle that trades inside"
 const string SENT_AFTER  = "Only candles that trade inside after it forms"
+const string SENT_PROF   = "Zone price band: candles before + after it forms (reference)"
 const string BS_REF   = "Reference (tag + split bar)"
 const string BS_CLASS = "Classic (volume text)"
 const string SYN_BODY = "Body (close - open)"
@@ -102,11 +103,12 @@ grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
 showBlocks = input.bool(true, "Show zones", group=grpB)
 zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
 fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
-fvgMax     = input.int(50, "FVG · Max stored", minval=5, maxval=150, group=grpB)
+fvgMax     = input.int(150, "FVG · Max stored", minval=5, maxval=300, group=grpB, tooltip="Zones stay until a candle closes through them, so more are kept in memory; the chart only shows the top ones near price.")
 fvgVolLen  = input.int(20, "FVG · Volume MA length", minval=2, group=grpB)
 fvgEmaLen  = input.int(50, "FVG · Trend EMA length", minval=2, group=grpB)
 fvgMinAtr  = input.float(0.0, "FVG · Min gap (x ATR) · 0 = any", minval=0, step=0.05, group=grpB)
-fvgSent    = input.string(SENT_AFTER, "FVG · Sentiment volume", options=[SENT_AFTER, SENT_RETEST, SENT_FORM], group=grpB, tooltip="Which candles' buy/sell volume fills the sentiment bar. The reference often shows bearish zones with few sellers (e.g. ▼24%), which only happens when later candles trading inside the zone are counted.")
+fvgSent    = input.string(SENT_PROF, "FVG · Sentiment volume", options=[SENT_PROF, SENT_AFTER, SENT_RETEST, SENT_FORM], group=grpB, tooltip="Reference: buy/sell volume of every candle that traded through the zone's price band, also BEFORE the zone formed (like a volume profile slice). That is why a zone nobody revisited can show 80% sellers.")
+sentLook   = input.int(50, "FVG · Sentiment lookback (bars before)", minval=1, maxval=300, group=grpB)
 sentH      = input.float(15, "Sentiment bar height %", minval=5, maxval=100, group=grpB)
 blockStyle = input.string(BS_REF, "Block style", options=[BS_REF, BS_CLASS], group=grpB, tooltip="Reference: '#3 ▼ 67%' tag (own-side %: buyers for demand ▲, sellers for supply ▼), buyer|seller split bar and a bias word.")
 biasFrom   = input.float(55, "Bias from own-side %", minval=50, maxval=95, group=grpB, tooltip="Reference wording: 55% = Bull/Bear Bias, 52-54% = Neutral.")
@@ -1227,6 +1229,15 @@ if showBlocks and fvgMode and bar_index > 2
         blockId += 1
         float fb = fvgSent == SENT_AFTER ? 0.0 : nz(buyVol[1]) * ov
         float fs = fvgSent == SENT_AFTER ? 0.0 : nz(sellVol[1]) * ov
+        if fvgSent == SENT_PROF
+            // volume-profile slice: every earlier candle's buy/sell volume inside the zone band
+            fb := 0.0
+            fs := 0.0
+            for k = 0 to math.min(sentLook, bar_index - 1)
+                float rk = high[k] - low[k]
+                float ok = rk > 0 ? math.max(0.0, math.min(high[k], zTop) - math.max(low[k], zBot)) / rk : 0.0
+                fb += nz(buyVol[k]) * ok
+                fs += nz(sellVol[k]) * ok
         Block nb = f_newBlock(zTop, zBot, bar_index - 1, fb, fs, kind, blockId)
         nb.score := f_fvgScore(kind, zTop - zBot)
         blocks.unshift(nb)
@@ -1243,23 +1254,32 @@ if showBlocks and fvgMode and fvgSent != SENT_FORM and barstate.isconfirmed and 
                 b.svAcc += sellVol * ov
                 f_setPct(b)
 
-// ---- FVG: show the strongest N zones, numbered by rank ----
+// ---- FVG: show the N zones nearest to price, numbered by strength rank (#1 = strongest) ----
 if fvgMode and blocks.size() > 0
     for b in blocks
         b.vis  := false
         b.rank := 0
     for n = 1 to fvgTop
         int   bestI = -1
+        float bestD = na
+        for i = 0 to blocks.size() - 1
+            Block b = blocks.get(i)
+            float d = close > b.top ? close - b.top : close < b.bot ? b.bot - close : 0.0
+            if not b.vis and (na(bestD) or d < bestD)
+                bestD := d
+                bestI := i
+        if bestI >= 0
+            blocks.get(bestI).vis := true
+    for n = 1 to fvgTop
+        int   bestI = -1
         float bestS = na
         for i = 0 to blocks.size() - 1
             Block b = blocks.get(i)
-            if not b.vis and (na(bestS) or b.score > bestS)
+            if b.vis and b.rank == 0 and (na(bestS) or b.score > bestS)
                 bestS := b.score
                 bestI := i
         if bestI >= 0
-            Block bShow = blocks.get(bestI)
-            bShow.vis  := true
-            bShow.rank := n
+            blocks.get(bestI).rank := n
 
 // ---- orderblocks: show the N nearest unbroken blocks per side ----
 if not fvgMode and blocks.size() > 0
