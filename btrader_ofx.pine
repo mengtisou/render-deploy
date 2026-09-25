@@ -27,6 +27,7 @@ const string RA_TR_PRE  = "SMA true range (previous bars)"
 const string RA_EMA_INC = "EMA high-low (incl. current)"
 const string RA_EMA_PRE = "EMA high-low (previous bars)"
 const string RA_ATR     = "ATR (true range, RMA)"
+const string RA_MED_PRE = "Median high-low (previous bars)"
 // delta average types
 const string DA_SMA_INC  = "SMA |delta| (incl. current)"
 const string DA_SMA_PRE  = "SMA |delta| (previous bars)"
@@ -58,7 +59,7 @@ fitA       = input.float(0.68, "Fitted · body weight", step=0.01, group=grpS)
 fitB       = input.float(1.15, "Fitted · wick weight", step=0.01, group=grpS)
 
 grpA = "② Accelerator · Gate 3"
-rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
+rangeAvgMode = input.string(RA_MED_PRE, "Range average method", options=[RA_MED_PRE, RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
 rangeLen  = input.int(20, "Range average length", minval=2, maxval=50, group=grpA)
 deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
 lookback  = input.int(20, "Delta / volume average length", minval=2, maxval=50, group=grpA)
@@ -79,6 +80,7 @@ showBear  = input.bool(true, "Show BeAx+ (bearish)", group=grpA)
 
 grpG = "③ Delta Gate · Gate 4"
 useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group=grpG, tooltip="Gate 4 of the PDF: applies to the ENTER combo only. Accelerators themselves print without it, like the reference.")
+axDeltaGate  = input.bool(true, "Accelerator itself needs |Delta| ≥ threshold", group=grpG, tooltip="Reference rule: a BuAx+ needs delta ≥ +1.7K, a BeAx+ needs delta ≤ −1.7K. Smaller-delta candles get no triangle.")
 minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
 
 grpV = "④ Signal Display"
@@ -323,11 +325,11 @@ float dIbTick  = ibTickD
 const int NF   = 7   // candidate delta formulas 0..6 · index NF = delta source input
 
 f_raType(string m) =>
-    m == RA_SMA_INC ? 0 : m == RA_SMA_PRE ? 1 : m == RA_TR_INC ? 2 : m == RA_TR_PRE ? 3 : m == RA_EMA_INC ? 4 : m == RA_EMA_PRE ? 5 : 6
+    m == RA_SMA_INC ? 0 : m == RA_SMA_PRE ? 1 : m == RA_TR_INC ? 2 : m == RA_TR_PRE ? 3 : m == RA_EMA_INC ? 4 : m == RA_EMA_PRE ? 5 : m == RA_MED_PRE ? 7 : 6
 f_daType(string m) =>
     m == DA_SMA_INC ? 0 : m == DA_SMA_PRE ? 1 : m == DA_SIDE_INC ? 2 : m == DA_SIDE_PRE ? 3 : m == DA_EMA_INC ? 4 : m == DA_EMA_PRE ? 5 : 6
 f_raName(int t) =>
-    t == 0 ? RA_SMA_INC : t == 1 ? RA_SMA_PRE : t == 2 ? RA_TR_INC : t == 3 ? RA_TR_PRE : t == 4 ? RA_EMA_INC : t == 5 ? RA_EMA_PRE : RA_ATR
+    t == 0 ? RA_SMA_INC : t == 1 ? RA_SMA_PRE : t == 2 ? RA_TR_INC : t == 3 ? RA_TR_PRE : t == 4 ? RA_EMA_INC : t == 5 ? RA_EMA_PRE : t == 7 ? RA_MED_PRE : RA_ATR
 f_daName(int t) =>
     t == 0 ? DA_SMA_INC : t == 1 ? DA_SMA_PRE : t == 2 ? DA_SIDE_INC : t == 3 ? DA_SIDE_PRE : t == 4 ? DA_EMA_INC : t == 5 ? DA_EMA_PRE : DA_RMA
 f_fName(int f) =>
@@ -346,6 +348,13 @@ var array<float> stRmaD  = array.new<float>((NF + 1) * (CAL_N + 1), na)
 f_step(float prev, float x, float a) =>
     na(prev) ? x : a * x + (1 - a) * prev
 
+// median of the previous n candle ranges: one very big candle does not pull it up like an average
+f_medPrev(int n) =>
+    array<float> a = array.new<float>()
+    for i = 1 to n
+        a.push(nz(barRange[i]))
+    a.median()
+
 f_rangeCand(int t, int n) =>
     float v = na
     if t <= 3
@@ -358,6 +367,8 @@ f_rangeCand(int t, int n) =>
         v := f_step(stEmaHL.get(n), barRange, 2.0 / (n + 1))
     else if t == 5
         v := stEmaHL.get(n)
+    else if t == 7
+        v := f_medPrev(n)
     else
         v := f_step(stRmaTR.get(n), trS, 1.0 / n)
     v
@@ -1118,8 +1129,8 @@ bool bearPlus = close < mid
 bool bullWk   = not wickless or high - close <= syminfo.mintick
 bool bearWk   = not wickless or close - low <= syminfo.mintick
 bool bodyOK = barRange > 0 and math.abs(close - open) / barRange * 100 >= bodyNeed
-bool bullAx = showBull and bodyOK and close > open and (not deltaConf or delta > 0) and (bullPlus or not plusOnly) and bullWk and meters and trendBullOK
-bool bearAx = showBear and bodyOK and close < open and (not deltaConf or delta < 0) and (bearPlus or not plusOnly) and bearWk and meters and trendBearOK
+bool bullAx = showBull and (not axDeltaGate or delta >= minDelta) and bodyOK and close > open and (not deltaConf or delta > 0) and (bullPlus or not plusOnly) and bullWk and meters and trendBullOK
+bool bearAx = showBear and (not axDeltaGate or delta <= -minDelta) and bodyOK and close < open and (not deltaConf or delta < 0) and (bearPlus or not plusOnly) and bearWk and meters and trendBearOK
 string bullTag = bullPlus ? "BuAx+" : "BuAx"
 string bearTag = bearPlus ? "BeAx+" : "BeAx"
 
@@ -1567,6 +1578,8 @@ f_refWhy() =>
         w += "\n✗ delta is not positive"
     if deltaConf and deltaRatio < deltaNeed
         w += "\n✗ delta ratio " + f_x(deltaRatio) + " < " + f_x(deltaNeed) + "  → our delta avg is too big"
+    if axDeltaGate and delta < minDelta
+        w += "\n✗ delta " + f_ks(delta) + " < +" + f_k(minDelta)
     if not volOK
         w += "\n✗ volume ratio"
     if not sizeOK
@@ -1587,6 +1600,7 @@ if isA or isB or isC
     t += "\nDelta " + f_ks(delta) + "  |  " + f_ks(rD)
     t += "\nDelta avg " + f_k(avgAbsDelta) + "  |  " + f_k(rDA) + "   ratio " + f_x(deltaRatio) + "  |  " + f_x(math.abs(rD) / rDA)
     t += "\nUsing: range avg " + (useCalR ? f_rfName(aRF) + " " + str.tostring(aRN) : rangeAvgMode + " " + str.tostring(rangeLen)) + " · delta avg " + (useCal ? f_dfName(aDF) + " " + str.tostring(aDN) : deltaAvgMode + " " + str.tostring(lookback))
+    t += "\nMedian range prev 10/14/20/30/50: " + str.tostring(f_medPrev(10), "#.##") + " / " + str.tostring(f_medPrev(14), "#.##") + " / " + str.tostring(f_medPrev(20), "#.##") + " / " + str.tostring(f_medPrev(30), "#.##") + " / " + str.tostring(f_medPrev(50), "#.##")
     bool fired = rD > 0 ? drawBull : drawBear
     t += "\n" + (fired ? "✓ ours fired here too" : "✗ ours did NOT fire:" + (rD > 0 ? f_refWhy() : ""))
     label.new(bar_index, rD > 0 ? low - atr14 * 1.2 : high + atr14 * 1.2, t, style=rD > 0 ? label.style_label_up : label.style_label_down, color=color.new(#131722, 0), textcolor=fired ? #26A69A : #E3B341, size=size.small, textalign=text.align_left)
