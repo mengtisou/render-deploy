@@ -59,7 +59,7 @@ fitB       = input.float(1.15, "Fitted · wick weight", step=0.01, group=grpS)
 
 grpA = "② Accelerator · Gate 3"
 rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
-rangeLen  = input.int(10, "Range average length", minval=2, maxval=50, group=grpA)
+rangeLen  = input.int(20, "Range average length", minval=2, maxval=50, group=grpA)
 deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
 lookback  = input.int(20, "Delta / volume average length", minval=2, maxval=50, group=grpA)
 trendFilter = input.string(TF_OFF, "Trend filter", options=[TF_OFF, TF_STRUCT, TF_EMA], group=grpA, tooltip="Structure: BuAx+ only while structure is bullish (or on the CHoCH candle itself), BeAx+ only while bearish. Removes counter-trend accelerators inside a move.")
