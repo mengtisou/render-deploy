@@ -95,7 +95,7 @@ axCandle    = input.bool(true, "Color the accelerator candle", inline="axc", gro
 cAxBull     = input.color(#1B8A3C, "", inline="axc", group=grpV)
 cAxBear     = input.color(#B71C1C, "", inline="axc", group=grpV)
 sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
-maxSigShown = input.int(1, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference only shows the most recent accelerator (1). Raise it to see history. Alerts and the dashboard still use every signal.")
+maxSigShown = input.int(10, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference only shows the most recent accelerator (1). Raise it to see history. Alerts and the dashboard still use every signal.")
 refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
@@ -504,7 +504,7 @@ calOn = input.bool(false, "Show calculation panels (calibration table + REF CHEC
 
 // Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
 // Volume > 0 → the candle with exactly that volume within ±12 h of the time is used.
-r1On = input.bool(true, "Ref 1", inline="r1a", group=grpC)
+r1On = input.bool(false, "Ref 1", inline="r1a", group=grpC)
 r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
 r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
 r1Rg = input.float(12.54, "Range", inline="r1b", group=grpC)
@@ -513,7 +513,7 @@ r1RR = input.float(0, "Ratio", inline="r1b", group=grpC)
 r1D  = input.float(-4800, "Delta", inline="r1c", group=grpC)
 r1DA = input.float(3100, "Avg", inline="r1c", group=grpC)
 r1DR = input.float(0, "Ratio", inline="r1c", group=grpC)
-r2On = input.bool(true, "Ref 2", inline="r2a", group=grpC)
+r2On = input.bool(false, "Ref 2", inline="r2a", group=grpC)
 r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
 r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
 r2Rg = input.float(14.5, "Range", inline="r2b", group=grpC)
@@ -548,11 +548,17 @@ var string rBest  = "—"
 var string dBest  = "—"
 var int    dFitOK = 0
 
+// preference among formulas that all match: common kinds first
+f_rPref(int f) =>
+    f == 1 ? 0 : f == 0 ? 1 : f == 12 ? 2 : f == 3 ? 3 : f == 2 ? 4 : f == 9 ? 5 : f == 8 ? 6 : f == 11 ? 7 : f == 10 ? 8 : f == 13 ? 9 : f == 15 ? 10 : f == 14 ? 11 : f == 7 ? 12 : f == 6 ? 13 : f == 5 ? 14 : 15
+f_dPref(int f) =>
+    f == 1 ? 0 : f == 0 ? 1 : f == 3 ? 2 : f == 2 ? 3 : f == 7 ? 4 : f == 6 ? 5 : f == 9 ? 6 : f == 8 ? 7 : f == 5 ? 8 : 9
+
 f_isRef(bool on, int t, int v) =>
     on and (v > 0 ? math.abs(time - t) <= 12 * 3600 * 1000 and volume == v : time <= t and time_close > t)
-bool isA = calOn and not gotA and f_isRef(r1On, r1T, r1V)
-bool isB = calOn and not gotB and f_isRef(r2On, r2T, r2V)
-bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
+bool isA = not gotA and f_isRef(r1On, r1T, r1V)
+bool isB = not gotB and f_isRef(r2On, r2T, r2V)
+bool isC = not gotC and f_isRef(r3On, r3T, r3V)
 int  calNeed = (r1On ? 1 : 0) + (r2On ? 1 : 0) + (r3On ? 1 : 0)
 
 // does a candidate average reproduce the reference's rounded numbers?
@@ -670,12 +676,20 @@ if (isA or isB or isC) and bar_index > LMAX + 2
     int   bRj = -1
     int   bRc = -1
     float bRe = 1e9
+    float bRp = 1e9
     nRFull := 0
     for j = 0 to NRF * (LMAX + 1) - 1
         int c = mR.get(j)
         if c == calHits
             nRFull += 1
-        if c > bRc or (c == bRc and eRs.get(j) < bRe)
+            // several formulas can hit the rounded numbers: take the most common kind, length nearest 20
+            float pr = f_rPref(int(math.floor(j / (LMAX + 1)))) * 1000 + math.abs(j % (LMAX + 1) - 20)
+            if bRc < calHits or pr < bRp
+                bRc := c
+                bRe := eRs.get(j)
+                bRp := pr
+                bRj := j
+        else if bRc < calHits and (c > bRc or (c == bRc and eRs.get(j) < bRe))
             bRc := c
             bRe := eRs.get(j)
             bRj := j
@@ -687,12 +701,19 @@ if (isA or isB or isC) and bar_index > LMAX + 2
     int   bDj = -1
     int   bDc = -1
     float bDe = 1e9
+    float bDp = 1e9
     nDFull := 0
     for j = 0 to NDF * (LMAX + 1) - 1
         int c = mD.get(j)
         if c == calHits
             nDFull += 1
-        if c > bDc or (c == bDc and eDs.get(j) < bDe)
+            float pr = f_dPref(int(math.floor(j / (LMAX + 1)))) * 1000 + math.abs(j % (LMAX + 1) - 20)
+            if bDc < calHits or pr < bDp
+                bDc := c
+                bDe := eDs.get(j)
+                bDp := pr
+                bDj := j
+        else if bDc < calHits and (c > bDc or (c == bDc and eDs.get(j) < bDe))
             bDc := c
             bDe := eDs.get(j)
             bDj := j
@@ -1598,7 +1619,7 @@ f_refWhy() =>
         w += "\n✗ cooldown"
     w
 
-if isA or isB or isC
+if calOn and (isA or isB or isC)
     float rA  = isA ? r1R : isB ? r2R : r3R
     float rD  = isA ? r1D : isB ? r2D : r3D
     float rDA = isA ? r1DA : isB ? r2DA : r3DA
