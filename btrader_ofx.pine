@@ -54,9 +54,9 @@ grpS = "① Delta Source"
 deltaSrcIn = input.string(SRC_SY, "Delta source", options=[SRC_FP, SRC_IB, SRC_IA, SRC_SY], group=grpS, tooltip="Footprint = real bid/ask delta (TradingView Premium or Ultimate). If footprint data is missing it falls back to Intrabar, then Synthetic.")
 fpTicks    = input.int(100, "Footprint ticks per row", minval=1, group=grpS)
 ltfIn      = input.timeframe("1", "Intrabar timeframe", group=grpS)
-synMode    = input.string(SYN_FIT, "Synthetic method", options=[SYN_FIT, SYN_BODY, SYN_CLV], group=grpS, tooltip="Fitted anatomy: delta = volume × (0.68 × (close − open) + 1.15 × (lower wick − upper wick)) ÷ (high − low). It reproduces the reference's delta on all 3 reference candles (−4.8K, +2.9K, +2.8K).")
-fitA       = input.float(0.68, "Fitted · body weight", step=0.01, group=grpS)
-fitB       = input.float(1.15, "Fitted · wick weight", step=0.01, group=grpS)
+synMode    = input.string(SYN_FIT, "Synthetic method", options=[SYN_FIT, SYN_BODY, SYN_CLV], group=grpS, tooltip="Fitted anatomy: delta = volume × (0.79 × (close − open) + wick weight × (lower wick − upper wick)) ÷ (high − low). With 0.79 / 0 it gives the reference's delta on 13:00 (+2.8K), 18:25 (−1.4K) and 23 Sep 20:30 (−4.8K).")
+fitA       = input.float(0.79, "Fitted · body weight", step=0.01, group=grpS)
+fitB       = input.float(0.0, "Fitted · wick weight", step=0.01, group=grpS)
 
 grpA = "② Accelerator · Gate 3"
 rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_MED_PRE, RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
@@ -401,8 +401,8 @@ f_deltaCand(int f, int t, int n) =>
 // ---- deep formula families (searched by the auto-calibration, lengths up to 200) ----
 const int LMAX = 200
 const int DN   = 100   // max length for recursive (EMA / RMA) families
-const int NRF  = 16
-const int NDF  = 10
+const int NRF  = 19
+const int NDF  = 11
 const string RF0  = "SMA high-low (incl.)"
 const string RF1  = "SMA high-low (prev.)"
 const string RF2  = "SMA true range (incl.)"
@@ -419,6 +419,9 @@ const string RF12 = "ATR · RMA true range (incl.)"
 const string RF13 = "RMA true range (prev.)"
 const string RF14 = "EMA true range (incl.)"
 const string RF15 = "EMA true range (prev.)"
+const string RF16 = "Same-direction SMA high-low (incl.)"
+const string RF17 = "Same-direction SMA high-low (prev.)"
+const string RF18 = "Median high-low (prev.)"
 const string DF0 = "SMA |delta| (incl.)"
 const string DF1 = "SMA |delta| (prev.)"
 const string DF2 = "Same-side SMA |delta| (incl.)"
@@ -429,19 +432,21 @@ const string DF6 = "EMA |delta| (incl.)"
 const string DF7 = "EMA |delta| (prev.)"
 const string DF8 = "RMA |delta| (incl.)"
 const string DF9 = "RMA |delta| (prev.)"
+const string DF10 = "Median |delta| (prev.)"
 
 f_rfName(int f) =>
-    f == 0 ? RF0 : f == 1 ? RF1 : f == 2 ? RF2 : f == 3 ? RF3 : f == 4 ? RF4 : f == 5 ? RF5 : f == 6 ? RF6 : f == 7 ? RF7 : f == 8 ? RF8 : f == 9 ? RF9 : f == 10 ? RF10 : f == 11 ? RF11 : f == 12 ? RF12 : f == 13 ? RF13 : f == 14 ? RF14 : RF15
+    f == 0 ? RF0 : f == 1 ? RF1 : f == 2 ? RF2 : f == 3 ? RF3 : f == 4 ? RF4 : f == 5 ? RF5 : f == 6 ? RF6 : f == 7 ? RF7 : f == 8 ? RF8 : f == 9 ? RF9 : f == 10 ? RF10 : f == 11 ? RF11 : f == 12 ? RF12 : f == 13 ? RF13 : f == 14 ? RF14 : f == 15 ? RF15 : f == 16 ? RF16 : f == 17 ? RF17 : RF18
 f_rfIdx(string m) =>
-    m == RF0 ? 0 : m == RF1 ? 1 : m == RF2 ? 2 : m == RF3 ? 3 : m == RF4 ? 4 : m == RF5 ? 5 : m == RF6 ? 6 : m == RF7 ? 7 : m == RF8 ? 8 : m == RF9 ? 9 : m == RF10 ? 10 : m == RF11 ? 11 : m == RF12 ? 12 : m == RF13 ? 13 : m == RF14 ? 14 : 15
+    m == RF0 ? 0 : m == RF1 ? 1 : m == RF2 ? 2 : m == RF3 ? 3 : m == RF4 ? 4 : m == RF5 ? 5 : m == RF6 ? 6 : m == RF7 ? 7 : m == RF8 ? 8 : m == RF9 ? 9 : m == RF10 ? 10 : m == RF11 ? 11 : m == RF12 ? 12 : m == RF13 ? 13 : m == RF14 ? 14 : m == RF15 ? 15 : m == RF16 ? 16 : m == RF17 ? 17 : 18
 f_dfName(int f) =>
-    f == 0 ? DF0 : f == 1 ? DF1 : f == 2 ? DF2 : f == 3 ? DF3 : f == 4 ? DF4 : f == 5 ? DF5 : f == 6 ? DF6 : f == 7 ? DF7 : f == 8 ? DF8 : DF9
+    f == 0 ? DF0 : f == 1 ? DF1 : f == 2 ? DF2 : f == 3 ? DF3 : f == 4 ? DF4 : f == 5 ? DF5 : f == 6 ? DF6 : f == 7 ? DF7 : f == 8 ? DF8 : f == 9 ? DF9 : DF10
 f_dfIdx(string m) =>
-    m == DF0 ? 0 : m == DF1 ? 1 : m == DF2 ? 2 : m == DF3 ? 3 : m == DF4 ? 4 : m == DF5 ? 5 : m == DF6 ? 6 : m == DF7 ? 7 : m == DF8 ? 8 : 9
+    m == DF0 ? 0 : m == DF1 ? 1 : m == DF2 ? 2 : m == DF3 ? 3 : m == DF4 ? 4 : m == DF5 ? 5 : m == DF6 ? 6 : m == DF7 ? 7 : m == DF8 ? 8 : m == DF9 ? 9 : 10
 
 float absBody = math.abs(close - open)
 float absDS   = math.abs(deltaSrc)
 float sgnDS   = math.sign(deltaSrc)
+float cdir    = math.sign(close - open)   // candle direction, for same-direction averages
 
 // recursive states for lengths 2..DN, value up to the previous confirmed bar
 var array<float> dsHLE = array.new<float>(DN + 1, na)
@@ -464,6 +469,18 @@ f_rDeep(int fam, int n) =>
             s += x * wt
             w += wt
         v := s / w
+    else if fam == 16 or fam == 17
+        // only candles of the same direction as this one (up candles for an up candle)
+        int   off = fam == 17 ? 1 : 0
+        float s   = 0.0
+        int   c   = 0
+        for i = off to off + n - 1
+            if nz(cdir[i]) == cdir
+                s += nz(barRange[i])
+                c += 1
+        v := c > 0 ? s / c : na
+    else if fam == 18
+        v := f_medPrev(n)
     else if n <= DN
         bool  inc = fam % 2 == 0
         int   g   = int(math.floor((fam - 8) / 2))
@@ -487,6 +504,11 @@ f_dDeep(int fam, int n) =>
                 s += nz(absDS[i + off]) * wt
                 w += wt
         v := w > 0 ? s / w : na
+    else if fam == 10
+        array<float> arr = array.new<float>()
+        for i = 1 to n
+            arr.push(nz(absDS[i]))
+        v := arr.median()
     else if n <= DN
         bool  inc = fam % 2 == 0
         float a   = fam <= 7 ? 2.0 / (n + 1) : 1.0 / n
@@ -651,6 +673,32 @@ if (isA or isB or isC or isD or isE) and bar_index > LMAX + 2
                 hitR += 1
                 if exR == ""
                     exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // range: same-direction candles only (16 incl · 17 prev) and median of previous ranges (18)
+    float q0 = 0.0
+    float qc = 0.0
+    float u0 = 0.0
+    float uc = 0.0
+    array<float> medR = array.new<float>()
+    for n = 1 to LMAX
+        if nz(cdir[n - 1]) == cdir
+            q0 += nz(barRange[n - 1])
+            qc += 1
+        if nz(cdir[n]) == cdir
+            u0 += nz(barRange[n])
+            uc += 1
+        if n <= DN
+            medR.push(nz(barRange[n]))
+        if n >= 2
+            for q = 0 to (n <= DN ? 2 : 1)
+                int   fam = 16 + q
+                float v   = q == 0 ? (qc > 0 ? q0 / qc : na) : q == 1 ? (uc > 0 ? u0 / uc : na) : medR.median()
+                int   j   = fam * (LMAX + 1) + n
+                eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+                if f_rOK(v, refAvg, refRR)
+                    mR.set(j, mR.get(j) + 1)
+                    hitR += 1
+                    if exR == ""
+                        exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
     // delta average, loop families (SMA / same-side / WMA): one pass
     float s0 = 0.0
     float s1 = 0.0
@@ -695,6 +743,19 @@ if (isA or isB or isC or isD or isE) and bar_index > LMAX + 2
                 hitD += 1
                 if exD == ""
                     exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    // delta average: median of previous |delta|
+    array<float> medD = array.new<float>()
+    medD.push(nz(absDS[1]))
+    for n = 2 to DN
+        medD.push(nz(absDS[n]))
+        float v = medD.median()
+        int   j = 10 * (LMAX + 1) + n
+        eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+        if f_dOK(v, refDA, refDR, refD)
+            mD.set(j, mD.get(j) + 1)
+            hitD += 1
+            if exD == ""
+                exD := f_dfName(10) + " " + str.tostring(n) + " = " + f_k(v)
     bool dOKc = math.abs(deltaSrc - refD) <= math.max(150.0, math.abs(refD) * 0.06)
     dFitOK += dOKc ? 1 : 0
     string d = "OHLC " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
@@ -744,9 +805,9 @@ if (isA or isB or isC or isD or isE) and bar_index > LMAX + 2
 grpC0     = "⑬ Auto-calibrate"
 calApply  = input.bool(false, "Apply a formula that matches the reference", group=grpC0, tooltip="Applied only when a formula reproduces the reference's shown numbers on EVERY reference candle. It starts at the last reference candle; to use it on all candles, copy it into 'Use on all candles' below.")
 manDeep   = input.bool(false, "Use on all candles:", inline="md1", group=grpC0)
-manRF     = input.string(RF1, "Range", options=[RF0, RF1, RF2, RF3, RF4, RF5, RF6, RF7, RF8, RF9, RF10, RF11, RF12, RF13, RF14, RF15], inline="md1", group=grpC0)
+manRF     = input.string(RF1, "Range", options=[RF0, RF1, RF2, RF3, RF4, RF5, RF6, RF7, RF8, RF9, RF10, RF11, RF12, RF13, RF14, RF15, RF16, RF17, RF18], inline="md1", group=grpC0)
 manRN     = input.int(20, "len", minval=2, maxval=200, inline="md1", group=grpC0)
-manDF     = input.string(DF1, "Delta avg", options=[DF0, DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8, DF9], inline="md2", group=grpC0)
+manDF     = input.string(DF1, "Delta avg", options=[DF0, DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8, DF9, DF10], inline="md2", group=grpC0)
 manDN     = input.int(20, "len", minval=2, maxval=200, inline="md2", group=grpC0)
 bool useCalR = manDeep or (calApply and calRFound)
 bool useCal  = manDeep or (calApply and calDFound)
