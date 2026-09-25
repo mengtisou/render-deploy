@@ -39,6 +39,7 @@ const string ZT_FVG   = "FVG zones (Sn1P3r)"
 const string ZT_OB    = "Orderblocks (swing break)"
 const string SENT_FORM   = "Formation candle only"
 const string SENT_RETEST = "Formation + every candle that trades inside"
+const string SENT_AFTER  = "Only candles that trade inside after it forms"
 const string BS_REF   = "Reference (tag + split bar)"
 const string BS_CLASS = "Classic (volume text)"
 const string SYN_BODY = "Body (close - open)"
@@ -84,6 +85,7 @@ bullColor   = input.color(#1FA84F, "Bullish signal", group=grpV)
 bearColor   = input.color(#F23645, "Bearish signal", group=grpV)
 sigHalo     = input.bool(false, "Outline triangle (visible on top of blocks)", group=grpV)
 sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
+maxSigShown = input.int(1, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference only shows the most recent accelerator (1). Raise it to see history. Alerts and the dashboard still use every signal.")
 refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
@@ -94,7 +96,7 @@ fvgMax     = input.int(50, "FVG · Max stored", minval=5, maxval=150, group=grpB
 fvgVolLen  = input.int(20, "FVG · Volume MA length", minval=2, group=grpB)
 fvgEmaLen  = input.int(50, "FVG · Trend EMA length", minval=2, group=grpB)
 fvgMinAtr  = input.float(0.0, "FVG · Min gap (x ATR) · 0 = any", minval=0, step=0.05, group=grpB)
-fvgSent    = input.string(SENT_RETEST, "FVG · Sentiment volume", options=[SENT_RETEST, SENT_FORM], group=grpB, tooltip="Which candles' buy/sell volume fills the sentiment bar. The reference often shows bearish zones with few sellers (e.g. ▼24%), which only happens when later candles trading inside the zone are counted.")
+fvgSent    = input.string(SENT_AFTER, "FVG · Sentiment volume", options=[SENT_AFTER, SENT_RETEST, SENT_FORM], group=grpB, tooltip="Which candles' buy/sell volume fills the sentiment bar. The reference often shows bearish zones with few sellers (e.g. ▼24%), which only happens when later candles trading inside the zone are counted.")
 sentH      = input.float(15, "Sentiment bar height %", minval=5, maxval=100, group=grpB)
 blockStyle = input.string(BS_REF, "Block style", options=[BS_REF, BS_CLASS], group=grpB, tooltip="Reference: '#3 ▼ 67%' tag (own-side %: buyers for demand ▲, sellers for supply ▼), buyer|seller split bar and a bias word.")
 biasNeutral = input.float(45, "Neutral from own-side %", minval=0, maxval=60, group=grpB, tooltip="Own-side % ≥ owner threshold → Bull/Bear Bias · ≥ this → Neutral · below → Weak Bull/Bear.")
@@ -726,14 +728,16 @@ if showBlocks and fvgMode and bar_index > 2
         // formation = middle (displacement) candle, share of it inside the gap
         float ov = barRange[1] > 0 ? math.max(0.0, math.min(high[1], zTop) - math.max(low[1], zBot)) / barRange[1] : 0.0
         blockId += 1
-        Block nb = f_newBlock(zTop, zBot, bar_index - 1, nz(buyVol[1]) * ov, nz(sellVol[1]) * ov, kind, blockId)
+        float fb = fvgSent == SENT_AFTER ? 0.0 : nz(buyVol[1]) * ov
+        float fs = fvgSent == SENT_AFTER ? 0.0 : nz(sellVol[1]) * ov
+        Block nb = f_newBlock(zTop, zBot, bar_index - 1, fb, fs, kind, blockId)
         nb.score := f_fvgScore(kind, zTop - zBot)
         blocks.unshift(nb)
         while blocks.size() > fvgMax
             f_deleteBlock(blocks.pop())
 
 // sentiment: add every later confirmed candle's buy/sell volume that traded inside the zone
-if showBlocks and fvgMode and fvgSent == SENT_RETEST and barstate.isconfirmed and barRange > 0 and blocks.size() > 0
+if showBlocks and fvgMode and fvgSent != SENT_FORM and barstate.isconfirmed and barRange > 0 and blocks.size() > 0
     for b in blocks
         if b.born < bar_index
             float ov = math.max(0.0, math.min(high, b.top) - math.max(low, b.bot)) / barRange
@@ -823,6 +827,21 @@ bool atAnyBear = bearAxOK and sigMode == MODE_ANY ? f_findBlock(0, tol) >= 0 : f
 bool drawBull = bullAxOK and (sigMode == MODE_ALL or atAnyBull or comboLong)
 bool drawBear = bearAxOK and (sigMode == MODE_ALL or atAnyBear or comboShort)
 
+// the reference keeps only the latest accelerator on the chart; older ones are removed
+type SigDraw
+    array<label> lbs
+    array<line>  lns
+
+var array<SigDraw> sigHist = array.new<SigDraw>()
+
+f_keepSignals() =>
+    while sigHist.size() > maxSigShown
+        SigDraw old = sigHist.pop()
+        for l in old.lbs
+            label.delete(l)
+        for ln in old.lns
+            line.delete(ln)
+
 var string lastSigTxt = "—"
 var int    lastSigBar = na
 float slBuf = slBufTicks * syminfo.mintick
@@ -836,6 +855,8 @@ f_blockLine(int idx) =>
     s
 
 if drawBull
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>())
+    sigHist.unshift(sd)
     lastBullBar := bar_index
     lastSigBar  := bar_index
     lastSigTxt  := comboLong ? bullTag + " COMBO" : bullTag
@@ -852,19 +873,21 @@ if drawBull
     tt += calib ? f_calib() : ""
     // Gate 5: structure stop (near/inside block → below block, far → below entry candle)
     if sigHalo
-        label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt)
-    label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt)
+        sd.lbs.push(label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.lbs.push(label.new(bar_index, low - atr14 * 0.2, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt))
     if showSigText
-        label.new(bar_index, low - atr14 * 0.45, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt)
+        sd.lbs.push(label.new(bar_index, low - atr14 * 0.45, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
     if comboLong
         Block b = blocks.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
-        label.new(bar_index, low - atr14 * entryOff, "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small, tooltip=tt)
+        sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small, tooltip=tt))
         if showSL
-            line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1)
+            sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBear
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>())
+    sigHist.unshift(sd)
     lastBearBar := bar_index
     lastSigBar  := bar_index
     lastSigTxt  := comboShort ? bearTag + " COMBO" : bearTag
@@ -881,17 +904,20 @@ if drawBear
     tt += calib ? f_calib() : ""
     // Gate 5: structure stop (near/inside block → above block, far → above entry candle)
     if sigHalo
-        label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt)
-    label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt)
+        sd.lbs.push(label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.lbs.push(label.new(bar_index, high + atr14 * 0.2, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt))
     if showSigText
-        label.new(bar_index, high + atr14 * 0.45, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt)
+        sd.lbs.push(label.new(bar_index, high + atr14 * 0.45, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
     if comboShort
         Block b = blocks.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
-        label.new(bar_index, high + atr14 * entryOff, "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small, tooltip=tt)
+        sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small, tooltip=tt))
         if showSL
-            line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1)
+            sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
+
+if drawBull or drawBear
+    f_keepSignals()
 
 // ════════════════════════════════════════════════════════════════════
 // UN-AUCTIONED PRICE (UH / UL): a candle with no wick on one side leaves a level
