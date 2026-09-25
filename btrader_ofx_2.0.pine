@@ -1992,6 +1992,120 @@ if showDash and barstate.islast
         table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small)
 
 // ════════════════════════════════════════════════════════════════════
+// EXTRA TOOLS (like BTrader Concept 2.0): POC line · range box · RSI divergence
+// ════════════════════════════════════════════════════════════════════
+grpE    = "⑯ POC · Range · Divergence"
+showPoc = input.bool(true, "Show POC line", group=grpE, tooltip="Price with the most volume over the lookback (orange line).")
+pocLook = input.int(80, "POC lookback (bars)", minval=10, maxval=500, group=grpE)
+cPoc    = input.color(#FF9800, "POC color", group=grpE)
+showRng = input.bool(true, "Show range box", group=grpE, tooltip="Sideways range: the last N closes all stay within SMA(N) ± width × ATR. Blue = unbroken, green = broken up, red = broken down.")
+rngLen  = input.int(20, "Minimum range length", minval=5, group=grpE)
+rngMult = input.float(1.0, "Range width (x ATR)", minval=0.1, step=0.1, group=grpE)
+rngAtrL = input.int(500, "ATR length", minval=10, group=grpE)
+cRngU   = input.color(#2962FF, "Unbroken", inline="rc", group=grpE)
+cRngUp  = input.color(#089981, "Broken up", inline="rc", group=grpE)
+cRngDn  = input.color(#F23645, "Broken down", inline="rc", group=grpE)
+showDiv = input.bool(true, "Show RSI divergence (⚠ + line)", group=grpE, tooltip="Regular divergence on close pivots: higher high in price + lower high in RSI (bearish), lower low in price + higher low in RSI (bullish).")
+divPiv  = input.int(5, "Pivot period", minval=2, group=grpE)
+divRsiL = input.int(14, "RSI length", minval=2, group=grpE)
+divMaxB = input.int(100, "Maximum bars to check", minval=10, maxval=300, group=grpE)
+divLast = input.bool(true, "Show only last divergence", group=grpE)
+cDiv    = input.color(#5B7FB5, "Divergence color", group=grpE)
+
+// ---- range box (range detector) ----
+float rAtr = ta.atr(rngAtrL) * rngMult
+float rMa  = ta.sma(close, rngLen)
+int   rOut = 0
+for i = 0 to rngLen - 1
+    rOut += math.abs(close[i] - rMa) > rAtr ? 1 : 0
+var box rBox = na
+var int rOs  = 0
+if showRng
+    if rOut == 0 and nz(rOut[1], 1) != 0
+        if not na(rBox) and bar_index - rngLen <= box.get_right(rBox) and rOs == 0
+            // overlapping the running range: widen it
+            box.set_top(rBox, math.max(box.get_top(rBox), rMa + rAtr))
+            box.set_bottom(rBox, math.min(box.get_bottom(rBox), rMa - rAtr))
+            box.set_right(rBox, bar_index)
+        else
+            rBox := box.new(bar_index - rngLen, rMa + rAtr, bar_index, rMa - rAtr, border_color=color.new(cRngU, 40), bgcolor=color.new(cRngU, 80))
+            rOs  := 0
+    else if not na(rBox) and rOs == 0
+        if close > box.get_top(rBox)
+            rOs := 1
+            box.set_bgcolor(rBox, color.new(cRngUp, 80))
+            box.set_border_color(rBox, color.new(cRngUp, 40))
+        else if close < box.get_bottom(rBox)
+            rOs := -1
+            box.set_bgcolor(rBox, color.new(cRngDn, 80))
+            box.set_border_color(rBox, color.new(cRngDn, 40))
+        else
+            box.set_right(rBox, bar_index)
+
+// ---- RSI regular divergence on close pivots ----
+float dRsi = ta.rsi(close, divRsiL)
+float dPH  = ta.pivothigh(close, divPiv, divPiv)
+float dPL  = ta.pivotlow(close, divPiv, divPiv)
+var float pPH = na
+var float rPH = na
+var int   bPH = na
+var float pPL = na
+var float rPL = na
+var int   bPL = na
+var line  dLn = na
+var label dLb = na
+if showDiv and not na(dPH)
+    int   b = bar_index - divPiv
+    float r = dRsi[divPiv]
+    if not na(pPH) and b - bPH <= divMaxB and dPH > pPH and r < rPH
+        if divLast
+            line.delete(dLn)
+            label.delete(dLb)
+        dLn := line.new(bPH, pPH, b, dPH, color=cDiv, width=1)
+        dLb := label.new(bPH, pPH, "⚠", style=label.style_none, textcolor=#F7C548, size=size.small)
+    pPH := dPH
+    rPH := r
+    bPH := b
+if showDiv and not na(dPL)
+    int   b = bar_index - divPiv
+    float r = dRsi[divPiv]
+    if not na(pPL) and b - bPL <= divMaxB and dPL < pPL and r > rPL
+        if divLast
+            line.delete(dLn)
+            label.delete(dLb)
+        dLn := line.new(bPL, pPL, b, dPL, color=cDiv, width=1)
+        dLb := label.new(bPL, pPL, "⚠", style=label.style_none, textcolor=#F7C548, size=size.small)
+    pPL := dPL
+    rPL := r
+    bPL := b
+
+// ---- POC line (last bar) ----
+var line pocLn = na
+if showPoc and barstate.islast
+    int   n   = math.min(pocLook, bar_index + 1)
+    float pHi = high
+    float pLo = low
+    for i = 0 to n - 1
+        pHi := math.max(pHi, high[i])
+        pLo := math.min(pLo, low[i])
+    int   rows = 50
+    float st   = (pHi - pLo) / rows
+    if st > 0
+        array<float> vr = array.new<float>(rows, 0.0)
+        for i = 0 to n - 1
+            float rg = high[i] - low[i]
+            int   r0 = math.max(0, math.min(rows - 1, int(math.floor((low[i] - pLo) / st))))
+            int   r1 = math.max(0, math.min(rows - 1, int(math.floor((high[i] - pLo) / st))))
+            for r = r0 to r1
+                float lo = pLo + r * st
+                float ov = rg > 0 ? math.max(0.0, math.min(high[i], lo + st) - math.max(low[i], lo)) / rg : 1.0 / (r1 - r0 + 1)
+                vr.set(r, vr.get(r) + volume[i] * ov)
+        int pr = vr.indexof(vr.max())
+        float pocPx = pLo + (pr + 0.5) * st
+        line.delete(pocLn)
+        pocLn := line.new(bar_index - n + 1, pocPx, bar_index + 20, pocPx, color=cPoc, width=2)
+
+// ════════════════════════════════════════════════════════════════════
 // ALERTS  (set "Once Per Bar Close" when creating the alert)
 // ════════════════════════════════════════════════════════════════════
 alertcondition(drawBull, "BuAx+ Accelerator", "BuAx+ on {{ticker}} {{interval}} · close {{close}}")
