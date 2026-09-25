@@ -384,35 +384,328 @@ f_deltaCand(int f, int t, int n) =>
         v := f_step(stRmaD.get(k), math.abs(d0), 1.0 / n)
     v
 
-// ---- active settings: inputs, replaced by the auto-calibration result once it is ready ----
-calApply = input.bool(true, "Apply calibrated settings automatically", group="⑬ Auto-calibrate", tooltip="Once 2 reference candles are found on the chart, every later candle uses the formula that best reproduces the reference's numbers — but only if it really matches (error under the limit below). To use it on ALL candles, copy the result shown in the calibration table into ① and ②.")
-calMaxErr = input.float(5.0, "Only apply if error under (%)", minval=0.5, step=0.5, group="⑬ Auto-calibrate", tooltip="A bigger error means none of the tested formulas is the reference's formula, so applying it would only make the numbers worse.")
-var bool calReady = false
-var bool calROK   = false
-var bool calDOK   = false
-var int  cRT = 1
-var int  cRN = 10
-var int  cF  = 1
-var int  cDT = 1
+// ---- deep formula families (searched by the auto-calibration, lengths up to 200) ----
+const int LMAX = 200
+const int DN   = 100   // max length for recursive (EMA / RMA) families
+const int NRF  = 16
+const int NDF  = 10
+const string RF0  = "SMA high-low (incl.)"
+const string RF1  = "SMA high-low (prev.)"
+const string RF2  = "SMA true range (incl.)"
+const string RF3  = "SMA true range (prev.)"
+const string RF4  = "SMA body (incl.)"
+const string RF5  = "SMA body (prev.)"
+const string RF6  = "WMA high-low (incl.)"
+const string RF7  = "WMA high-low (prev.)"
+const string RF8  = "EMA high-low (incl.)"
+const string RF9  = "EMA high-low (prev.)"
+const string RF10 = "RMA high-low (incl.)"
+const string RF11 = "RMA high-low (prev.)"
+const string RF12 = "ATR · RMA true range (incl.)"
+const string RF13 = "RMA true range (prev.)"
+const string RF14 = "EMA true range (incl.)"
+const string RF15 = "EMA true range (prev.)"
+const string DF0 = "SMA |delta| (incl.)"
+const string DF1 = "SMA |delta| (prev.)"
+const string DF2 = "Same-side SMA |delta| (incl.)"
+const string DF3 = "Same-side SMA |delta| (prev.)"
+const string DF4 = "WMA |delta| (incl.)"
+const string DF5 = "WMA |delta| (prev.)"
+const string DF6 = "EMA |delta| (incl.)"
+const string DF7 = "EMA |delta| (prev.)"
+const string DF8 = "RMA |delta| (incl.)"
+const string DF9 = "RMA |delta| (prev.)"
+
+f_rfName(int f) =>
+    f == 0 ? RF0 : f == 1 ? RF1 : f == 2 ? RF2 : f == 3 ? RF3 : f == 4 ? RF4 : f == 5 ? RF5 : f == 6 ? RF6 : f == 7 ? RF7 : f == 8 ? RF8 : f == 9 ? RF9 : f == 10 ? RF10 : f == 11 ? RF11 : f == 12 ? RF12 : f == 13 ? RF13 : f == 14 ? RF14 : RF15
+f_rfIdx(string m) =>
+    m == RF0 ? 0 : m == RF1 ? 1 : m == RF2 ? 2 : m == RF3 ? 3 : m == RF4 ? 4 : m == RF5 ? 5 : m == RF6 ? 6 : m == RF7 ? 7 : m == RF8 ? 8 : m == RF9 ? 9 : m == RF10 ? 10 : m == RF11 ? 11 : m == RF12 ? 12 : m == RF13 ? 13 : m == RF14 ? 14 : 15
+f_dfName(int f) =>
+    f == 0 ? DF0 : f == 1 ? DF1 : f == 2 ? DF2 : f == 3 ? DF3 : f == 4 ? DF4 : f == 5 ? DF5 : f == 6 ? DF6 : f == 7 ? DF7 : f == 8 ? DF8 : DF9
+f_dfIdx(string m) =>
+    m == DF0 ? 0 : m == DF1 ? 1 : m == DF2 ? 2 : m == DF3 ? 3 : m == DF4 ? 4 : m == DF5 ? 5 : m == DF6 ? 6 : m == DF7 ? 7 : m == DF8 ? 8 : 9
+
+float absBody = math.abs(close - open)
+float absDS   = math.abs(deltaSrc)
+float sgnDS   = math.sign(deltaSrc)
+
+// recursive states for lengths 2..DN, value up to the previous confirmed bar
+var array<float> dsHLE = array.new<float>(DN + 1, na)
+var array<float> dsHLR = array.new<float>(DN + 1, na)
+var array<float> dsTRR = array.new<float>(DN + 1, na)
+var array<float> dsTRE = array.new<float>(DN + 1, na)
+var array<float> dsDE  = array.new<float>(DN + 1, na)
+var array<float> dsDR  = array.new<float>(DN + 1, na)
+
+// range average of family fam, length n, on the current bar
+f_rDeep(int fam, int n) =>
+    float v = na
+    if fam <= 7
+        int   off = fam % 2
+        float s   = 0.0
+        float w   = 0.0
+        for i = 0 to n - 1
+            float x  = fam <= 1 or fam >= 6 ? nz(barRange[i + off]) : fam <= 3 ? nz(trS[i + off]) : nz(absBody[i + off])
+            float wt = fam >= 6 ? n - i : 1
+            s += x * wt
+            w += wt
+        v := s / w
+    else if n <= DN
+        bool  inc = fam % 2 == 0
+        int   g   = int(math.floor((fam - 8) / 2))
+        float a   = g == 0 or g == 3 ? 2.0 / (n + 1) : 1.0 / n
+        float x   = g <= 1 ? barRange : trS
+        float st  = g == 0 ? dsHLE.get(n) : g == 1 ? dsHLR.get(n) : g == 2 ? dsTRR.get(n) : dsTRE.get(n)
+        v := inc ? f_step(st, x, a) : st
+    v
+
+// |delta| average of family fam, length n, on the current bar (delta = the delta source above)
+f_dDeep(int fam, int n) =>
+    float v = na
+    if fam <= 5
+        int   off = fam % 2
+        float s   = 0.0
+        float w   = 0.0
+        for i = 0 to n - 1
+            bool  use = fam == 2 or fam == 3 ? math.sign(nz(deltaSrc[i + off])) == sgnDS : true
+            float wt  = fam >= 4 ? n - i : 1
+            if use
+                s += nz(absDS[i + off]) * wt
+                w += wt
+        v := w > 0 ? s / w : na
+    else if n <= DN
+        bool  inc = fam % 2 == 0
+        float a   = fam <= 7 ? 2.0 / (n + 1) : 1.0 / n
+        float st  = fam <= 7 ? dsDE.get(n) : dsDR.get(n)
+        v := inc ? f_step(st, absDS, a) : st
+    v
+
+// ════ reference search runs BEFORE the averages, so a matching formula is used on the reference candle itself ════
+var bool calRFound = false
+var bool calDFound = false
+var int  cRF = 1
+var int  cRN = 20
+var int  cDF = 1
 var int  cDN = 20
-bool useCalR = calApply and calReady and calROK
-bool useCal  = calApply and calReady and calDOK
-int  uRT = useCalR ? cRT : f_raType(rangeAvgMode)
-int  uRN = useCalR ? cRN : rangeLen
-int  uF  = useCal ? cF : NF
-int  uDT = useCal ? cDT : f_daType(deltaAvgMode)
-int  uDN = useCal ? cDN : lookback
+grpC  = "⑬ Auto-calibrate"
+calOn = input.bool(true, "Show auto-calibration result", group=grpC, tooltip="Needs OANDA XAUUSD 5M with history back to 22 Sep 2026 loaded.")
 
-if useCal
-    delta   := f_dAt(cF, 0)
-    buyVol  := (volume + delta) / 2
-    sellVol := (volume - delta) / 2
-    curIB.cb := buyVol
-    curIB.cs := sellVol
-    srcUsed := cF <= 1 or cF == 4 ? "SYNTHETIC (candle anatomy)" : cF == 2 or cF == 6 ? "INTRABAR (" + ltf + ")" : "INTRABAR ANATOMY (" + ltf + ")"
+// Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
+// Volume > 0 → the candle with exactly that volume within ±12 h of the time is used.
+r1On = input.bool(true, "Ref 1", inline="r1a", group=grpC)
+r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
+r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
+r1Rg = input.float(12.54, "Range", inline="r1b", group=grpC)
+r1R  = input.float(6.81, "Avg", inline="r1b", group=grpC)
+r1RR = input.float(0, "Ratio", inline="r1b", group=grpC)
+r1D  = input.float(-4800, "Delta", inline="r1c", group=grpC)
+r1DA = input.float(3100, "Avg", inline="r1c", group=grpC)
+r1DR = input.float(0, "Ratio", inline="r1c", group=grpC)
+r2On = input.bool(true, "Ref 2", inline="r2a", group=grpC)
+r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
+r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
+r2Rg = input.float(14.5, "Range", inline="r2b", group=grpC)
+r2R  = input.float(8.75, "Avg", inline="r2b", group=grpC)
+r2RR = input.float(0, "Ratio", inline="r2b", group=grpC)
+r2D  = input.float(2900, "Delta", inline="r2c", group=grpC)
+r2DA = input.float(1800, "Avg", inline="r2c", group=grpC)
+r2DR = input.float(0, "Ratio", inline="r2c", group=grpC)
+r3On = input.bool(true, "Ref 3", inline="r3a", group=grpC)
+r3T  = input.time(timestamp("25 Sep 2026 06:00 +0000"), "", inline="r3a", group=grpC)
+r3V  = input.int(3968, "Vol", inline="r3a", group=grpC)
+r3Rg = input.float(5.82, "Range", inline="r3b", group=grpC)
+r3R  = input.float(3.56, "Avg", inline="r3b", group=grpC)
+r3RR = input.float(1.63, "Ratio", inline="r3b", group=grpC)
+r3D  = input.float(2800, "Delta", inline="r3c", group=grpC)
+r3DA = input.float(1100, "Avg", inline="r3c", group=grpC)
+r3DR = input.float(2.51, "Ratio", inline="r3c", group=grpC, tooltip="Ratio 0 = not known. Averages are checked the way the reference rounds them: range to 0.01, delta to 0.1K, ratios to 0.01x.")
 
-float avgRange    = f_rangeCand(uRT, uRN)
-float avgAbsDelta = f_deltaCand(uF, uDT, uDN)
+var array<int>    mR   = array.new<int>(NRF * (LMAX + 1), 0)
+var array<float>  eRs  = array.new<float>(NRF * (LMAX + 1), 0.0)
+var array<int>    mD   = array.new<int>(NDF * (LMAX + 1), 0)
+var array<float>  eDs  = array.new<float>(NDF * (LMAX + 1), 0.0)
+var array<string> calDiag = array.new<string>(3, "not found on chart")
+var int    calHits  = 0
+var string calFound = ""
+var bool   gotA = false
+var bool   gotB = false
+var bool   gotC = false
+var int    nRFull = 0
+var int    nDFull = 0
+var string rBest  = "—"
+var string dBest  = "—"
+var int    dFitOK = 0
+
+f_isRef(bool on, int t, int v) =>
+    on and (v > 0 ? math.abs(time - t) <= 12 * 3600 * 1000 and volume == v : time <= t and time_close > t)
+bool isA = calOn and not gotA and f_isRef(r1On, r1T, r1V)
+bool isB = calOn and not gotB and f_isRef(r2On, r2T, r2V)
+bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
+int  calNeed = (r1On ? 1 : 0) + (r2On ? 1 : 0) + (r3On ? 1 : 0)
+
+// does a candidate average reproduce the reference's rounded numbers?
+f_rOK(float v, float ref, float rr) =>
+    not na(v) and v > 0 and math.abs(v - ref) <= 0.0051 and (rr <= 0 or math.abs(barRange / v - rr) <= 0.0051)
+f_dOK(float v, float ref, float dr) =>
+    not na(v) and v > 0 and math.abs(v - ref) <= 50.5 and (dr <= 0 or math.abs(absDS / v - dr) <= 0.0051)
+
+if (isA or isB or isC) and bar_index > LMAX + 2
+    float refAvg = isA ? r1R : isB ? r2R : r3R
+    float refRR  = isA ? r1RR : isB ? r2RR : r3RR
+    float refRg  = isA ? r1Rg : isB ? r2Rg : r3Rg
+    float refD   = isA ? r1D : isB ? r2D : r3D
+    float refDA  = isA ? r1DA : isB ? r2DA : r3DA
+    float refDR  = isA ? r1DR : isB ? r2DR : r3DR
+    gotA := gotA or isA
+    gotB := gotB or isB
+    gotC := gotC or isC
+    calHits  += 1
+    calFound += isA ? " A" : isB ? " B" : " C"
+    int   hitR = 0
+    int   hitD = 0
+    string exR = ""
+    string exD = ""
+    // range, loop families (SMA / WMA): one pass with running sums per source
+    for src = 0 to 2
+        float a0 = 0.0
+        float a1 = 0.0
+        float b0 = 0.0
+        float b1 = 0.0
+        for n = 1 to LMAX
+            float xi = src == 0 ? nz(barRange[n - 1]) : src == 1 ? nz(trS[n - 1]) : nz(absBody[n - 1])
+            float xp = src == 0 ? nz(barRange[n]) : src == 1 ? nz(trS[n]) : nz(absBody[n])
+            a0 += xi
+            a1 += (n - 1) * xi
+            b0 += xp
+            b1 += (n - 1) * xp
+            if n >= 2
+                float tri = n * (n + 1) / 2.0
+                for q = 0 to (src == 0 ? 3 : 1)
+                    int   fam = src == 0 ? (q <= 1 ? q : q + 4) : src * 2 + q
+                    float v   = q == 0 ? a0 / n : q == 1 ? b0 / n : q == 2 ? (n * a0 - a1) / tri : (n * b0 - b1) / tri
+                    int   j   = fam * (LMAX + 1) + n
+                    eRs.set(j, eRs.get(j) + math.abs(v - refAvg) / refAvg)
+                    if f_rOK(v, refAvg, refRR)
+                        mR.set(j, mR.get(j) + 1)
+                        hitR += 1
+                        if exR == ""
+                            exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // range, recursive families (EMA / RMA)
+    for fam = 8 to NRF - 1
+        for n = 2 to DN
+            float v = f_rDeep(fam, n)
+            int   j = fam * (LMAX + 1) + n
+            eRs.set(j, eRs.get(j) + (na(v) ? 1.0 : math.abs(v - refAvg) / refAvg))
+            if f_rOK(v, refAvg, refRR)
+                mR.set(j, mR.get(j) + 1)
+                hitR += 1
+                if exR == ""
+                    exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // delta average, loop families (SMA / same-side / WMA): one pass
+    float s0 = 0.0
+    float s1 = 0.0
+    float p0 = 0.0
+    float p1 = 0.0
+    float ss = 0.0
+    float sc = 0.0
+    float ps = 0.0
+    float pc = 0.0
+    for n = 1 to LMAX
+        float xi = nz(absDS[n - 1])
+        float xp = nz(absDS[n])
+        s0 += xi
+        s1 += (n - 1) * xi
+        p0 += xp
+        p1 += (n - 1) * xp
+        if math.sign(nz(deltaSrc[n - 1])) == sgnDS
+            ss += xi
+            sc += 1
+        if math.sign(nz(deltaSrc[n])) == sgnDS
+            ps += xp
+            pc += 1
+        if n >= 2
+            float tri = n * (n + 1) / 2.0
+            for fam = 0 to 5
+                float v = fam == 0 ? s0 / n : fam == 1 ? p0 / n : fam == 2 ? (sc > 0 ? ss / sc : na) : fam == 3 ? (pc > 0 ? ps / pc : na) : fam == 4 ? (n * s0 - s1) / tri : (n * p0 - p1) / tri
+                int   j = fam * (LMAX + 1) + n
+                eDs.set(j, eDs.get(j) + (na(v) ? 1.0 : math.abs(v - refDA) / refDA))
+                if f_dOK(v, refDA, refDR)
+                    mD.set(j, mD.get(j) + 1)
+                    hitD += 1
+                    if exD == ""
+                        exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    // delta average, recursive families
+    for fam = 6 to NDF - 1
+        for n = 2 to DN
+            float v = f_dDeep(fam, n)
+            int   j = fam * (LMAX + 1) + n
+            eDs.set(j, eDs.get(j) + (na(v) ? 1.0 : math.abs(v - refDA) / refDA))
+            if f_dOK(v, refDA, refDR)
+                mD.set(j, mD.get(j) + 1)
+                hitD += 1
+                if exD == ""
+                    exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    bool dOKc = math.round(deltaSrc / 100) * 100 == refD
+    dFitOK += dOKc ? 1 : 0
+    string d = "OHLC " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
+    d += " · range " + str.tostring(barRange, "#.##") + (math.abs(barRange - refRg) < 0.02 ? " ✓" : " ✗ ref " + str.tostring(refRg, "#.##")) + " · vol " + str.tostring(volume, "#")
+    d += "\nDelta " + f_ks(deltaSrc) + " vs ref " + f_ks(refD) + (dOKc ? " ✓" : " ✗") + " · body " + f_ks(dBody) + " · CLV " + f_ks(dClv)
+    d += "\nRange avg: " + str.tostring(hitR) + " formulas match this candle" + (exR != "" ? " (e.g. " + exR + ")" : "")
+    d += "\nDelta avg: " + str.tostring(hitD) + " formulas match this candle" + (exD != "" ? " (e.g. " + exD + ")" : "")
+    calDiag.set(isA ? 0 : isB ? 1 : 2, d)
+
+    // best: matches every reference candle found so far (then the smallest error)
+    int   bRj = -1
+    int   bRc = -1
+    float bRe = 1e9
+    nRFull := 0
+    for j = 0 to NRF * (LMAX + 1) - 1
+        int c = mR.get(j)
+        if c == calHits
+            nRFull += 1
+        if c > bRc or (c == bRc and eRs.get(j) < bRe)
+            bRc := c
+            bRe := eRs.get(j)
+            bRj := j
+    cRF := int(math.floor(bRj / (LMAX + 1)))
+    cRN := bRj % (LMAX + 1)
+    // exact match on every reference candle, or (fallback) within 3% on average
+    calRFound := calHits >= calNeed and (bRc == calHits or bRe / calHits < 0.03)
+    rBest := f_rfName(cRF) + " · length " + str.tostring(cRN) + " · matches " + str.tostring(bRc) + "/" + str.tostring(calHits) + (nRFull > 1 ? " (" + str.tostring(nRFull) + " formulas match all)" : "")
+    int   bDj = -1
+    int   bDc = -1
+    float bDe = 1e9
+    nDFull := 0
+    for j = 0 to NDF * (LMAX + 1) - 1
+        int c = mD.get(j)
+        if c == calHits
+            nDFull += 1
+        if c > bDc or (c == bDc and eDs.get(j) < bDe)
+            bDc := c
+            bDe := eDs.get(j)
+            bDj := j
+    cDF := int(math.floor(bDj / (LMAX + 1)))
+    cDN := bDj % (LMAX + 1)
+    calDFound := calHits >= calNeed and dFitOK == calHits and (bDc == calHits or bDe / calHits < 0.03)
+    dBest := f_dfName(cDF) + " · length " + str.tostring(cDN) + " · matches " + str.tostring(bDc) + "/" + str.tostring(calHits) + (nDFull > 1 ? " (" + str.tostring(nDFull) + " formulas match all)" : "")
+
+// ---- active settings ----
+grpC0     = "⑬ Auto-calibrate"
+calApply  = input.bool(true, "Apply a formula that matches the reference", group=grpC0, tooltip="Applied only when a formula reproduces the reference's shown numbers on EVERY reference candle. It starts at the last reference candle; to use it on all candles, copy it into 'Use on all candles' below.")
+manDeep   = input.bool(false, "Use on all candles:", inline="md1", group=grpC0)
+manRF     = input.string(RF1, "Range", options=[RF0, RF1, RF2, RF3, RF4, RF5, RF6, RF7, RF8, RF9, RF10, RF11, RF12, RF13, RF14, RF15], inline="md1", group=grpC0)
+manRN     = input.int(20, "len", minval=2, maxval=200, inline="md1", group=grpC0)
+manDF     = input.string(DF1, "Delta avg", options=[DF0, DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8, DF9], inline="md2", group=grpC0)
+manDN     = input.int(20, "len", minval=2, maxval=200, inline="md2", group=grpC0)
+bool useCalR = manDeep or (calApply and calRFound)
+bool useCal  = manDeep or (calApply and calDFound)
+int  aRF = manDeep ? f_rfIdx(manRF) : cRF
+int  aRN = manDeep ? manRN : cRN
+int  aDF = manDeep ? f_dfIdx(manDF) : cDF
+int  aDN = manDeep ? manDN : cDN
+
+float avgRange    = useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
+float avgAbsDelta = useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
 float avgVol      = ta.sma(volume, lookback)[1]
 
 // ---- calibration lines (compare with the reference tooltip on the SAME candle) ----
@@ -1261,156 +1554,6 @@ plot(dwD10p,      "Delta avg SMA10 prev", display=display.data_window)
 plot(dwD20p,      "Delta avg SMA20 prev", display=display.data_window)
 plot(dwD20i,      "Delta avg SMA20 incl", display=display.data_window)
 
-// ════════════════════════════════════════════════════════════════════
-// AUTO-CALIBRATION against the reference's known tooltips (OANDA XAUUSD 5M)
-//   A · 23 Sep 20:30 (UTC+7): Range 12.54 · Avg 6.81 · Delta -4.8K · Avg 3.1K · Vol 6881
-//   B · 22 Sep 15:35 (UTC+7): Range 14.5  · Avg 8.75 · Delta +2.9K · Avg 1.8K · Vol 5126
-//   C · 25 Sep (BuAx+)      : Range 5.82  · Avg 3.56 · Delta +2.8K · Avg 1.1K (ratio 2.51x) · Vol 3968
-// It tests every average type / length / delta formula on those candles and keeps the best.
-// ════════════════════════════════════════════════════════════════════
-grpC  = "⑬ Auto-calibrate"
-calOn = input.bool(true, "Show auto-calibration result", group=grpC, tooltip="Needs OANDA XAUUSD 5M with history back to 22 Sep 2026 loaded.")
-
-// Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
-// Volume > 0 → the candle with exactly that volume within ±12 h of the time is used (safe if the time zone is off).
-// Volume = 0 → the candle that contains the time is used.
-r1On = input.bool(true, "Ref 1", inline="r1a", group=grpC)
-r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
-r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
-r1Rg = input.float(12.54, "Range", inline="r1b", group=grpC)
-r1R  = input.float(6.81, "Range avg", inline="r1b", group=grpC)
-r1D  = input.float(-4800, "Delta", inline="r1b", group=grpC)
-r1DA = input.float(3100, "Delta avg", inline="r1b", group=grpC)
-r2On = input.bool(true, "Ref 2", inline="r2a", group=grpC)
-r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
-r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
-r2Rg = input.float(14.5, "Range", inline="r2b", group=grpC)
-r2R  = input.float(8.75, "Range avg", inline="r2b", group=grpC)
-r2D  = input.float(2900, "Delta", inline="r2b", group=grpC)
-r2DA = input.float(1800, "Delta avg", inline="r2b", group=grpC)
-r3On = input.bool(true, "Ref 3", inline="r3a", group=grpC)
-r3T  = input.time(timestamp("25 Sep 2026 05:50 +0000"), "", inline="r3a", group=grpC)
-r3V  = input.int(3968, "Vol", inline="r3a", group=grpC)
-r3Rg = input.float(5.82, "Range", inline="r3b", group=grpC)
-r3R  = input.float(3.56, "Range avg", inline="r3b", group=grpC)
-r3D  = input.float(2800, "Delta", inline="r3b", group=grpC)
-r3DA = input.float(1115, "Delta avg", inline="r3b", group=grpC, tooltip="Tip: Delta avg = Delta ÷ the reference's delta Ratio is more precise than its rounded 'Avg' (2.8K ÷ 2.51 = 1115).")
-
-const int NT = 7
-var array<float> eR = array.new<float>(NT * (CAL_N + 1), 0.0)
-var array<float> eF = array.new<float>(NF, 0.0)
-var array<float> eD = array.new<float>(NF * NT * (CAL_N + 1), 0.0)
-var int    calHits  = 0
-var string calFound = ""
-var bool   gotA = false
-var bool   gotB = false
-var bool   gotC = false
-
-f_isRef(bool on, int t, int v) =>
-    on and (v > 0 ? math.abs(time - t) <= 12 * 3600 * 1000 and volume == v : time <= t and time_close > t)
-bool isA = calOn and not gotA and f_isRef(r1On, r1T, r1V)
-bool isB = calOn and not gotB and f_isRef(r2On, r2T, r2V)
-bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
-
-var float cRErr = na
-var float cFErr = na
-var float cDErr = na
-// per reference candle: what matches THIS candle alone (shows if one reading is inconsistent)
-var array<string> calDiag = array.new<string>(3, "not found on chart")
-int calNeed = math.max(1, math.min(2, (r1On ? 1 : 0) + (r2On ? 1 : 0) + (r3On ? 1 : 0)))
-if (isA or isB or isC) and bar_index > CAL_N + 2
-    float refRg   = isA ? r1Rg : isB ? r2Rg : r3Rg
-    float refAvg0 = isA ? r1R : isB ? r2R : r3R
-    float refD0   = isA ? r1D : isB ? r2D : r3D
-    float refDA0  = isA ? r1DA : isB ? r2DA : r3DA
-    float bRe = 1e9
-    int   bRt = 0
-    int   bRn = 0
-    float bRv = na
-    for t = 0 to NT - 1
-        for n = 2 to CAL_N
-            float v = f_rangeCand(t, n)
-            float e = na(v) ? 1e9 : math.abs(v - refAvg0) / refAvg0
-            if e < bRe
-                bRe := e
-                bRt := t
-                bRn := n
-                bRv := v
-    float bFe = 1e9
-    int   bF  = 0
-    for f = 0 to NF - 1
-        float e = math.abs(nz(f_dAt(f, 0)) - refD0) / math.abs(refD0)
-        if e < bFe
-            bFe := e
-            bF  := f
-    float bDe = 1e9
-    int   bDt = 0
-    int   bDn = 0
-    float bDv = na
-    for t = 0 to NT - 1
-        for n = 2 to CAL_N
-            float v = f_deltaCand(bF, t, n)
-            float e = na(v) ? 1e9 : math.abs(v - refDA0) / refDA0
-            if e < bDe
-                bDe := e
-                bDt := t
-                bDn := n
-                bDv := v
-    string d = "OHLC " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
-    d += " · range " + str.tostring(barRange, "#.##") + (math.abs(barRange - refRg) < 0.02 ? " ✓" : " ✗ ref " + str.tostring(refRg, "#.##")) + " · vol " + str.tostring(volume, "#")
-    d += "\nRange avg: " + f_raName(bRt) + " " + str.tostring(bRn) + " = " + str.tostring(bRv, "#.##") + " (" + str.tostring(bRe * 100, "#.#") + "%)"
-    d += "\nDelta: " + f_fName(bF) + " = " + f_ks(f_dAt(bF, 0)) + " (" + str.tostring(bFe * 100, "#.#") + "%) · body " + f_ks(dBody) + " · CLV " + f_ks(dClv)
-    d += "\nDelta avg: " + f_daName(bDt) + " " + str.tostring(bDn) + " = " + f_k(bDv) + " (" + str.tostring(bDe * 100, "#.#") + "%)"
-    calDiag.set(isA ? 0 : isB ? 1 : 2, d)
-    float refAvg  = isA ? r1R : isB ? r2R : r3R
-    float refD    = isA ? r1D : isB ? r2D : r3D
-    float refDAvg = isA ? r1DA : isB ? r2DA : r3DA
-    gotA := gotA or isA
-    gotB := gotB or isB
-    gotC := gotC or isC
-    calHits  += 1
-    calFound += isA ? " A" : isB ? " B" : " C"
-    for t = 0 to NT - 1
-        for n = 2 to CAL_N
-            float v = f_rangeCand(t, n)
-            int   j = t * (CAL_N + 1) + n
-            eR.set(j, eR.get(j) + (na(v) or v <= 0 ? 10.0 : math.abs(v - refAvg) / refAvg))
-    for f = 0 to NF - 1
-        eF.set(f, eF.get(f) + math.abs(nz(f_dAt(f, 0)) - refD) / math.abs(refD))
-        for t = 0 to NT - 1
-            for n = 2 to CAL_N
-                float v = f_deltaCand(f, t, n)
-                int   j = (f * NT + t) * (CAL_N + 1) + n
-                eD.set(j, eD.get(j) + (na(v) or v <= 0 ? 10.0 : math.abs(v - refDAvg) / refDAvg))
-    if calHits >= calNeed
-        float bE = 1e9
-        for t = 0 to NT - 1
-            for n = 5 to CAL_N
-                float e = eR.get(t * (CAL_N + 1) + n)
-                if e < bE
-                    bE  := e
-                    cRT := t
-                    cRN := n
-        float fE = 1e9
-        for f = 0 to NF - 1
-            if eF.get(f) < fE
-                fE := eF.get(f)
-                cF := f
-        float dE = 1e9
-        for t = 0 to NT - 1
-            for n = 5 to CAL_N
-                float e = eD.get((cF * NT + t) * (CAL_N + 1) + n)
-                if e < dE
-                    dE  := e
-                    cDT := t
-                    cDN := n
-        cRErr := bE / calHits * 100
-        cFErr := fE / calHits * 100
-        cDErr := dE / calHits * 100
-        calROK := cRErr <= calMaxErr
-        calDOK := cFErr <= calMaxErr and cDErr <= calMaxErr
-        calReady := true
-
 // ---- REF CHECK: on each reference candle, print our numbers next to the reference's and why it fired / did not ----
 f_refWhy() =>
     string w = ""
@@ -1443,6 +1586,7 @@ if isA or isB or isC
     t += "\nRange avg " + str.tostring(avgRange, "#.##") + "  |  " + str.tostring(rA, "#.##") + "   ratio " + f_x(rangeRatio) + "  |  " + f_x(barRange / rA)
     t += "\nDelta " + f_ks(delta) + "  |  " + f_ks(rD)
     t += "\nDelta avg " + f_k(avgAbsDelta) + "  |  " + f_k(rDA) + "   ratio " + f_x(deltaRatio) + "  |  " + f_x(math.abs(rD) / rDA)
+    t += "\nUsing: range avg " + (useCalR ? f_rfName(aRF) + " " + str.tostring(aRN) : rangeAvgMode + " " + str.tostring(rangeLen)) + " · delta avg " + (useCal ? f_dfName(aDF) + " " + str.tostring(aDN) : deltaAvgMode + " " + str.tostring(lookback))
     bool fired = rD > 0 ? drawBull : drawBear
     t += "\n" + (fired ? "✓ ours fired here too" : "✗ ours did NOT fire:" + (rD > 0 ? f_refWhy() : ""))
     label.new(bar_index, rD > 0 ? low - atr14 * 1.2 : high + atr14 * 1.2, t, style=rD > 0 ? label.style_label_up : label.style_label_down, color=color.new(#131722, 0), textcolor=fired ? #26A69A : #E3B341, size=size.small, textalign=text.align_left)
@@ -1450,29 +1594,37 @@ if isA or isB or isC
 var table calTbl = na
 if calOn and barstate.islast
     if na(calTbl)
-        calTbl := table.new(position.bottom_left, 2, 9, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
+        calTbl := table.new(position.bottom_left, 2, 8, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
     color cg = #E3B341
     color ct = #D1D4DC
+    color okC  = #26A69A
+    color badC = #F23645
     table.cell(calTbl, 0, 0, "AUTO-CALIBRATION", text_color=cg, text_size=size.small)
-    table.cell(calTbl, 1, 0, "Reference candles found: " + str.tostring(calHits) + "/3" + calFound, text_color=calHits >= 2 ? #26A69A : #F23645, text_size=size.small)
-    if not calReady
-        table.cell(calTbl, 0, 1, "Not ready", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 1, "Use OANDA XAUUSD 5M and scroll back to 22 Sep so the candles load", text_color=ct, text_size=size.small)
-    else
-        table.cell(calTbl, 0, 1, "Range average", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 1, f_raName(cRT) + " · length " + str.tostring(cRN) + "  (error " + str.tostring(cRErr, "#.#") + "%)" + (calROK ? " ✓" : " ✗ no match"), text_color=calROK ? #26A69A : #F23645, text_size=size.small)
-        table.cell(calTbl, 0, 2, "Delta formula", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 2, f_fName(cF) + "  (error " + str.tostring(cFErr, "#.#") + "%)" + (cFErr <= calMaxErr ? " ✓" : " ✗ no match"), text_color=cFErr <= calMaxErr ? #26A69A : #F23645, text_size=size.small)
-        table.cell(calTbl, 0, 3, "Delta average", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 3, f_daName(cDT) + " · length " + str.tostring(cDN) + "  (error " + str.tostring(cDErr, "#.#") + "%)" + (cDErr <= calMaxErr ? " ✓" : " ✗ no match"), text_color=cDErr <= calMaxErr ? #26A69A : #F23645, text_size=size.small)
-        table.cell(calTbl, 0, 4, "Status", text_color=ct, text_size=size.small)
-        string stTxt = not calApply ? "Not applied (turn on ⑬ Apply)" : calROK and calDOK ? "APPLIED (range + delta)" : calROK ? "Range APPLIED · delta NOT (no formula matches)" : calDOK ? "Delta APPLIED · range NOT (no formula matches)" : "NOT applied — no tested formula matches the reference"
-        table.cell(calTbl, 1, 4, stTxt, text_color=calApply and (calROK or calDOK) ? #26A69A : #F23645, text_size=size.small)
-        table.cell(calTbl, 0, 5, "Use on ALL candles", text_color=ct, text_size=size.small)
-        table.cell(calTbl, 1, 5, "Set these 3 lines in ① / ② settings, then turn Apply off", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 0, "Reference candles found: " + str.tostring(calHits) + "/" + str.tostring(calNeed) + calFound, text_color=calHits >= calNeed ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 1, "Delta formula", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 1, srcUsed + (synMode == SYN_FIT and deltaSrcIn == SRC_SY ? " · fitted " + str.tostring(fitA, "#.##") + " / " + str.tostring(fitB, "#.##") : "") + " · matches " + str.tostring(dFitOK) + "/" + str.tostring(calHits), text_color=dFitOK == calHits and calHits > 0 ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 2, "Range average", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 2, rBest + (calRFound ? " ✓" : " ✗"), text_color=calRFound ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 3, "Delta average", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 3, dBest + (calDFound ? " ✓" : " ✗"), text_color=calDFound ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 4, "Status", text_color=ct, text_size=size.small)
+    string stTxt = manDeep ? "Using the formulas set in 'Use on all candles'" : not calApply ? "Not applied (turn on ⑬ Apply)" : calRFound and calDFound ? "APPLIED from the last reference candle · copy into 'Use on all candles'" : calRFound ? "Range APPLIED · delta avg NOT (no exact match)" : calDFound ? "Delta avg APPLIED · range NOT (no exact match)" : "NOT applied — no formula matches every reference candle"
+    table.cell(calTbl, 1, 4, stTxt, text_color=manDeep or (calApply and (calRFound or calDFound)) ? okC : badC, text_size=size.small)
     for k = 0 to 2
-        table.cell(calTbl, 0, 6 + k, "Ref " + str.tostring(k + 1) + " alone", text_color=ct, text_size=size.tiny)
-        table.cell(calTbl, 1, 6 + k, calDiag.get(k), text_color=ct, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(calTbl, 0, 5 + k, "Ref " + str.tostring(k + 1), text_color=ct, text_size=size.tiny)
+        table.cell(calTbl, 1, 5 + k, calDiag.get(k), text_color=ct, text_size=size.tiny, text_halign=text.align_left)
+
+// ---- advance the deep recursive averages ----
+if barstate.isconfirmed
+    for n = 2 to DN
+        float ae = 2.0 / (n + 1)
+        float ar = 1.0 / n
+        dsHLE.set(n, f_step(dsHLE.get(n), barRange, ae))
+        dsHLR.set(n, f_step(dsHLR.get(n), barRange, ar))
+        dsTRR.set(n, f_step(dsTRR.get(n), trS, ar))
+        dsTRE.set(n, f_step(dsTRE.get(n), trS, ae))
+        dsDE.set(n, f_step(dsDE.get(n), absDS, ae))
+        dsDR.set(n, f_step(dsDR.get(n), absDS, ar))
 
 // ---- advance the recursive averages (only on confirmed bars, so realtime ticks don't compound) ----
 if barstate.isconfirmed
