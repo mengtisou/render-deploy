@@ -80,7 +80,7 @@ showBear  = input.bool(true, "Show BeAx+ (bearish)", group=grpA)
 
 grpG = "③ Delta Gate · Gate 4"
 useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group=grpG, tooltip="Gate 4 of the PDF: applies to the ENTER combo only. Accelerators themselves print without it, like the reference.")
-axDeltaGate  = input.bool(false, "Accelerator itself needs |Delta| ≥ threshold", group=grpG, tooltip="Off (reference): the reference prints a BeAx+ with D:-1.4K, so ±1.7K is only for the ENTER combo. On = no triangle unless delta ≥ +1.7K / ≤ −1.7K.")
+axDeltaGate  = input.bool(true, "Accelerator itself needs |Delta| ≥ threshold", group=grpG, tooltip="On: a BuAx+ needs delta ≥ +1.7K and a BeAx+ needs delta ≤ −1.7K, otherwise no triangle. Lower the threshold below to see smaller ones (e.g. 1400 for the reference's 18:25 BeAx+ with −1.4K).")
 minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
 
 grpV = "④ Signal Display"
