@@ -41,7 +41,8 @@ const string ZT_OB    = "Orderblocks (swing break)"
 const string SENT_FORM   = "Formation candle only"
 const string SENT_RETEST = "Formation + every candle that trades inside"
 const string SENT_AFTER  = "Only candles that trade inside after it forms"
-const string SENT_PROF   = "Zone price band: candles before + after it forms (reference)"
+const string SENT_PROF   = "Zone price band: candles before + after it forms"
+const string SENT_FIRST  = "First candle of the gap, fixed (reference)"
 const string BS_REF   = "Reference (tag + split bar)"
 const string BS_CLASS = "Classic (volume text)"
 const string SYN_BODY = "Body (close - open)"
@@ -107,7 +108,7 @@ fvgMax     = input.int(150, "FVG · Max stored", minval=5, maxval=300, group=grp
 fvgVolLen  = input.int(20, "FVG · Volume MA length", minval=2, group=grpB)
 fvgEmaLen  = input.int(50, "FVG · Trend EMA length", minval=2, group=grpB)
 fvgMinAtr  = input.float(0.0, "FVG · Min gap (x ATR) · 0 = any", minval=0, step=0.05, group=grpB)
-fvgSent    = input.string(SENT_PROF, "FVG · Sentiment volume", options=[SENT_PROF, SENT_AFTER, SENT_RETEST, SENT_FORM], group=grpB, tooltip="Reference: buy/sell volume of every candle that traded through the zone's price band, also BEFORE the zone formed (like a volume profile slice). That is why a zone nobody revisited can show 80% sellers.")
+fvgSent    = input.string(SENT_FIRST, "FVG · Sentiment volume", options=[SENT_FIRST, SENT_PROF, SENT_AFTER, SENT_RETEST, SENT_FORM], group=grpB, tooltip="Reference: the % is fixed when the zone forms (the 4251 zone stays 20/80 for days) and is the buy/sell split of the FIRST candle of the 3-candle gap, the one just before the displacement. That is why values are extreme like 20/80 or 26/74.")
 sentLook   = input.int(50, "FVG · Sentiment lookback (bars before)", minval=1, maxval=300, group=grpB)
 sentH      = input.float(15, "Sentiment bar height %", minval=5, maxval=100, group=grpB)
 blockStyle = input.string(BS_REF, "Block style", options=[BS_REF, BS_CLASS], group=grpB, tooltip="Reference: '#3 ▼ 67%' tag (own-side %: buyers for demand ▲, sellers for supply ▼), buyer|seller split bar and a bias word.")
@@ -1229,6 +1230,10 @@ if showBlocks and fvgMode and bar_index > 2
         blockId += 1
         float fb = fvgSent == SENT_AFTER ? 0.0 : nz(buyVol[1]) * ov
         float fs = fvgSent == SENT_AFTER ? 0.0 : nz(sellVol[1]) * ov
+        if fvgSent == SENT_FIRST
+            // buy / sell split of the first candle of the gap (2 bars ago), whole candle
+            fb := nz(buyVol[2])
+            fs := nz(sellVol[2])
         if fvgSent == SENT_PROF
             // volume-profile slice: every earlier candle's buy/sell volume inside the zone band
             fb := 0.0
@@ -1245,7 +1250,7 @@ if showBlocks and fvgMode and bar_index > 2
             f_deleteBlock(blocks.pop())
 
 // sentiment: add every later confirmed candle's buy/sell volume that traded inside the zone
-if showBlocks and fvgMode and fvgSent != SENT_FORM and barstate.isconfirmed and barRange > 0 and blocks.size() > 0
+if showBlocks and fvgMode and fvgSent != SENT_FORM and fvgSent != SENT_FIRST and barstate.isconfirmed and barRange > 0 and blocks.size() > 0
     for b in blocks
         if b.born < bar_index
             float ov = math.max(0.0, math.min(high, b.top) - math.max(low, b.bot)) / barRange
