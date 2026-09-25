@@ -1456,7 +1456,9 @@ if drawBull or drawBear
 // ════════════════════════════════════════════════════════════════════
 grpW    = "⑮ Backtest · Win / Loss"
 showWL  = input.bool(true, "Show W / L on the chart", group=grpW)
-tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="2 = TP at twice the risk (entry → SL distance).")
+tpMode  = input.string("Fixed price distance", "Take profit type", options=["Fixed price distance", "R multiple"], group=grpW, tooltip="Fixed: TP = entry ± the price distance below (20.00 = 200 points on XAUUSD). R multiple: TP = entry ± R × (entry → SL distance).")
+tpPts   = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
+tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="Only for 'R multiple': 2 = TP at twice the risk.")
 oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
 bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
 cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
@@ -1475,20 +1477,24 @@ var Trade trd    = na
 var int   wins   = 0
 var int   losses = 0
 var float netR   = 0.0
+var float netPts = 0.0
 
 // 1) manage the open trade (from the candle after entry, on closed candles only)
 if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
     bool hitSL = trd.dir == 1 ? low <= trd.sl : high >= trd.sl
     bool hitTP = trd.dir == 1 ? high >= trd.tp : low <= trd.tp
     if hitSL or hitTP
-        bool win = hitTP and (not hitSL or bothBar == "Win")
+        bool  win  = hitTP and (not hitSL or bothBar == "Win")
+        float rsk  = math.abs(trd.entry - trd.sl)
+        float gain = math.abs(trd.tp - trd.entry)
         wins   += win ? 1 : 0
         losses += win ? 0 : 1
-        netR   += win ? tpR : -1.0
+        netR   += win ? gain / rsk : -1.0
+        netPts += win ? gain : -rsk
         if showWL
             float px = win ? trd.tp : trd.sl
             bool  up = (trd.dir == 1) == win
-            label.new(bar_index, px, win ? "W" : "L", style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.small, tooltip=(trd.dir == 1 ? "LONG" : "SHORT") + " " + (win ? "WIN +" + str.tostring(tpR, "#.#") + "R" : "LOSS −1R") + "\nEntry " + str.tostring(trd.entry, format.mintick) + " · SL " + str.tostring(trd.sl, format.mintick) + " · TP " + str.tostring(trd.tp, format.mintick))
+            label.new(bar_index, px, win ? "W" : "L", style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.small, tooltip=(trd.dir == 1 ? "LONG" : "SHORT") + " " + (win ? "WIN +" + str.tostring(gain, "#.##") + " (" + str.tostring(gain / rsk, "#.#") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(trd.entry, format.mintick) + " · SL " + str.tostring(trd.sl, format.mintick) + " · TP " + str.tostring(trd.tp, format.mintick))
             line.set_x2(trd.lTp, bar_index)
             line.set_x2(trd.lSl, bar_index)
         trd := na
@@ -1506,7 +1512,7 @@ if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
     float risk = math.abs(close - sl)
     if risk > 0
         int   d  = enterL ? 1 : -1
-        float tp = close + d * tpR * risk
+        float tp = close + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
         line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
         line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
         trd := Trade.new(d, close, sl, tp, bar_index, l1, l2)
@@ -1774,7 +1780,7 @@ if showDash and barstate.islast
         table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
         table.cell(dash, 0, 2, wlTxt, text_color=netR >= 0 ? ok : bad, text_size=size.tiny)
-        table.cell(dash, 1, 2, str.tostring(netR, "+#.#;-#.#") + "R", text_color=netR >= 0 ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 2, str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=netPts >= 0 ? ok : bad, text_size=size.tiny)
     else
         table.cell(dash, 0, 0, "BTrader OFX", text_color=gold, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
@@ -1790,8 +1796,8 @@ if showDash and barstate.islast
         table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
         table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
-        table.cell(dash, 0, 7, "W / L · " + str.tostring(tpR, "#.#") + "R", text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netR, "+#.#;-#.#") + "R", text_color=netR >= 0 ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small)
 
 // ════════════════════════════════════════════════════════════════════
 // ALERTS  (set "Once Per Bar Close" when creating the alert)
