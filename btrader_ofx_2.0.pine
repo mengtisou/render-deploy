@@ -102,7 +102,8 @@ refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, t
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
 showBlocks = input.bool(true, "Show zones", group=grpB)
-showObs    = input.bool(true, "Show orderblocks (Volumetrix · used for gate 2)", group=grpB, tooltip="Gate 2 (60% owner) is always checked on these orderblocks, like the BTrader PDF: the last opposite candle before the move, with its buyer / seller split. The FVG zones are only for display.")
+showObs    = input.bool(true, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
+gateOb     = input.string("OrderBlock 1.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
 zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
 fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
 fvgMax     = input.int(150, "FVG · Max stored", minval=5, maxval=300, group=grpB, tooltip="Zones stay until a candle closes through them, so more are kept in memory; the chart only shows the top ones near price.")
@@ -132,6 +133,17 @@ cBlkBear   = input.color(#F23645, "Sellers color", group=grpB)
 cBlkNeu    = input.color(#787B86, "Neutral color", group=grpB)
 blkColorBy = input.string("Type (supply / demand)", "Color blocks by", options=["Type (supply / demand)", "Owner (60% side)"], group=grpB, tooltip="Reference style = Type: supply blocks red, demand blocks green, whatever the buyer/seller split.")
 barTransp  = input.int(60, "Buyer/Seller bar transparency", minval=0, maxval=95, group=grpB, tooltip="Higher = lighter bars, so signals drawn over a block stay visible.")
+
+grpO2   = "⑤b OrderBlock 2.0 (Volumetric)"
+showOb2 = input.bool(true, "Show OrderBlock 2.0", group=grpO2)
+ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], group=grpO2, tooltip="Internal = small swings (length below, 5 like BTrader Concept 2.0). Swing = big swings (50).")
+ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
+ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
+ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
+ob2Mit  = input.string("Absolute", "Mitigation", options=["Absolute", "Close"], group=grpO2, tooltip="Absolute: removed when a wick trades through the whole block. Close: removed when a candle closes through it.")
+ob2Bars = input.int(3, "Candles counted for buy / sell activity", minval=1, maxval=10, group=grpO2, tooltip="The orderblock candle and the candles after it.")
+ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
+ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
@@ -913,9 +925,13 @@ type Block
     int   born  = 0
     int   rank  = 0
     bool  isOb  = false
+    int   ver   = 1
+    line  mid
 
 var array<Block> blocks = array.new<Block>()   // FVG zones (display)
-var array<Block> obs    = array.new<Block>()   // orderblocks (gate 2)
+var array<Block> obs    = array.new<Block>()   // OrderBlock 1.0
+var array<Block> obs2   = array.new<Block>()   // OrderBlock 2.0
+array<Block>     gArr   = gateOb == "OrderBlock 2.0" ? obs2 : obs   // the blocks gate 2 uses
 var int blockId = 0
 
 f_newBlock(float top, float bot, int left, float bv, float sv, int kind, int id) =>
@@ -971,9 +987,13 @@ f_drawBlock(Block b) =>
             b.bBuy  := box.new(b.left, b.top, b.left + wB, midY, border_color=color.new(cBlkBull, 100), bgcolor=color.new(cBlkBull, barTransp))
             b.bSell := box.new(b.left, midY, b.left + wS, b.bot, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, barTransp))
             b.info  := label.new(bar_index + blockExt, midY, "", style=label.style_label_right, color=color.new(color.white, 100), textcolor=base, size=size.small, textalign=text.align_right)
-            b.tag   := label.new(bar_index + blockExt, midY, "", style=label.style_label_left, color=base, textcolor=color.white, size=size.tiny)
+            if b.ver == 1
+                b.tag := label.new(bar_index + blockExt, midY, "", style=label.style_label_left, color=base, textcolor=color.white, size=size.tiny)
+            else if ob2Mid
+                b.mid := line.new(b.left, midY, bar_index + blockExt, midY, color=color.new(base, 30), style=line.style_dotted, width=1)
 
 f_deleteBlock(Block b) =>
+    line.delete(b.mid)
     box.delete(b.bx)
     box.delete(b.bBuy)
     box.delete(b.bSell)
@@ -988,6 +1008,7 @@ f_hideBlock(Block b) =>
         b.bSell := na
         b.info  := na
         b.tag   := na
+        b.mid   := na
 
 f_refreshBlock(Block b, float totalAll) =>
     float  share = totalAll > 0 ? b.vol / totalAll * 100 : 0.0
@@ -997,6 +1018,14 @@ f_refreshBlock(Block b, float totalAll) =>
     if blockStyle == BS_REF and not b.isOb
         // reference tag: arrow by block type, own-side %
         label.set_text(b.tag, "#" + f_num(b) + " " + (b.kind == 1 ? "▲" : "▼") + " " + str.tostring(f_ownPct(b), "#") + "%")
+    else if b.ver == 2
+        // BTrader Concept 2.0 metrics: "1.963K (57%)" + buyers | sellers
+        string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
+        t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
+        label.set_text(b.info, t2)
+        label.set_x(b.info, bar_index + blockExt)
+        if not na(b.mid)
+            line.set_x2(b.mid, bar_index + blockExt)
     else
         label.set_text(b.info, txt)
         float  dom   = math.max(b.buyPct, b.sellPct)
@@ -1004,15 +1033,16 @@ f_refreshBlock(Block b, float totalAll) =>
         label.set_text(b.tag, "#" + f_num(b) + " " + arrow + " " + str.tostring(dom, "#") + "%")
         label.set_x(b.info, bar_index + blockExt)
     box.set_right(b.bx, bar_index + blockExt)
-    label.set_x(b.tag, bar_index + blockExt)
+    if not na(b.tag)
+        label.set_x(b.tag, bar_index + blockExt)
 
 // dir: 1 = buyers-owned, -1 = sellers-owned, 0 = any block
 f_findBlock(int dir, float tol) =>
     int idx = -1
-    int n   = obs.size()
+    int n   = gArr.size()
     if n > 0
         for i = 0 to n - 1
-            Block b = obs.get(i)
+            Block b = gArr.get(i)
             bool dirOK = dir == 0 or b.bias == dir
             if idx < 0 and b.vis and dirOK and low <= b.top + tol and high >= b.bot - tol
                 idx := i
@@ -1301,6 +1331,89 @@ if fvgMode and blocks.size() > 0
             Block bRank = blocks.get(bestI)
             bRank.rank := n
 
+// ════════════════════════════════════════════════════════════════════
+// ORDERBLOCK 2.0 (volumetric, like BTrader Concept 2.0)
+//   structure break of its own swings (internal 5 / swing 50) → the extreme candle of the leg
+//   (lowest low for bullish, highest high for bearish) = the block, full candle ("precise")
+//   buy / sell activity = that candle + the next ones
+// ════════════════════════════════════════════════════════════════════
+int ob2Len = ob2Src == "Internal" ? ob2Int : ob2Sw
+ph2 = ta.pivothigh(high, ob2Len, ob2Len)
+pl2 = ta.pivotlow(low, ob2Len, ob2Len)
+var float sh2P = na
+var int   sh2B = na
+var bool  sh2U = true
+var float sl2P = na
+var int   sl2B = na
+var bool  sl2U = true
+if not na(ph2)
+    sh2P := ph2
+    sh2B := bar_index - ob2Len
+    sh2U := false
+if not na(pl2)
+    sl2P := pl2
+    sl2B := bar_index - ob2Len
+    sl2U := false
+
+f_ob2(int dir, int fromBar, int id) =>
+    int   span = math.min(bar_index - fromBar, 300)
+    int   best = -1
+    float ext  = na
+    if span >= 1
+        for k = 1 to span
+            if dir == 1 ? (na(ext) or low[k] < ext) : (na(ext) or high[k] > ext)
+                ext  := dir == 1 ? low[k] : high[k]
+                best := k
+    if best > 0
+        float bv = 0.0
+        float sv = 0.0
+        for k = best to math.max(best - ob2Bars + 1, 0)
+            bv += nz(buyVol[k])
+            sv += nz(sellVol[k])
+        Block nb2 = f_newBlock(high[best], low[best], bar_index - best, bv, sv, dir, id)
+        nb2.isOb := true
+        nb2.ver  := 2
+        obs2.unshift(nb2)
+        while obs2.size() > 100
+            f_deleteBlock(obs2.pop())
+
+if not sh2U and not na(sh2P) and close > sh2P
+    sh2U := true
+    blockId += 1
+    f_ob2(1, sh2B, blockId)
+if not sl2U and not na(sl2P) and close < sl2P
+    sl2U := true
+    blockId += 1
+    f_ob2(-1, sl2B, blockId)
+
+// mitigation
+if obs2.size() > 0
+    for i = obs2.size() - 1 to 0
+        Block b = obs2.get(i)
+        bool gone = ob2Mit == "Absolute" ? (b.kind == 1 ? low < b.bot : high > b.top) : (b.kind == 1 ? close < b.bot : close > b.top)
+        if gone and b.born < bar_index
+            f_deleteBlock(b)
+            obs2.remove(i)
+
+// show the last N per side (newest first), skipping blocks that overlap one already shown
+if obs2.size() > 0
+    for b in obs2
+        b.vis := false
+    for side in array.from(1, -1)
+        int shown = 0
+        for i = 0 to obs2.size() - 1
+            Block b = obs2.get(i)
+            if b.kind == side and shown < ob2Last
+                bool ovl = false
+                if ob2Hide
+                    for j = 0 to obs2.size() - 1
+                        Block o = obs2.get(j)
+                        if j != i and o.vis and o.kind == side and b.bot <= o.top and b.top >= o.bot
+                            ovl := true
+                if not ovl
+                    b.vis := true
+                    shown += 1
+
 // ---- orderblocks: the N nearest unbroken blocks per side (drawn, and checked by gate 2) ----
 if obs.size() > 0
     for b in obs
@@ -1387,7 +1500,7 @@ float slBuf = slBufTicks * syminfo.mintick
 f_blockLine(int idx) =>
     string s = "none at price"
     if idx >= 0
-        Block b = obs.get(idx)
+        Block b = gArr.get(idx)
         s := "#" + f_num(b) + " Buyers " + str.tostring(b.buyPct, "#.##") + "% | Sellers " + str.tostring(b.sellPct, "#.##") + "%"
         s += b.bias != 0 ? " ✓ (≥" + str.tostring(ownerPct, "#") + "%)" : " ✗ (under " + str.tostring(ownerPct, "#") + "%)"
     s
@@ -1422,7 +1535,7 @@ if drawBull
     if showSigText
         sd.lbs.push(label.new(bar_index, bullTxtY, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
     if comboLong
-        Block b = obs.get(bullIdx)
+        Block b = gArr.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
         sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=mobileView ? size.tiny : size.small, tooltip=tt))
@@ -1453,7 +1566,7 @@ if drawBear
     if showSigText
         sd.lbs.push(label.new(bar_index, bearTxtY, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
     if comboShort
-        Block b = obs.get(bearIdx)
+        Block b = gArr.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
         sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=mobileView ? size.tiny : size.small, tooltip=tt))
@@ -1519,7 +1632,7 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
 bool enterL = drawBull and comboLong
 bool enterS = drawBear and comboShort
 if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
-    Block eb   = obs.get(enterL ? bullIdx : bearIdx)
+    Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
     bool  near = low <= eb.top and high >= eb.bot
     float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
     float risk = math.abs(close - sl)
@@ -1723,6 +1836,21 @@ if barstate.islast
             f_refreshBlock(b, b.kind == 1 ? obBull : obBear)
         else
             f_hideBlock(b)
+    float o2Bull = 0.0
+    float o2Bear = 0.0
+    for b in obs2
+        if b.vis
+            if b.kind == 1
+                o2Bull += b.vol
+            else
+                o2Bear += b.vol
+    for b in obs2
+        if b.vis and showOb2
+            f_hideBlock(b)
+            f_drawBlock(b)
+            f_refreshBlock(b, b.kind == 1 ? o2Bull : o2Bear)
+        else
+            f_hideBlock(b)
 
     // volume profile with buyer / seller split
     for bx in vpBoxes
@@ -1787,7 +1915,7 @@ if showDash and barstate.islast
 
     string nb   = "none"
     float  best = na
-    for b in obs
+    for b in gArr
         if b.bias != 0 and b.vis
             float d = math.abs(close - (b.top + b.bot) / 2)
             if na(best) or d < best
