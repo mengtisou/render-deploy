@@ -1358,6 +1358,7 @@ if fvgMode and blocks.size() > 0
     for b in blocks
         b.vis  := false
         b.rank := 0
+    array<int> picked = array.new<int>()
     for n = 1 to fvgTop
         int   bestI = -1
         float bestD = na
@@ -1365,10 +1366,10 @@ if fvgMode and blocks.size() > 0
             Block b = blocks.get(i)
             float d = close > b.top ? close - b.top : close < b.bot ? b.bot - close : 0.0
             bool ovl = false
-            if fvgHideOvl and not b.vis
-                for j = 0 to blocks.size() - 1
+            if fvgHideOvl and barstate.islast and not b.vis and picked.size() > 0
+                for j in picked
                     Block o = blocks.get(j)
-                    if o.vis and b.bot <= o.top and b.top >= o.bot
+                    if b.bot <= o.top and b.top >= o.bot
                         ovl := true
             if not b.vis and not ovl and (na(bestD) or d < bestD)
                 bestD := d
@@ -1376,6 +1377,7 @@ if fvgMode and blocks.size() > 0
         if bestI >= 0
             Block bShow = blocks.get(bestI)
             bShow.vis := true
+            picked.push(bestI)
     for n = 1 to fvgTop
         int   bestI = -1
         float bestS = na
