@@ -63,8 +63,6 @@ fitB       = input.float(0.0, "Fitted · wick weight", step=0.01, group=grpS)
 grpA = "② Accelerator · Gate 3"
 rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_MED_PRE, RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
 avgHold   = input.string("Every candle", "Averages update", options=["Every candle", "Each completed hour"], group=grpA, tooltip="Every candle (default): the averages move on every bar. Each completed hour: averages only take in finished hours (tested 26 Sep: did not match the reference at 23:00 and gave far fewer wins, so it is off).")
-avgNormal = input.bool(true, "Averages leave out expansion candles (reference)", group=grpA, tooltip="Reference 25 Sep: their averages (18:25 3.43 / 650, 21:35 4.64 / 685, 22:55 7.04 / 1.6K) fit an average of NORMAL candles only: a candle whose range (or |delta|) is already ≥ the expansion factor × the average is not added to it. Off = plain average of all candles (method + length below).")
-normLen   = input.int(20, "Normal-candle average length", minval=3, maxval=200, group=grpA, tooltip="How many normal candles are averaged. Inspect a candle (⑫) shows the result for 10 / 20 / 30 / 50.")
 rangeLen  = input.int(50, "Range average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: Avg 3.56 (13:00), 3.43 (18:25), 4.64 (21:35). A 50-candle average of the previous candles comes closest on all three; short windows are far too high after big moves.")
 deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
 lookback  = input.int(50, "Delta / volume average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: |delta| Avg 1.1K (13:00), 650 (18:25), 685 (21:35).")
@@ -846,27 +844,8 @@ int  aRN = manDeep ? manRN : cRN
 int  aDF = manDeep ? f_dfIdx(manDF) : cDF
 int  aDN = manDeep ? manDN : cDN
 
-// average of the last n NORMAL candles: a candle is not added when it is already ≥ k × the average (an expansion)
-f_normAvg(float src, int n, float k) =>
-    var array<float> buf = array.new<float>()
-    float avg = buf.size() > 0 ? buf.avg() : na
-    if not na(src) and (na(avg) or src < k * avg)
-        buf.push(src)
-        if buf.size() > n
-            buf.shift()
-    avg
-float nR10 = f_normAvg(barRange, 10, rangeNeed)
-float nR20 = f_normAvg(barRange, 20, rangeNeed)
-float nR30 = f_normAvg(barRange, 30, rangeNeed)
-float nR50 = f_normAvg(barRange, 50, rangeNeed)
-float nD10 = f_normAvg(math.abs(delta), 10, deltaNeed)
-float nD20 = f_normAvg(math.abs(delta), 20, deltaNeed)
-float nD30 = f_normAvg(math.abs(delta), 30, deltaNeed)
-float nD50 = f_normAvg(math.abs(delta), 50, deltaNeed)
-float nRUse = f_normAvg(barRange, normLen, rangeNeed)
-float nDUse = f_normAvg(math.abs(delta), normLen, deltaNeed)
-float avgRangeRaw = avgNormal ? nRUse : useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
-float avgDeltaRaw = avgNormal ? nDUse : useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
+float avgRangeRaw = useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
+float avgDeltaRaw = useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
 // reference: averages only take in finished hours (held from the first candle of each hour)
 bool  newHour = ta.change(time("60")) != 0
 var float hRange = na
@@ -946,8 +925,6 @@ f_zoneSplit(int k, float zTop, float zBot) =>
 
 f_calib() =>
     string c = "\n── Calibration (match reference) ──"
-    c += "\nNORMAL-candle range avg 10/20/30/50: " + str.tostring(nR10, "#.##") + " / " + str.tostring(nR20, "#.##") + " / " + str.tostring(nR30, "#.##") + " / " + str.tostring(nR50, "#.##")
-    c += "\nNORMAL-candle |delta| avg 10/20/30/50: " + f_k(nD10) + " / " + f_k(nD20) + " / " + f_k(nD30) + " / " + f_k(nD50)
     c += "\nMEDIAN range prev 10/20/30/50/100: " + str.tostring(cMR10, "#.##") + " / " + str.tostring(cMR20, "#.##") + " / " + str.tostring(cMR30, "#.##") + " / " + str.tostring(cMR50, "#.##") + " / " + str.tostring(cMR100, "#.##")
     c += "\nSMA range prev 100/200: " + str.tostring(cR100, "#.##") + " / " + str.tostring(cR200, "#.##") + " | SMA body prev 20/50: " + str.tostring(cB20, "#.##") + " / " + str.tostring(cB50, "#.##")
     c += "\nMEDIAN |delta| prev 10/20/30/50/100: " + f_k(cMD10) + " / " + f_k(cMD20) + " / " + f_k(cMD30) + " / " + f_k(cMD50) + " / " + f_k(cMD100)
