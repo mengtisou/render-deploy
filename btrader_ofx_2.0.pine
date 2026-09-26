@@ -195,7 +195,9 @@ cPD      = input.color(#B2B5BE, "Previous day color", group=grpL)
 
 grpI = "⑫ Inspect a candle"
 inspectOn = input.bool(false, "Inspect a candle (show every value)", group=grpI, tooltip="Shows why a candle fired or did not fire, plus the calibration values. Use it on the same candle as the reference indicator.")
-inspectT  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "Candle time", group=grpI)
+inspectT  = input.time(timestamp("25 Sep 2026 11:25 +0000"), "Candle time 1", group=grpI, tooltip="Default = their BeAx+ 25 Sep 18:25 (UTC+7).")
+inspectT2 = input.time(timestamp("25 Sep 2026 14:35 +0000"), "Candle time 2", group=grpI, tooltip="Default = their BuAx+ 25 Sep 21:35 (UTC+7).")
+inspectT3 = input.time(timestamp("25 Sep 2026 15:55 +0000"), "Candle time 3", group=grpI, tooltip="Default = their BuAx+ 25 Sep 22:55 (UTC+7).")
 
 grpT = "⑪ Structure"
 cdStyle   = input.bool(true, "Reference style: CDL / CDS breaks with ★ grade", group=grpT, tooltip="Like Sn1P3r: a bullish change of direction prints 'CDL 1-3★', a bearish one 'CDS 1-3★'. ★ grade: +1 if the break candle is a strong body (≥ 60% of its range), +1 if its volume is above its 20-bar average.")
@@ -875,6 +877,22 @@ float cD30  = ta.sma(math.abs(delta), 30)[1]
 float cD50  = ta.sma(math.abs(delta), 50)[1]
 float cD20i = ta.sma(math.abs(delta), 20)
 float cDE20 = ta.ema(math.abs(delta), 20)[1]
+float cMR10  = ta.median(barRange, 10)[1]
+float cMR20  = ta.median(barRange, 20)[1]
+float cMR30  = ta.median(barRange, 30)[1]
+float cMR50  = ta.median(barRange, 50)[1]
+float cMR100 = ta.median(barRange, 100)[1]
+float cR100  = ta.sma(barRange, 100)[1]
+float cR200  = ta.sma(barRange, 200)[1]
+float cB20   = ta.sma(math.abs(close - open), 20)[1]
+float cB50   = ta.sma(math.abs(close - open), 50)[1]
+float cMD10  = ta.median(math.abs(delta), 10)[1]
+float cMD20  = ta.median(math.abs(delta), 20)[1]
+float cMD30  = ta.median(math.abs(delta), 30)[1]
+float cMD50  = ta.median(math.abs(delta), 50)[1]
+float cMD100 = ta.median(math.abs(delta), 100)[1]
+float cD100  = ta.sma(math.abs(delta), 100)[1]
+float cD200  = ta.sma(math.abs(delta), 200)[1]
 
 float rangeRatio = nz(avgRange) > 0 ? barRange / avgRange : 0.0
 float deltaRatio = nz(avgAbsDelta) > 0 ? math.abs(delta) / avgAbsDelta : 0.0
@@ -907,6 +925,10 @@ f_zoneSplit(int k, float zTop, float zBot) =>
 
 f_calib() =>
     string c = "\n── Calibration (match reference) ──"
+    c += "\nMEDIAN range prev 10/20/30/50/100: " + str.tostring(cMR10, "#.##") + " / " + str.tostring(cMR20, "#.##") + " / " + str.tostring(cMR30, "#.##") + " / " + str.tostring(cMR50, "#.##") + " / " + str.tostring(cMR100, "#.##")
+    c += "\nSMA range prev 100/200: " + str.tostring(cR100, "#.##") + " / " + str.tostring(cR200, "#.##") + " | SMA body prev 20/50: " + str.tostring(cB20, "#.##") + " / " + str.tostring(cB50, "#.##")
+    c += "\nMEDIAN |delta| prev 10/20/30/50/100: " + f_k(cMD10) + " / " + f_k(cMD20) + " / " + f_k(cMD30) + " / " + f_k(cMD50) + " / " + f_k(cMD100)
+    c += "\nSMA |delta| prev 100/200: " + f_k(cD100) + " / " + f_k(cD200)
     c += "\nAvg range prev SMA 5/10/14/20: " + str.tostring(cR5, "#.##") + " / " + str.tostring(cR10, "#.##") + " / " + str.tostring(cR14, "#.##") + " / " + str.tostring(cR20, "#.##")
     c += "\nAvg range incl SMA 10/20: " + str.tostring(cR10i, "#.##") + " / " + str.tostring(cR20i, "#.##") + " | ATR14: " + str.tostring(cAtr, "#.##")
     c += "\nAvg range prev SMA 30/50: " + str.tostring(cR30, "#.##") + " / " + str.tostring(cR50, "#.##") + " | EMA20: " + str.tostring(cRE20, "#.##")
@@ -1785,7 +1807,8 @@ if showUHUL and barstate.isconfirmed
         label.delete(u.lb)
 
 // ---- Inspect a candle: why it fired / did not fire ----
-bool inspectBar = inspectOn and time <= inspectT and time_close > inspectT
+f_hit(int t) => time <= t and time_close > t
+bool inspectBar = inspectOn and (f_hit(inspectT) or f_hit(inspectT2) or f_hit(inspectT3))
 if inspectBar
     bool   up   = delta >= 0
     string res  = drawBull ? "RESULT: BuAx+ fired" : drawBear ? "RESULT: BeAx+ fired" : "RESULT: no signal"
