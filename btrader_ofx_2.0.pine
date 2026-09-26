@@ -103,7 +103,7 @@ maxSigShown = input.int(100, "Accelerators kept on chart (latest)", minval=1, ma
 refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
-showBlocks = input.bool(true, "Show zones", group=grpB)
+showBlocks = input.bool(true, "Show FVG zones", group=grpB, tooltip="Off = only orderblocks on the chart. FVG zones are only drawn; the 60% gate uses the orderblocks, so ENTER and W / L do not change.")
 showObs    = input.bool(true, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
 gateOb     = input.string("OrderBlock 1.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
 zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
@@ -123,7 +123,7 @@ swingLen   = input.int(5, "Swing length", minval=2, group=grpB)
 blockVolMode = input.string(BV_CANDLE, "Block volume mode", options=[BV_CANDLE, BV_ZONE, BV_BARS], group=grpB, tooltip="Zone mode splits each 1-minute candle and keeps only the part that traded inside the block price range (closest to the reference).")
 volBars    = input.int(1, "Bars counted into block volume", minval=1, maxval=10, group=grpB, tooltip="OB candle + the displacement candles after it.")
 ownerPct   = input.float(60, "Owner threshold %", minval=50, maxval=95, group=grpB)
-obText     = input.string("Buyers / Sellers", "OrderBlock 1.0 · Text on the block", options=["Buyers / Sellers", "Full (volume + owner + buyers / sellers)", "Off"], group=grpB, tooltip="Buyers / Sellers: one line 'Buyers: 24.71% | Sellers: 75.29%'. Full: also '1.2K (40%) · Strong Bear' above it. Off: only the small OB tag.")
+obText     = input.string("Volume + Buyers / Sellers", "OrderBlock 1.0 · Text on the block", options=["Volume + Buyers / Sellers", "Buyers / Sellers", "Full (volume + owner + buyers / sellers)", "Off"], group=grpB, tooltip="Volume + Buyers / Sellers (BTrader Concept 2.0 style): '2.139K (48%)' and 'Buyers: 48.59% | Sellers: 51.41%'. The % after the volume is the block's share of the volume of the blocks shown on the same side. Buyers / Sellers: only the second line. Full: '1.2K (40%) · Strong Bear' + buyers / sellers. Off: only the small OB tag.")
 maxPerSide = input.int(2, "Blocks shown per side (nearest to price)", minval=1, maxval=15, group=grpB, tooltip="Reference shows the 2 nearest unbroken supply + 2 nearest unbroken demand blocks, even if they are days old.")
 maxStore   = input.int(30, "Unbroken blocks kept in memory per side", minval=2, maxval=60, group=grpB)
 obPick     = input.string(PICK_OPP, "OB candle", options=[PICK_EXT, PICK_OPP], group=grpB, tooltip="Extreme = the candle with the highest high (supply) / lowest low (demand) of the leg, whatever its color.")
@@ -1074,7 +1074,8 @@ f_refreshBlock(Block b, float totalAll) =>
             line.set_x2(b.mid, bar_index + blockExt)
     else
         string bsTxt = "Buyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
-        label.set_text(b.info, not b.isOb or obText == "Full (volume + owner + buyers / sellers)" ? txt : obText == "Buyers / Sellers" ? bsTxt : "")
+        string vTxt  = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)\n" + bsTxt
+        label.set_text(b.info, not b.isOb or obText == "Full (volume + owner + buyers / sellers)" ? txt : obText == "Volume + Buyers / Sellers" ? vTxt : obText == "Buyers / Sellers" ? bsTxt : "")
         float  dom   = math.max(b.buyPct, b.sellPct)
         string arrow = b.buyPct >= b.sellPct ? "▲" : "▼"
         label.set_text(b.tag, (b.isOb ? "OB " : "#" + f_num(b) + " ") + arrow + " " + str.tostring(dom, "#") + "%")
@@ -1947,7 +1948,7 @@ if barstate.islast
             else
                 totBear += b.vol
     for b in blocks
-        if b.vis
+        if b.vis and showBlocks
             if fvgMode
                 f_hideBlock(b)
             f_drawBlock(b)
