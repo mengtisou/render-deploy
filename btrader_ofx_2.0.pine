@@ -82,7 +82,7 @@ showBear  = input.bool(true, "Show BeAx+ (bearish)", group=grpA)
 
 grpG = "③ Delta Gate · Gate 4"
 useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group=grpG, tooltip="Gate 4 of the PDF: applies to the ENTER combo only. Accelerators themselves print without it, like the reference.")
-axDeltaGate  = input.bool(true, "Accelerator itself needs |Delta| ≥ threshold", group=grpG, tooltip="On: a BuAx+ needs delta ≥ +1.7K and a BeAx+ needs delta ≤ −1.7K, otherwise no triangle. Lower the threshold below to see smaller ones (e.g. 1400 for the reference's 18:25 BeAx+ with −1.4K).")
+axDeltaGate  = input.bool(false, "Accelerator itself needs |Delta| ≥ threshold", group=grpG, tooltip="Off (reference): accelerators show from the range / delta expansion formula alone (e.g. their 25 Sep 18:35 BeAx+ with −1.4K). The ±1.7K rule is the ENTER confirmation (gate 4) above. On: no triangle unless |delta| ≥ threshold.")
 minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
 
 grpV = "④ Signal Display"
@@ -97,6 +97,7 @@ axCandle    = input.bool(true, "Color the accelerator candle", inline="axc", gro
 cAxBull     = input.color(#1B8A3C, "", inline="axc", group=grpV)
 cAxBear     = input.color(#B71C1C, "", inline="axc", group=grpV)
 sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
+axInval     = input.string("Wick through the candle", "Remove failed accelerators", options=["Wick through the candle", "Close through the candle", "Off"], group=grpV, tooltip="Reference: an accelerator disappears once price later trades back through it. BuAx+ is removed when price goes below its low, BeAx+ when price goes above its high. ENTER signals stay (trade history). Visual only: gates, ENTER and W / L are not changed.")
 maxSigShown = input.int(100, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference keeps every accelerator on the chart. Lower it to see only the most recent ones.")
 refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
 
@@ -1523,6 +1524,10 @@ bool drawBear = bearAxOK and (sigMode == MODE_ALL or atAnyBear or comboShort)
 type SigDraw
     array<label> lbs
     array<line>  lns
+    int   dir  = 0
+    float lvl  = na
+    int   born = na
+    bool  keep = false
 
 var array<SigDraw> sigHist = array.new<SigDraw>()
 
@@ -1552,8 +1557,22 @@ float bullTxtY = sigAtClose ? close - atr14 * 0.15 : low - atr14 * 0.32
 float bearTriY = sigAtClose ? close : high + atr14 * 0.18
 float bearTxtY = sigAtClose ? close + atr14 * 0.15 : high + atr14 * 0.32
 
+// remove accelerators that price has traded back through (not ENTER signals)
+if axInval != "Off" and sigHist.size() > 0
+    for i = sigHist.size() - 1 to 0
+        SigDraw sg = sigHist.get(i)
+        if not sg.keep and sg.dir != 0 and bar_index > sg.born
+            bool wk   = axInval == "Wick through the candle"
+            bool fail = sg.dir == 1 ? (wk ? low : close) < sg.lvl : (wk ? high : close) > sg.lvl
+            if fail
+                for l in sg.lbs
+                    label.delete(l)
+                for ln in sg.lns
+                    line.delete(ln)
+                sigHist.remove(i)
+
 if drawBull
-    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>())
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), 1, low, bar_index, comboLong)
     sigHist.unshift(sd)
     lastBullBar := bar_index
     lastSigBar  := bar_index
@@ -1584,7 +1603,7 @@ if drawBull
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBear
-    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>())
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), -1, high, bar_index, comboShort)
     sigHist.unshift(sd)
     lastBearBar := bar_index
     lastSigBar  := bar_index
