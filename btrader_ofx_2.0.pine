@@ -62,6 +62,7 @@ fitB       = input.float(0.0, "Fitted · wick weight", step=0.01, group=grpS)
 
 grpA = "② Accelerator · Gate 3"
 rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_MED_PRE, RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
+avgHold   = input.string("Each completed hour (reference)", "Averages update", options=["Each completed hour (reference)", "Every candle"], group=grpA, tooltip="Reference 25 Sep: at 21:35 their averages (range 4.64, delta 685) still leave out the 21:00 crash candles; at 23:00 they include them (7.04 / 1.6K). So their averages only take in candles of hours that are finished. Every candle = the average moves on every bar.")
 rangeLen  = input.int(50, "Range average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: Avg 3.56 (13:00), 3.43 (18:25), 4.64 (21:35). A 50-candle average of the previous candles comes closest on all three; short windows are far too high after big moves.")
 deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
 lookback  = input.int(50, "Delta / volume average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: |delta| Avg 1.1K (13:00), 650 (18:25), 685 (21:35).")
@@ -82,7 +83,7 @@ showBear  = input.bool(true, "Show BeAx+ (bearish)", group=grpA)
 
 grpG = "③ Delta Gate · Gate 4"
 useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group=grpG, tooltip="Gate 4 of the PDF: applies to the ENTER combo only. Accelerators themselves print without it, like the reference.")
-axDeltaGate  = input.bool(false, "Accelerator itself needs |Delta| ≥ threshold", group=grpG, tooltip="Off (reference): accelerators show from the range / delta expansion formula alone (e.g. their 25 Sep 18:35 BeAx+ with −1.4K). The ±1.7K rule is the ENTER confirmation (gate 4) above. On: no triangle unless |delta| ≥ threshold.")
+axDeltaGate  = input.bool(false, "Hide accelerators under ±threshold (off = reference)", group=grpG, tooltip="Off (reference): accelerators show from the range / delta expansion formula alone (e.g. their 25 Sep 18:35 BeAx+ with −1.4K). The ±1.7K rule is the ENTER confirmation (gate 4) above. On: no triangle unless |delta| ≥ threshold.")
 minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
 
 grpV = "④ Signal Display"
@@ -840,8 +841,19 @@ int  aRN = manDeep ? manRN : cRN
 int  aDF = manDeep ? f_dfIdx(manDF) : cDF
 int  aDN = manDeep ? manDN : cDN
 
-float avgRange    = useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
-float avgAbsDelta = useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
+float avgRangeRaw = useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
+float avgDeltaRaw = useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
+// reference: averages only take in finished hours (held from the first candle of each hour)
+bool  newHour = ta.change(time("60")) != 0
+var float hRange = na
+var float hDelta = na
+if newHour or na(hRange)
+    hRange := avgRangeRaw
+if newHour or na(hDelta)
+    hDelta := avgDeltaRaw
+bool  holdAvg     = avgHold == "Each completed hour (reference)"
+float avgRange    = holdAvg ? hRange : avgRangeRaw
+float avgAbsDelta = holdAvg ? hDelta : avgDeltaRaw
 float avgVol      = ta.sma(volume, lookback)[1]
 
 // ---- calibration lines (compare with the reference tooltip on the SAME candle) ----
@@ -1524,6 +1536,7 @@ bool drawBear = bearAxOK and (sigMode == MODE_ALL or atAnyBear or comboShort)
 type SigDraw
     array<label> lbs
     array<line>  lns
+    array<label> axl
     int   dir  = 0
     float lvl  = na
     int   born = na
@@ -1535,6 +1548,8 @@ f_keepSignals() =>
     while sigHist.size() > maxSigShown
         SigDraw old = sigHist.pop()
         for l in old.lbs
+            label.delete(l)
+        for l in old.axl
             label.delete(l)
         for ln in old.lns
             line.delete(ln)
@@ -1561,18 +1576,25 @@ float bearTxtY = sigAtClose ? close + atr14 * 0.15 : high + atr14 * 0.32
 if axInval != "Off" and sigHist.size() > 0
     for i = sigHist.size() - 1 to 0
         SigDraw sg = sigHist.get(i)
-        if not sg.keep and sg.dir != 0 and bar_index > sg.born
+        if sg.dir != 0 and bar_index > sg.born
             bool wk   = axInval == "Wick through the candle"
             bool fail = sg.dir == 1 ? (wk ? low : close) < sg.lvl : (wk ? high : close) > sg.lvl
             if fail
-                for l in sg.lbs
+                // the accelerator triangle + text go; an ENTER label, its SL line and the W / L stay
+                for l in sg.axl
                     label.delete(l)
-                for ln in sg.lns
-                    line.delete(ln)
-                sigHist.remove(i)
+                sg.axl.clear()
+                if not sg.keep
+                    for l in sg.lbs
+                        label.delete(l)
+                    for ln in sg.lns
+                        line.delete(ln)
+                    sigHist.remove(i)
+                else
+                    sg.dir := 0
 
 if drawBull
-    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), 1, low, bar_index, comboLong)
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), array.new<label>(), 1, low, bar_index, comboLong)
     sigHist.unshift(sd)
     lastBullBar := bar_index
     lastSigBar  := bar_index
@@ -1590,10 +1612,10 @@ if drawBull
     tt += calib ? f_calib() : ""
     // Gate 5: structure stop (near/inside block → below block, far → below entry candle)
     if sigHalo
-        sd.lbs.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt))
-    sd.lbs.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt))
+        sd.axl.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.axl.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt))
     if showSigText
-        sd.lbs.push(label.new(bar_index, bullTxtY, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
+        sd.axl.push(label.new(bar_index, bullTxtY, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
     if comboLong
         Block b = gArr.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
@@ -1603,7 +1625,7 @@ if drawBull
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBear
-    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), -1, high, bar_index, comboShort)
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), array.new<label>(), -1, high, bar_index, comboShort)
     sigHist.unshift(sd)
     lastBearBar := bar_index
     lastSigBar  := bar_index
@@ -1621,10 +1643,10 @@ if drawBear
     tt += calib ? f_calib() : ""
     // Gate 5: structure stop (near/inside block → above block, far → above entry candle)
     if sigHalo
-        sd.lbs.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt))
-    sd.lbs.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt))
+        sd.axl.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.axl.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt))
     if showSigText
-        sd.lbs.push(label.new(bar_index, bearTxtY, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
+        sd.axl.push(label.new(bar_index, bearTxtY, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
     if comboShort
         Block b = gArr.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
