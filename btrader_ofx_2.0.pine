@@ -62,7 +62,7 @@ fitB       = input.float(0.0, "Fitted · wick weight", step=0.01, group=grpS)
 
 grpA = "② Accelerator · Gate 3"
 rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_MED_PRE, RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
-avgHold   = input.string("Each completed hour (reference)", "Averages update", options=["Each completed hour (reference)", "Every candle"], group=grpA, tooltip="Reference 25 Sep: at 21:35 their averages (range 4.64, delta 685) still leave out the 21:00 crash candles; at 23:00 they include them (7.04 / 1.6K). So their averages only take in candles of hours that are finished. Every candle = the average moves on every bar.")
+avgHold   = input.string("Every candle", "Averages update", options=["Every candle", "Each completed hour"], group=grpA, tooltip="Every candle (default): the averages move on every bar. Each completed hour: averages only take in finished hours (tested 26 Sep: did not match the reference at 23:00 and gave far fewer wins, so it is off).")
 rangeLen  = input.int(50, "Range average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: Avg 3.56 (13:00), 3.43 (18:25), 4.64 (21:35). A 50-candle average of the previous candles comes closest on all three; short windows are far too high after big moves.")
 deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
 lookback  = input.int(50, "Delta / volume average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: |delta| Avg 1.1K (13:00), 650 (18:25), 685 (21:35).")
@@ -199,7 +199,8 @@ inspectT  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "Candle time", grou
 
 grpT = "⑪ Structure"
 cdStyle   = input.bool(true, "Reference style: CDL / CDS breaks with ★ grade", group=grpT, tooltip="Like Sn1P3r: a bullish change of direction prints 'CDL 1-3★', a bearish one 'CDS 1-3★'. ★ grade: +1 if the break candle is a strong body (≥ 60% of its range), +1 if its volume is above its 20-bar average.")
-showProt  = input.bool(true, "Show protected levels (CDL SL / CDS SH)", group=grpT, tooltip="After a CDL, the low that started the move is protected (CDL SL). After a CDS, the high is protected (CDS SH). Removed when price closes through it.")
+showProt  = input.bool(true, "Show protected levels (CDL SL / CDS SH)", group=grpT, tooltip="After a CDL, the low that started the move is protected (CDL SL). After a CDS, the high is protected (CDS SH). Each one stays until price closes through it.")
+protMax   = input.int(5, "Protected levels kept (per side)", minval=1, maxval=20, group=grpT)
 showChoch = input.bool(true, "Show CHoCH", group=grpT)
 showBos   = input.bool(false, "Show BOS", group=grpT)
 cChBull   = input.color(#089981, "Bullish CHoCH / BOS", group=grpT)
@@ -851,7 +852,7 @@ if newHour or na(hRange)
     hRange := avgRangeRaw
 if newHour or na(hDelta)
     hDelta := avgDeltaRaw
-bool  holdAvg     = avgHold == "Each completed hour (reference)"
+bool  holdAvg     = avgHold == "Each completed hour"
 float avgRange    = holdAvg ? hRange : avgRangeRaw
 float avgAbsDelta = holdAvg ? hDelta : avgDeltaRaw
 float avgVol      = ta.sma(volume, lookback)[1]
@@ -1135,8 +1136,9 @@ type ProtLvl
     float px
     int   dir
 
-var ProtLvl protL = na
-var ProtLvl protH = na
+// every protected level stays until price closes through it (the reference keeps older CDS SH / CDL SL too)
+var array<ProtLvl> protLs = array.new<ProtLvl>()
+var array<ProtLvl> protHs = array.new<ProtLvl>()
 
 f_newProt(int x1, float px, int dir, string txt, color col) =>
     float h = nz(atr14) * 0.12
@@ -1161,9 +1163,9 @@ if bullBreak
             if low[k] < lo
                 lo  := low[k]
                 lox := bar_index - k
-        if not na(protL)
-            box.delete(protL.bx)
-        protL := f_newProt(lox, lo, 1, "CDL SL", cChBull)
+        protLs.unshift(f_newProt(lox, lo, 1, "CDL SL", cChBull))
+        if protLs.size() > protMax
+            box.delete(protLs.pop().bx)
     trendDir := 1
 if bearBreak
     slUsed := true
@@ -1183,24 +1185,28 @@ if bearBreak
             if high[k] > hi
                 hi  := high[k]
                 hix := bar_index - k
-        if not na(protH)
-            box.delete(protH.bx)
-        protH := f_newProt(hix, hi, -1, "CDS SH", cChBear)
+        protHs.unshift(f_newProt(hix, hi, -1, "CDS SH", cChBear))
+        if protHs.size() > protMax
+            box.delete(protHs.pop().bx)
     trendDir := -1
 
 // keep protected levels alive until price closes through them
-if not na(protL)
-    if close < protL.px
-        box.delete(protL.bx)
-        protL := na
-    else
-        box.set_right(protL.bx, bar_index + 10)
-if not na(protH)
-    if close > protH.px
-        box.delete(protH.bx)
-        protH := na
-    else
-        box.set_right(protH.bx, bar_index + 10)
+if protLs.size() > 0
+    for i = protLs.size() - 1 to 0
+        ProtLvl pv = protLs.get(i)
+        if close < pv.px
+            box.delete(pv.bx)
+            protLs.remove(i)
+        else
+            box.set_right(pv.bx, bar_index + 10)
+if protHs.size() > 0
+    for i = protHs.size() - 1 to 0
+        ProtLvl pv = protHs.get(i)
+        if close > pv.px
+            box.delete(pv.bx)
+            protHs.remove(i)
+        else
+            box.set_right(pv.bx, bar_index + 10)
 
 // Bullish OB: close breaks above the last swing high → last down candle of the leg
 if bullBreak
