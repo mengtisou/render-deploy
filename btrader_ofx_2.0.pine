@@ -123,7 +123,7 @@ swingLen   = input.int(5, "Swing length", minval=2, group=grpB)
 blockVolMode = input.string(BV_CANDLE, "Block volume mode", options=[BV_CANDLE, BV_ZONE, BV_BARS], group=grpB, tooltip="Zone mode splits each 1-minute candle and keeps only the part that traded inside the block price range (closest to the reference).")
 volBars    = input.int(1, "Bars counted into block volume", minval=1, maxval=10, group=grpB, tooltip="OB candle + the displacement candles after it.")
 ownerPct   = input.float(60, "Owner threshold %", minval=50, maxval=95, group=grpB)
-obText     = input.bool(false, "OrderBlock 1.0 · Show volume / buyers text", group=grpB, tooltip="Off = clean: only the block and its small tag (e.g. OB ▲ 82%). On = also '830 (51%) · Strong Bull / Buyers … | Sellers …' at the right.")
+obText     = input.string("Buyers / Sellers", "OrderBlock 1.0 · Text on the block", options=["Buyers / Sellers", "Full (volume + owner + buyers / sellers)", "Off"], group=grpB, tooltip="Buyers / Sellers: one line 'Buyers: 24.71% | Sellers: 75.29%'. Full: also '1.2K (40%) · Strong Bear' above it. Off: only the small OB tag.")
 maxPerSide = input.int(2, "Blocks shown per side (nearest to price)", minval=1, maxval=15, group=grpB, tooltip="Reference shows the 2 nearest unbroken supply + 2 nearest unbroken demand blocks, even if they are days old.")
 maxStore   = input.int(30, "Unbroken blocks kept in memory per side", minval=2, maxval=60, group=grpB)
 obPick     = input.string(PICK_OPP, "OB candle", options=[PICK_EXT, PICK_OPP], group=grpB, tooltip="Extreme = the candle with the highest high (supply) / lowest low (demand) of the leg, whatever its color.")
@@ -1073,7 +1073,8 @@ f_refreshBlock(Block b, float totalAll) =>
         if not na(b.mid)
             line.set_x2(b.mid, bar_index + blockExt)
     else
-        label.set_text(b.info, obText or not b.isOb ? txt : "")
+        string bsTxt = "Buyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
+        label.set_text(b.info, not b.isOb or obText == "Full (volume + owner + buyers / sellers)" ? txt : obText == "Buyers / Sellers" ? bsTxt : "")
         float  dom   = math.max(b.buyPct, b.sellPct)
         string arrow = b.buyPct >= b.sellPct ? "▲" : "▼"
         label.set_text(b.tag, (b.isOb ? "OB " : "#" + f_num(b) + " ") + arrow + " " + str.tostring(dom, "#") + "%")
