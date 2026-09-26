@@ -130,6 +130,7 @@ obPick     = input.string(PICK_OPP, "OB candle", options=[PICK_EXT, PICK_OPP], g
 obNextWick = input.bool(true, "Extend extreme with next candle's wick", group=grpB, tooltip="Supply: top = higher high of the OB candle and the candle after it. Demand: bottom = lower low of the two.")
 obZone     = input.string(Z_HALF, "Zone height", options=[Z_HALF, Z_FULL, Z_BODY], group=grpB, tooltip="Wick extreme → 50%: supply = high down to the candle middle, demand = low up to the candle middle.")
 blockExt   = input.int(30, "Extend blocks right (bars)", minval=1, maxval=100, group=grpB)
+obBarPct   = input.int(60, "OrderBlock buyer / seller bars: 100% = this % of the block width", minval=10, maxval=100, group=grpB, tooltip="A block with 75% sellers gets a red bar 0.75 × this share of the block's width. Raise it for longer bars.")
 barLen     = input.int(25, "Buyer/Seller bar length (bars)", minval=5, maxval=100, group=grpB)
 nearAtr    = input.float(0.5, "'At block' tolerance (x ATR)", minval=0, step=0.1, group=grpB)
 cBlkBull   = input.color(#26A69A, "Buyers color", group=grpB)
@@ -1026,8 +1027,10 @@ f_drawBlock(Block b) =>
             b.bSell := box.new(b.left + wB, yTop, b.left + wB + wS, yBot, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, barTransp), text=str.tostring(b.sellPct, "#") + "%", text_color=color.white, text_size=size.tiny, text_halign=text.align_right)
             b.tag   := label.new(bar_index + blockExt, midY, "", style=label.style_label_left, color=base, textcolor=color.white, size=size.small)
         else
-            int   wB   = math.max(1, int(math.round(barLen * b.buyPct / 100)))
-            int   wS   = math.max(1, int(math.round(barLen * b.sellPct / 100)))
+            // orderblocks: bars scale with the block's width, so 75% sellers really looks like 3/4
+            int   span = math.max(barLen, int(math.round((bar_index + blockExt - b.left) * obBarPct / 100)))
+            int   wB   = math.max(1, int(math.round(span * b.buyPct / 100)))
+            int   wS   = math.max(1, int(math.round(span * b.sellPct / 100)))
             b.bx    := box.new(b.left, b.top, bar_index + blockExt, b.bot, border_color=color.new(base, 50), border_width=1, bgcolor=color.new(base, 88))
             b.bBuy  := box.new(b.left, b.top, b.left + wB, midY, border_color=color.new(cBlkBull, 100), bgcolor=color.new(cBlkBull, barTransp))
             b.bSell := box.new(b.left, midY, b.left + wS, b.bot, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, barTransp))
