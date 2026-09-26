@@ -1549,6 +1549,8 @@ type SigDraw
     bool  keep = false
 
 var array<SigDraw> sigHist = array.new<SigDraw>()
+var label inspLbl = na
+var int   inspIdx = na
 
 f_keepSignals() =>
     while sigHist.size() > maxSigShown
@@ -1585,6 +1587,8 @@ if axInval != "Off" and sigHist.size() > 0
         if sg.dir != 0 and bar_index > sg.born
             bool wk   = axInval == "Wick through the candle"
             bool fail = sg.dir == 1 ? (wk ? low : close) < sg.lvl : (wk ? high : close) > sg.lvl
+            if fail and not na(inspLbl) and sg.born == inspIdx
+                label.set_text(inspLbl, label.get_text(inspLbl) + "\n✗ REMOVED at " + str.format_time(time, "dd MMM HH:mm") + ": price went " + (sg.dir == 1 ? "below its low " : "above its high ") + str.tostring(sg.lvl, format.mintick) + "\n  (④ Remove failed accelerators → Off keeps it)")
             if fail
                 // the accelerator triangle + text go; an ENTER label, its SL line and the W / L stay
                 for l in sg.axl
@@ -1806,6 +1810,8 @@ if inspectBar
         fl += "\n✗ volume ratio " + f_x(volRatio) + " < " + f_x(volNeed)
     if not sizeOK
         fl += "\n✗ candle size " + f_x(sizeRatio) + " ATR100 < " + f_x(minSize)
+    if axDeltaGate and math.abs(delta) < minDelta
+        fl += "\n✗ hidden: ③ 'Hide accelerators under ±threshold' is ON (turn it off)"
     if useDeltaGate and math.abs(delta) < minDelta
         fl += "\n(entry only) delta gate " + f_ks(delta) + " inside ±" + f_k(minDelta)
     if up and not trendBullOK
@@ -1819,7 +1825,8 @@ if inspectBar
     it += "\nDelta: " + f_ks(delta) + " | Avg: +" + f_k(avgAbsDelta) + " | Ratio: " + f_x(deltaRatio)
     it += "\nVolume: " + str.tostring(volume, "#") + " | Size: " + f_x(sizeRatio) + " ATR100"
     it += f_calib()
-    label.new(bar_index, high + atr14 * 2, it, style=label.style_label_down, color=color.new(#131722, 5), textcolor=color.white, size=size.small, textalign=text.align_left)
+    inspIdx := bar_index
+    inspLbl := label.new(bar_index, high + atr14 * 2, it, style=label.style_label_down, color=color.new(#131722, 5), textcolor=color.white, size=size.small, textalign=text.align_left)
     line.new(bar_index, high + atr14 * 2, bar_index, low, color=color.new(#E3B341, 20), style=line.style_dotted, width=1)
 
 // ════════════════════════════════════════════════════════════════════
