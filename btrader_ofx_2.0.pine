@@ -104,8 +104,8 @@ refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, t
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
 showBlocks = input.bool(true, "Show zones", group=grpB)
-showObs    = input.bool(false, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
-gateOb     = input.string("OrderBlock 2.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
+showObs    = input.bool(true, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
+gateOb     = input.string("OrderBlock 1.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
 zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
 fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
 fvgMax     = input.int(150, "FVG · Max stored", minval=5, maxval=300, group=grpB, tooltip="Zones stay until a candle closes through them, so more are kept in memory; the chart only shows the top ones near price.")
@@ -137,7 +137,7 @@ blkColorBy = input.string("Type (supply / demand)", "Color blocks by", options=[
 barTransp  = input.int(60, "Buyer/Seller bar transparency", minval=0, maxval=95, group=grpB, tooltip="Higher = lighter bars, so signals drawn over a block stay visible.")
 
 grpO2   = "⑤b OrderBlock 2.0 (Volumetric)"
-showOb2 = input.bool(true, "Show OrderBlock 2.0", group=grpO2)
+showOb2 = input.bool(false, "Show OrderBlock 2.0", group=grpO2)
 ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], group=grpO2, tooltip="Internal = small swings (length below, 5 like BTrader Concept 2.0). Swing = big swings (50).")
 ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
 ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
