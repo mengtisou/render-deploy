@@ -10,7 +10,8 @@ indicator("SMC 2026 ICT + KTR v2", overlay=false, max_boxes_count=500, max_lines
 // ⓪b ❖ TRADES   — every KTR ❖ entry becomes a trade: TP 200 or 100 pts
 //                 / SL 100 pts, at the ❖ close or as a pending order
 //                 ± offset (e.g. 40 pts). WIN / LOSS marked on the
-//                 chart and counted in the dashboard.
+//                 chart and counted in the dashboard, with the test
+//                 period, cost per trade and an optional daily limit.
 // ⚡ MODE        — "KTR only" switches the whole SMC 2026 ICT part off.
 // ★ CLEAN VIEW  — one switch in ⑨ Display hides all boxes and
 //                 secondary labels (OB, FVG, AMD, EQH/EQL, CRT H/L,
@@ -78,6 +79,9 @@ i_kEntry   = input.string("At ❖ close", "Entry",                    group=G0b,
 i_kOffPts  = input.float (40,    "Pending offset (points)",           group=G0b, minval=0, step=5)
 i_kExp     = input.int   (12,    "Pending expires after (candles)",   group=G0b, minval=1,
      tooltip="If price does not reach the pending entry within this many candles after the ❖, the order is cancelled and counted as 'missed' (not a win, not a loss).")
+i_kRun     = input.string("Candles only", "Pending also cancelled when price runs", group=G0b,
+     options=["Candles only", "100 pts away", "200 pts away"],
+     tooltip="Cancel the pending order ('missed') as soon as price moves this far away from the pending price without filling it — e.g. BUY LIMIT and price rallies 100 / 200 pts above it. The candle limit above still applies too, whichever comes first. If one candle both fills the order and runs away, it counts as filled.")
 i_kTpPts   = input.float (200.0, "TP points",                         group=G0b, options=[200.0, 100.0])
 i_kSlPts   = input.float (100,   "SL points",                         group=G0b, minval=1, step=10)
 i_kPtVal   = input.float (0.10,  "1 point = price",                   group=G0b, minval=0.00001, step=0.01,
@@ -86,6 +90,12 @@ i_kOne     = input.bool  (false, "One trade at a time",               group=G0b,
      tooltip="OFF: every ❖ gets its own trade and its own WIN / LOSS, even while an earlier one is still open. ON: a ❖ that prints while a trade is open or a pending order is waiting is skipped.")
 i_kBoth    = input.string("Loss", "TP and SL hit on the same candle", group=G0b, options=["Loss","Win"],
      tooltip="One candle can touch both levels and the chart can't tell which came first. Loss = conservative.")
+i_kCost    = input.float (0,     "Spread / cost per trade (points)",  group=G0b, minval=0, step=5,
+     tooltip="Taken off the Net for every closed trade (win or loss). The WIN / LOSS labels still show the plain +TP / −SL. Set it to your broker's usual gold spread + commission in points to see a realistic result.")
+i_kDayOn   = input.bool  (false, "Daily limit",                       group=G0b,
+     tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
+i_kDayTp   = input.float (4000,  "Daily profit target (points)",      group=G0b, minval=1, step=100)
+i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
 i_kZones   = input.bool  (true,  "Show TP / SL zones",                group=G0b)
 i_kWLlab   = input.bool  (true,  "Show WIN / LOSS labels",            group=G0b)
 
@@ -431,7 +441,10 @@ alertcondition(ktrEntrySell, "KTR ② SELL ENTRY ❖","KTR ❖ confirmed — SEL
 // Entry "Pending":    an order waits at ❖ close ± offset
 //   LIMIT → BUY below / SELL above  ·  STOP → BUY above / SELL below
 //   It only becomes a WIN / LOSS signal once price reaches it; if not
-//   reached before it expires it is 'missed' and not counted.
+//   reached within N candles, or price runs 100 / 200 pts away from it
+//   first, it is 'missed' and not counted.
+// Daily limit (optional): once the day's closed trades reach the
+//   target or the loss limit, no new ❖ trades until the next day.
 // TP / SL are measured from the entry:
 //   BUY  → TP = entry + TP pts · SL = entry − SL pts
 //   SELL → TP = entry − TP pts · SL = entry + SL pts
@@ -462,7 +475,9 @@ var int    kLossB   = 0
 var int    kWinS    = 0
 var int    kLossS   = 0
 var int    kMissed  = 0
-var float  kNetPts  = 0.0
+var int    kSkipDay = 0         // ❖ skipped + pending cancelled by the daily limit
+var float  kNetPts  = 0.0       // after costs
+var float  kCostPts = 0.0
 var string kLastTxt = "—"
 var color  kLastCol = color.new(#8B949E,0)
 
@@ -474,12 +489,34 @@ string kSlTxt   = str.tostring(i_kSlPts,  "#.##")
 string kOffTxt  = str.tostring(i_kOffPts, "#.##")
 bool   kPendOn  = i_kEntry != "At ❖ close"
 bool   kLimOn   = str.startswith(i_kEntry, "Pending LIMIT")
+string kRunTxt  = i_kRun == "100 pts away" ? "100" : i_kRun == "200 pts away" ? "200" : ""
+float  kRunDist = kRunTxt == "" ? na : str.tonumber(kRunTxt) * i_kPtVal
 color  KWIN     = color.new(#00C853,0)
 color  KLOSS    = color.new(#D50000,0)
 bool   kTrack   = i_ktrOn and i_kTrOn
 bool   kHitWin  = false
 bool   kHitLoss = false
 bool   kFilled  = false
+
+// daily limit + test period (a "day" = the chart's daily candle, same as the KTR OP)
+var float  kDayPts   = 0.0
+var int    kDayW     = 0
+var int    kDayL     = 0
+var bool   kDayStop  = false
+var string kDayWhy   = ""
+var int    kDaysAll  = 0        // daily candles since the first ❖ trade
+var int    kDaysTgt  = 0
+var int    kDaysLoss = 0
+var int    kFirstTm  = na       // first ❖ trade / order
+var int    kChartTm  = time     // first candle loaded on the chart
+if ktrNewDay
+    kDayPts  := 0.0
+    kDayW    := 0
+    kDayL    := 0
+    kDayStop := false
+    kDayWhy  := ""
+    if not na(kFirstTm)
+        kDaysAll += 1
 
 f_kZone(float a, float b, color c, string txt) =>
     box.new(bar_index, math.max(a, b), bar_index + 1, math.min(a, b),
@@ -494,6 +531,18 @@ f_kZones(KtrTrade t) =>
         t.bxSl := f_kZone(t.entry, t.sl, KLOSS, "SL −" + kSlTxt + " pts  " + str.tostring(t.sl, format.mintick))
     t
 
+// pending order cancelled before it filled (not a win, not a loss)
+f_kCancel(KtrTrade t, string why) =>
+    line.set_x2(t.lnPend, bar_index)
+    line.set_color(t.lnPend, color.gray)
+    label.set_text(t.lbPend, t.name + " ✕ " + why)
+    label.set_color(t.lbPend, color.new(color.gray, 20))
+    if i_alKtr
+        alert("KTR ❖ " + t.name + " CANCELLED — " + why + " — " + syminfo.ticker +
+             " | " + str.tostring(t.entry, format.mintick) + " not filled, not counted",
+             alert.freq_once_per_bar_close)
+    t
+
 // 1) settle pending orders and open trades first, so a new ❖ on the same candle can still open
 if kTrack and kOpen.size() > 0
     for i = kOpen.size() - 1 to 0
@@ -503,7 +552,9 @@ if kTrack and kOpen.size() > 0
         // BUY LIMIT / SELL STOP are reached from above (price falling into them)
         bool kFillDn  = (kt.dir == 1) == kt.lim
         if not kt.filled and barstate.isconfirmed and bar_index > kt.sigBar
-            bool kTouch = kFillDn ? low <= kt.entry : high >= kt.entry
+            bool kTouch   = kFillDn ? low <= kt.entry : high >= kt.entry
+            // ran away = moved X pts off the order on the side it was waiting on
+            bool kRanAway = not na(kRunDist) and (kFillDn ? high >= kt.entry + kRunDist : low <= kt.entry - kRunDist)
             if kTouch
                 kt.filled := true
                 kt.bar    := bar_index
@@ -519,17 +570,10 @@ if kTrack and kOpen.size() > 0
                          " | TP:" + str.tostring(kt.tp, format.mintick) + " (+" + kTpTxt + " pts)" +
                          " | SL:" + str.tostring(kt.sl, format.mintick) + " (−" + kSlTxt + " pts)",
                          alert.freq_once_per_bar_close)
-            else if bar_index - kt.sigBar >= i_kExp
+            else if kRanAway or bar_index - kt.sigBar >= i_kExp
                 kDone   := true
                 kMissed += 1
-                line.set_x2(kt.lnPend, bar_index)
-                line.set_color(kt.lnPend, color.gray)
-                label.set_text(kt.lbPend, kt.name + " ✕ missed")
-                label.set_color(kt.lbPend, color.new(color.gray, 20))
-                if i_alKtr
-                    alert("KTR ❖ " + kt.name + " MISSED — " + syminfo.ticker +
-                         " | " + str.tostring(kt.entry, format.mintick) + " not reached in " + str.tostring(i_kExp) + " candles, not counted",
-                         alert.freq_once_per_bar_close)
+                f_kCancel(kt, kRanAway ? "missed (ran " + kRunTxt + " pts)" : "missed (" + str.tostring(i_kExp) + " candles)")
                 kOpen.remove(i)
         if kt.filled and not kDone and barstate.isconfirmed and (bar_index > kt.bar or kFillNow)
             // on the fill candle only count what surely came after the fill:
@@ -539,7 +583,8 @@ if kTrack and kOpen.size() > 0
             bool hitTP = kt.dir == 1 ? aHi >= kt.tp : aLo <= kt.tp
             bool hitSL = kt.dir == 1 ? aLo <= kt.sl : aHi >= kt.sl
             if hitTP or hitSL
-                bool kWin = hitTP and (not hitSL or i_kBoth == "Win")
+                bool  kWin  = hitTP and (not hitSL or i_kBoth == "Win")
+                float kGain = (kWin ? i_kTpPts : -i_kSlPts) - i_kCost
                 kDone    := true
                 kWins    += kWin ? 1 : 0
                 kLosses  += kWin ? 0 : 1
@@ -547,7 +592,11 @@ if kTrack and kOpen.size() > 0
                 kLossB   += not kWin and kt.dir == 1 ? 1 : 0
                 kWinS    += kWin and kt.dir == -1 ? 1 : 0
                 kLossS   += not kWin and kt.dir == -1 ? 1 : 0
-                kNetPts  += kWin ? i_kTpPts : -i_kSlPts
+                kNetPts  += kGain
+                kCostPts += i_kCost
+                kDayPts  += kGain
+                kDayW    += kWin ? 1 : 0
+                kDayL    += kWin ? 0 : 1
                 kHitWin  := kHitWin or kWin
                 kHitLoss := kHitLoss or not kWin
                 string kRes = kWin ? "WIN +" + kTpTxt : "LOSS −" + kSlTxt
@@ -575,6 +624,25 @@ if kTrack and kOpen.size() > 0
                          " | " + (kWin ? "+" + kTpTxt : "−" + kSlTxt) + " pts" +
                          " | Total " + str.tostring(kWins) + "W " + str.tostring(kLosses) + "L",
                          alert.freq_once_per_bar_close)
+                // this trade reached the daily target / loss limit → stop for the day
+                if i_kDayOn and not kDayStop and (kDayPts >= i_kDayTp or kDayPts <= -i_kDaySl)
+                    bool kTgt = kDayPts >= i_kDayTp
+                    kDayStop  := true
+                    kDaysTgt  += kTgt ? 1 : 0
+                    kDaysLoss += kTgt ? 0 : 1
+                    kDayWhy   := kTgt ? "🎯 target hit" : "⛔ loss limit"
+                    label.new(bar_index, kTgt ? high + atr14 * 1.5 : low - atr14 * 1.5,
+                         (kTgt ? "🎯 DAY TARGET " : "⛔ DAY STOP ") + str.tostring(kDayPts, "+#.##;-#.##") + " pts",
+                         style=kTgt ? label.style_label_down : label.style_label_up,
+                         color=color.new(kTgt ? KWIN : KLOSS, 30), textcolor=color.white, size=size.small,
+                         tooltip="Daily limit: target +" + str.tostring(i_kDayTp, "#.##") + " / loss −" + str.tostring(i_kDaySl, "#.##") +
+                         " pts\nToday " + str.tostring(kDayW) + "W " + str.tostring(kDayL) + "L → no new ❖ trades until the next daily candle",
+                         force_overlay=true)
+                    if i_alKtr
+                        alert("KTR ❖ DAILY " + (kTgt ? "TARGET HIT" : "LOSS LIMIT HIT") + " — " + syminfo.ticker +
+                             " | Today " + str.tostring(kDayPts, "+#.##;-#.##") + " pts (" + str.tostring(kDayW) + "W " + str.tostring(kDayL) + "L)" +
+                             " | No new ❖ trades until tomorrow",
+                             alert.freq_once_per_bar_close)
                 kOpen.remove(i)
         if not kDone
             if not na(kt.bxTp)
@@ -584,10 +652,25 @@ if kTrack and kOpen.size() > 0
             if not kt.filled and not na(kt.lnPend)
                 line.set_x2(kt.lnPend, bar_index + 1)
 
+// daily limit reached → cancel orders that are still pending
+bool kDayBlock = i_kDayOn and kDayStop
+if kTrack and kDayBlock and barstate.isconfirmed and kOpen.size() > 0
+    for i = kOpen.size() - 1 to 0
+        KtrTrade kt = kOpen.get(i)
+        if not kt.filled
+            kSkipDay += 1
+            f_kCancel(kt, "day limit")
+            kOpen.remove(i)
+
 // 2) a confirmed ❖ opens a trade, or places the pending order
 int  kDir     = ktrEntryBuy and not ktrEntrySell ? 1 : ktrEntrySell and not ktrEntryBuy ? -1 : 0
-bool kOpenNew = kTrack and barstate.isconfirmed and kDir != 0 and (not i_kOne or kOpen.size() == 0)
+bool kOpenNew = kTrack and barstate.isconfirmed and kDir != 0 and not kDayBlock and (not i_kOne or kOpen.size() == 0)
+if kTrack and barstate.isconfirmed and kDir != 0 and kDayBlock
+    kSkipDay += 1
 if kOpenNew
+    if na(kFirstTm)
+        kFirstTm := time
+        kDaysAll := 1
     // LIMIT: BUY below / SELL above the ❖ close · STOP: BUY above / SELL below
     float  kEn   = close + (kLimOn ? -kDir : kDir) * (kPendOn ? kOffDist : 0.0)
     float  kTpPx = kEn + kDir * kTpDist
@@ -602,7 +685,7 @@ if kOpenNew
              style=label.style_label_right, color=color.new(KPEACH, 20), textcolor=color.black, size=size.tiny,
              tooltip="❖ close " + str.tostring(close, format.mintick) + " → " + kNm + " at " + str.tostring(kEn, format.mintick) +
              "\nTP " + str.tostring(kTpPx, format.mintick) + " (+" + kTpTxt + " pts) · SL " + str.tostring(kSlPx, format.mintick) + " (−" + kSlTxt + " pts)" +
-             "\nExpires after " + str.tostring(i_kExp) + " candles",
+             "\nCancelled after " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " or if price runs " + kRunTxt + " pts away first"),
              force_overlay=true)
     else
         f_kZones(kNew)
@@ -1508,7 +1591,7 @@ color  b3C   = entryLong?i_colBull:entryShort?i_colBear:
                (pdBlockedLong or pdBlockedShort)?color.new(#FF9800,0):color.new(#8B949E,0)
 string crtTfS = crtTfOk?timeframe.period+"m ✓":"OFF — change TF"
 
-var table d = table.new(position.top_right, 2, 28,
+var table d = table.new(position.top_right, 2, 32,
      bgcolor=color.new(#0D1117,60), border_color=color.new(#30363D,40),
      border_width=1, frame_color=color.new(#30363D,40), frame_width=1,
      force_overlay=true)
@@ -1532,7 +1615,7 @@ if kOpen.size() > 0
         kPendN += kt.filled ? 0 : 1
 int    kLiveN  = kOpen.size() - kPendN
 int    kN      = kWins + kLosses
-float  kNetR   = kWins * (i_kTpPts / i_kSlPts) - kLosses
+float  kNetR   = kNetPts / i_kSlPts          // 1R = the SL size
 string kWLStr  = str.tostring(kWins) + "W " + str.tostring(kLosses) + "L" + f_wr(kWins, kLosses) +
      (kLiveN  > 0 ? " · " + str.tostring(kLiveN)  + " open"    : "") +
      (kPendN  > 0 ? " · " + str.tostring(kPendN)  + " pending" : "") +
@@ -1543,15 +1626,34 @@ string kWLTip  = "BUY ❖:  " + str.tostring(kWinB) + "W " + str.tostring(kLossB
      "\nSELL ❖: " + str.tostring(kWinS) + "W " + str.tostring(kLossS) + "L" + f_wr(kWinS, kLossS) +
      "\nOpen now: " + str.tostring(kLiveN) + " · pending: " + str.tostring(kPendN) +
      "\nMissed (pending not reached, not counted): " + str.tostring(kMissed) +
-     "\nBreak-even win rate: " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
-string kNetTip = "= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
+     "\nSkipped / cancelled by the daily limit: " + str.tostring(kSkipDay) +
+     "\nBreak-even win rate: " + str.tostring((i_kSlPts + i_kCost) * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
+string kNetTip = "1R = SL = " + kSlTxt + " pts → a WIN is +" + str.tostring(i_kTpPts / i_kSlPts, "#.##") + "R, a LOSS −1R" +
+     "\n" + str.tostring(kWins) + " × " + kTpTxt + " − " + str.tostring(kLosses) + " × " + kSlTxt +
+     (kCostPts > 0 ? " − costs " + str.tostring(kCostPts, "#.##") : "") + " = " + str.tostring(kNetPts, "+#.##;-#.##") + " pts" +
+     "\n= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
+     (i_kCost == 0 ? "\nSpread / cost per trade is 0 — set it in ⓪b for a real result" : "")
+int    kDaysN  = math.max(kDaysAll, 1)
+int    kFT     = nz(kFirstTm, kChartTm)
+string kPerStr = na(kFirstTm) ? "—" : str.format_time(kFT, "dd MMM yy") + " → " + str.format_time(time, "dd MMM yy") + " · " + str.tostring(kDaysN) + " days"
+string kPerTip = (na(kFirstTm) ? "No ❖ trade yet." :
+     "From the first ❖ trade (" + str.format_time(kFT, "dd MMM yyyy HH:mm") + ") to now = " + str.tostring(kDaysN) + " trading days (daily candles)." +
+     "\nAverage per day: " + str.tostring(kNetPts / kDaysN, "+#.#;-#.#") + " pts · " + str.tostring(kN * 1.0 / kDaysN, "#.#") + " trades") +
+     "\nChart history starts " + str.format_time(kChartTm, "dd MMM yyyy") + ". TradingView only loads a limited number of candles, so a lower timeframe tests a shorter period."
+string kDayStr = str.tostring(kDayPts, "+#.##;-#.##") + " pts · " + str.tostring(kDayW) + "W " + str.tostring(kDayL) + "L" + (kDayBlock ? " · " + kDayWhy : "")
+color  kDayCol = kDayPts > 0 ? KWIN : kDayPts < 0 ? KLOSS : CL
+string kDayTip = (i_kDayOn ? "Daily limit ON: target +" + str.tostring(i_kDayTp, "#.##") + " · loss −" + str.tostring(i_kDaySl, "#.##") + " pts" :
+     "Daily limit OFF (turn it on in ⓪b to test it)") +
+     "\nDays that hit the target: " + str.tostring(kDaysTgt) + " · hit the loss limit: " + str.tostring(kDaysLoss) + " (of " + str.tostring(kDaysN) + " days)" +
+     "\n❖ skipped / pending cancelled by the daily limit: " + str.tostring(kSkipDay)
+string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts" + (i_kCost > 0 ? " · cost " + str.tostring(i_kCost, "#.##") : "")
 string kTpSlTip = "TP " + str.tostring(kTpDist, "#.##") + " · SL " + str.tostring(kSlDist, "#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
-string kEntStr = kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" : "At ❖ close"
+string kEntStr = kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " / " + kRunTxt + " pts") : "At ❖ close"
 string kEntTip = kPendOn ? (kLimOn ? "BUY at ❖ close − " + kOffTxt + " pts, SELL at ❖ close + " + kOffTxt + " pts" :
      "BUY at ❖ close + " + kOffTxt + " pts, SELL at ❖ close − " + kOffTxt + " pts") +
-     " (= " + str.tostring(kOffDist, "#.##") + " in price).\nCounted only once price reaches it; missed after " + str.tostring(i_kExp) + " candles." :
+     " (= " + str.tostring(kOffDist, "#.##") + " in price).\nCounted only once price reaches it; missed after " + str.tostring(i_kExp) + " candles" +
+     (kRunTxt == "" ? "." : " or when price runs " + kRunTxt + " pts away from it first.") :
      "Trade starts at the ❖ candle close."
-
 if barstate.islast and i_showDash
     int r = 0
     r := f_dRow(r, smcOn ? "SMC 2026 + KTR" : "KTR", syminfo.ticker, CH, color.white, size.small, "")
@@ -1559,8 +1661,10 @@ if barstate.islast and i_showDash
     if kTrack
         r := f_dRow(r, "❖ Win / Loss", kWLStr,  CH, kWLCol,   size.small, kWLTip)
         r := f_dRow(r, "❖ Net",        kNetStr, CH, kWLCol,   size.small, kNetTip)
+        r := f_dRow(r, "❖ Period",     kPerStr, CH, color.white, size.tiny, kPerTip)
         r := f_dRow(r, "❖ Entry",      kEntStr, CR, color.new(#FFC107,0), size.tiny, kEntTip)
-        r := f_dRow(r, "❖ TP / SL",    "+" + kTpTxt + " / −" + kSlTxt + " pts", CR, color.new(#FFC107,0), size.tiny, kTpSlTip)
+        r := f_dRow(r, "❖ TP / SL",    kTpSlStr, CR, color.new(#FFC107,0), size.tiny, kTpSlTip)
+        r := f_dRow(r, "❖ Today",      kDayStr, CR, kDayCol, size.tiny, kDayTip)
         r := f_dRow(r, "❖ Last",       kLastTxt, CR, kLastCol, size.tiny, "")
     if smcOn
         r := f_dRow(r, "EMA Bias",   eStr,      CR, eCol,         size.tiny, "")
