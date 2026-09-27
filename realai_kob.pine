@@ -1719,6 +1719,11 @@ tpMode  = input.string("Fixed price distance", "Take profit type", options=["Fix
 tpPts   = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
 tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="Only for 'R multiple': 2 = TP at twice the risk.")
 oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
+btFrom  = input.time(timestamp("01 Jan 2020 00:00 +0000"), "All tests · from date", group=grpW, tooltip="Every Win / Loss test in this script (OFX, Every AX, KOB², KOB³, KTR ❖) only opens trades between these dates. Set the same dates in the KTR script to compare over exactly the same days.")
+btTo    = input.time(timestamp("31 Dec 2099 00:00 +0000"), "All tests · to date", group=grpW)
+btSpr   = input.float(0.18, "All tests · spread (ask − bid)", options=[0.0, 0.18, 0.22, 0.30], group=grpW, tooltip="Chart prices are bid. BUY opens on the ask (close + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask (bid + spread). Same as the KTR script.")
+bool btIn = time >= btFrom and time <= btTo
+var int firstBarTime = time
 bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
 cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
 cLoss   = input.color(#F23645, "Loss color", inline="wl", group=grpW)
@@ -1741,8 +1746,8 @@ var float netPts = 0.0
 
 // 1) manage the open trade (from the candle after entry, on closed candles only)
 if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
-    bool hitSL = trd.dir == 1 ? low <= trd.sl : high >= trd.sl
-    bool hitTP = trd.dir == 1 ? high >= trd.tp : low <= trd.tp
+    bool hitSL = trd.dir == 1 ? low <= trd.sl : high + btSpr >= trd.sl
+    bool hitTP = trd.dir == 1 ? high >= trd.tp : low + btSpr <= trd.tp
     if hitSL or hitTP
         bool  win  = hitTP and (not hitSL or bothBar == "Win")
         float rsk  = math.abs(trd.entry - trd.sl)
@@ -1765,17 +1770,18 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
 // 2) open a trade on a confirmed ENTER signal
 bool enterL = drawBull and comboLong
 bool enterS = drawBear and comboShort
-if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
+if barstate.isconfirmed and btIn and (enterL or enterS) and (na(trd) or not oneOpen)
     Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
     bool  near = low <= eb.top and high >= eb.bot
     float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
-    float risk = math.abs(close - sl)
-    if risk > 0
+    float en   = enterL ? close + btSpr : close
+    float risk = math.abs(en - sl)
+    if risk > 0 and (enterL ? sl < en : sl > en)
         int   d  = enterL ? 1 : -1
-        float tp = close + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
+        float tp = en + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
         line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
         line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
-        trd := Trade.new(d, close, sl, tp, bar_index, l1, l2)
+        trd := Trade.new(d, en, sl, tp, bar_index, l1, l2)
 
 // ════════════════════════════════════════════════════════════════════
 // BACKTEST · EVERY ACCELERATOR  (each BuAx+ / BeAx+ is a trade on its own,
@@ -1802,8 +1808,8 @@ if axBtOn and barstate.isconfirmed and axOpen.size() > 0
     for i = axOpen.size() - 1 to 0
         Trade t = axOpen.get(i)
         if bar_index > t.bar
-            bool hitSL = t.dir == 1 ? low <= t.sl : high >= t.sl
-            bool hitTP = t.dir == 1 ? high >= t.tp : low <= t.tp
+            bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
+            bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
             if hitSL or hitTP
                 bool  win  = hitTP and (not hitSL or bothBar == "Win")
                 float rsk  = math.abs(t.entry - t.sl)
@@ -1822,12 +1828,13 @@ if axBtOn and barstate.isconfirmed and axOpen.size() > 0
                     label.new(bar_index, px, win ? "w" : "l", style=up ? label.style_label_down : label.style_label_up, color=color.new(win ? cWin : cLoss, 25), textcolor=color.white, size=size.tiny, tooltip="Every-accelerator test · " + (t.dir == 1 ? "BuAx+ LONG" : "BeAx+ SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
                 axOpen.remove(i)
 
-if axBtOn and barstate.isconfirmed and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
+if axBtOn and barstate.isconfirmed and btIn and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
     int   d  = drawBull ? 1 : -1
-    float tp = close + d * axTp
-    float sl = axSlMd == "Same as TP (1R)" ? close - d * axTp : (d == 1 ? low - slBuf : high + slBuf)
-    if math.abs(close - sl) > 0
-        axOpen.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
+    float en = d == 1 ? close + btSpr : close
+    float tp = en + d * axTp
+    float sl = axSlMd == "Same as TP (1R)" ? en - d * axTp : (d == 1 ? low - slBuf : high + slBuf)
+    if d * (en - sl) > 0
+        axOpen.push(Trade.new(d, en, sl, tp, bar_index, na, na, time))
 
 // ════════════════════════════════════════════════════════════════════
 // KOB · KTR ❖ + OFX 2.0 COMBO  (double / triple confirmation on 5m)
@@ -1992,8 +1999,8 @@ f_kobRun(KobSt s) =>
         for i = s.open.size() - 1 to 0
             Trade t = s.open.get(i)
             if bar_index > t.bar
-                bool hitSL = t.dir == 1 ? low <= t.sl : high >= t.sl
-                bool hitTP = t.dir == 1 ? high >= t.tp : low <= t.tp
+                bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
+                bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
                 if hitSL or hitTP
                     bool  win  = hitTP and (not hitSL or bothBar == "Win")
                     float rsk  = math.abs(t.entry - t.sl)
@@ -2013,12 +2020,13 @@ f_kobRun(KobSt s) =>
     s
 
 f_kobOpen(KobSt s, int d, float sl) =>
-    if not kobOne or s.open.size() == 0
-        float rsk = math.abs(close - sl)
-        float tp  = close + d * (kobTpMd == "R multiple" ? kobTpR * rsk : kobTp)
-        s.open.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
+    float en = d == 1 ? close + btSpr : close
+    if btIn and (not kobOne or s.open.size() == 0) and d * (en - sl) > 0
+        float rsk = math.abs(en - sl)
+        float tp  = en + d * (kobTpMd == "R multiple" ? kobTpR * rsk : kobTp)
+        s.open.push(Trade.new(d, en, sl, tp, bar_index, na, na, time))
         if s.lab
-            label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT"), style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(close, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
+            label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT"), style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(en, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
     s
 
 // ─── ORDER-FLOW FILTER for the KTR ❖ (KTR alone chops on days without order flow) ───
@@ -2074,8 +2082,9 @@ bool   ktOF  = ktDir != 0 and ktWhy == ""
 plotchar(kShow5 and ktDir != 0 and ktOF ? (ktDir == 1 ? low - atr14 * 1.0 : high + atr14 * 1.0) : na, "KTR ❖ with order flow", char="✓", location=location.absolute, color=cKF, size=size.tiny)
 
 f_ktOpen(KobSt s, int d) =>
-    if not ktOne or s.open.size() == 0
-        s.open.push(Trade.new(d, close, close - d * ktSl, close + d * ktTp, bar_index, na, na, time))
+    float en = d == 1 ? close + btSpr : close
+    if btIn and (not ktOne or s.open.size() == 0)
+        s.open.push(Trade.new(d, en, en - d * ktSl, en + d * ktTp, bar_index, na, na, time))
     s
 
 if barstate.isconfirmed and ktTest
@@ -2413,7 +2422,7 @@ if showDash and barstate.islast
         table.cell(dash, 1, 5, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS3))
     else
         table.cell(dash, 0, 0, "RealAI KOB", text_color=gold, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
+        table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=size.small, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
         table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=size.small)
         table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=size.small, text_halign=text.align_left)
