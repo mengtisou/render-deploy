@@ -1,0 +1,2619 @@
+//@version=6
+indicator("KOB · KTR ❖ + OFX 2.0 (OrderBlock 1.0)", shorttitle="KOB", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500, max_bars_back=1000)
+
+// ════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════
+const string SRC_FP = "Footprint (Premium/Ultimate)"
+const string SRC_IB = "Intrabar (lower timeframe)"
+const string SRC_SY = "Synthetic (candle anatomy)"
+const string SRC_IA = "Intrabar anatomy (lower TF body split)"
+const string BV_CANDLE = "Candle share inside zone (reference)"
+const string BV_ZONE = "Only volume traded INSIDE the block zone"
+const string BV_BARS = "Whole candles (OB + displacement)"
+const string TF_OFF    = "Off"
+const string TF_STRUCT = "Structure (CHoCH / BOS)"
+const string TF_EMA    = "EMA"
+const string PICK_EXT = "Extreme candle (any color)"
+const string PICK_OPP = "Last opposite-color candle"
+const string Z_HALF   = "Wick extreme → 50% of candle"
+const string Z_FULL   = "Full candle"
+const string Z_BODY   = "Body only"
+// range average types (index = type id used by the calibrator)
+const string RA_SMA_INC = "SMA high-low (incl. current)"
+const string RA_SMA_PRE = "SMA high-low (previous bars)"
+const string RA_TR_INC  = "SMA true range (incl. current)"
+const string RA_TR_PRE  = "SMA true range (previous bars)"
+const string RA_EMA_INC = "EMA high-low (incl. current)"
+const string RA_EMA_PRE = "EMA high-low (previous bars)"
+const string RA_ATR     = "ATR (true range, RMA)"
+const string RA_MED_PRE = "Median high-low (previous bars)"
+// delta average types
+const string DA_SMA_INC  = "SMA |delta| (incl. current)"
+const string DA_SMA_PRE  = "SMA |delta| (previous bars)"
+const string DA_SIDE_INC = "Same-side |delta| (incl. current)"
+const string DA_SIDE_PRE = "Same-side |delta| (previous bars)"
+const string DA_EMA_INC  = "EMA |delta| (incl. current)"
+const string DA_EMA_PRE  = "EMA |delta| (previous bars)"
+const string DA_RMA      = "RMA |delta| (incl. current)"
+const string ZT_FVG   = "FVG zones (Sn1P3r)"
+const string ZT_OB    = "Orderblocks (swing break)"
+const string SENT_FORM   = "Formation candle only"
+const string SENT_RETEST = "Formation + every candle that trades inside"
+const string SENT_AFTER  = "Only candles that trade inside after it forms"
+const string SENT_PROF   = "Zone price band: candles before + after it forms"
+const string SENT_FIRST  = "First candle of the gap, fixed (reference)"
+const string BS_REF   = "Reference (tag + split bar)"
+const string BS_CLASS = "Classic (volume text)"
+const string SYN_BODY = "Body (close - open)"
+const string SYN_CLV  = "Close location (close vs high/low)"
+const string SYN_FIT  = "Anatomy · fitted to reference (body + wicks)"
+const string MODE_ALL = "All accelerators (gates 3 + 4)"
+const string MODE_BLK = "Only at a 60% block (full combo)"
+const string MODE_ANY = "Only at a block (any owner) · reference"
+
+grpS = "① Delta Source"
+deltaSrcIn = input.string(SRC_SY, "Delta source", options=[SRC_FP, SRC_IB, SRC_IA, SRC_SY], group=grpS, tooltip="Footprint = real bid/ask delta (TradingView Premium or Ultimate). If footprint data is missing it falls back to Intrabar, then Synthetic.")
+fpTicks    = input.int(100, "Footprint ticks per row", minval=1, group=grpS)
+ltfIn      = input.timeframe("1", "Intrabar timeframe", group=grpS)
+synMode    = input.string(SYN_FIT, "Synthetic method", options=[SYN_FIT, SYN_BODY, SYN_CLV], group=grpS, tooltip="Fitted anatomy: delta = volume × (0.79 × (close − open) + wick weight × (lower wick − upper wick)) ÷ (high − low). With 0.79 / 0 it gives the reference's delta on 13:00 (+2.8K), 18:25 (−1.4K) and 23 Sep 20:30 (−4.8K).")
+fitA       = input.float(0.79, "Fitted · body weight", step=0.01, group=grpS)
+fitB       = input.float(0.0, "Fitted · wick weight", step=0.01, group=grpS)
+
+grpA = "② Accelerator · Gate 3"
+rangeAvgMode = input.string(RA_SMA_PRE, "Range average method", options=[RA_MED_PRE, RA_SMA_INC, RA_SMA_PRE, RA_TR_INC, RA_TR_PRE, RA_EMA_INC, RA_EMA_PRE, RA_ATR], group=grpA, tooltip="Used until auto-calibration (⑬) has found the reference's formula. Copy the calibration result here to use it on ALL candles.")
+avgHold   = input.string("Every candle", "Averages update", options=["Every candle", "Each completed hour"], group=grpA, tooltip="Every candle (default): the averages move on every bar. Each completed hour: averages only take in finished hours (tested 26 Sep: did not match the reference at 23:00 and gave far fewer wins, so it is off).")
+rangeLen  = input.int(50, "Range average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: Avg 3.56 (13:00), 3.43 (18:25), 4.64 (21:35). A 50-candle average of the previous candles comes closest on all three; short windows are far too high after big moves.")
+deltaAvgMode = input.string(DA_SMA_PRE, "Delta average method", options=[DA_SMA_INC, DA_SMA_PRE, DA_SIDE_INC, DA_SIDE_PRE, DA_EMA_INC, DA_EMA_PRE, DA_RMA], group=grpA, tooltip="Same-side = average only over candles whose delta has the same sign as the current candle (the reference prints the average with the signal's sign, e.g. 'Avg: +1.1K').")
+lookback  = input.int(50, "Delta / volume average length", minval=2, maxval=200, group=grpA, tooltip="Reference on 25 Sep: |delta| Avg 1.1K (13:00), 650 (18:25), 685 (21:35).")
+trendFilter = input.string(TF_OFF, "Trend filter", options=[TF_OFF, TF_STRUCT, TF_EMA], group=grpA, tooltip="Structure: BuAx+ only while structure is bullish (or on the CHoCH candle itself), BeAx+ only while bearish. Removes counter-trend accelerators inside a move.")
+emaLen    = input.int(50, "EMA length (EMA filter)", minval=5, group=grpA)
+calib     = input.bool(false, "Calibration lines in tooltip", group=grpA, tooltip="Shows the range average and delta for several formulas, so you can match the reference indicator's numbers on the same candle.")
+rangeNeed = input.float(1.5, "Range expansion factor (x avg)", step=0.1, group=grpA)
+deltaNeed = input.float(1.5, "Delta expansion factor (x avg)", step=0.1, group=grpA)
+volNeed   = input.float(0.0, "Volume ratio need (0 = off)", step=0.1, group=grpA)
+minSize   = input.float(0.0, "Min candle range (x ATR 100) · 0 = off", minval=0, step=0.1, group=grpA, tooltip="A real accelerator is a big candle for the whole session, not only compared with the last few quiet bars. Hover a signal: the 'Size' line shows its value, so you can set this between the signals you want and the ones you don't.")
+cooldown  = input.int(0, "Cooldown bars (same side)", minval=0, group=grpA, tooltip="Stops back-to-back triangles on consecutive candles.")
+plusOnly  = input.bool(false, "Plus velocity only (BuAx+/BeAx+)", group=grpA, tooltip="Off (reference default): also show BuAx/BeAx whose close is not past the candle middle.")
+bodyNeed  = input.float(50, "Min body % of candle range", minval=0, maxval=100, step=5, group=grpA, tooltip="An accelerator must be a real body candle. Every reference accelerator checked has a body of 88-92% of its range; long-wick candles (e.g. a red candle with a big upper wick) are rejected. 0 = off.")
+wickless  = input.bool(false, "Strict: accelerator must be wickless", group=grpA, tooltip="Bullish: no upper wick (close = high). Bearish: no lower wick (close = low).")
+deltaConf = input.bool(true, "Enable delta confirmation", group=grpA, tooltip="Off: range expansion alone makes an accelerator.")
+showBull  = input.bool(true, "Show BuAx+ (bullish)", group=grpA)
+showBear  = input.bool(true, "Show BeAx+ (bearish)", group=grpA)
+
+grpG = "③ Delta Gate · Gate 4"
+useDeltaGate = input.bool(true, "Require |Delta| ≥ threshold for ENTER", group=grpG, tooltip="Gate 4 of the PDF: applies to the ENTER combo only. Accelerators themselves print without it, like the reference.")
+axDeltaGate  = input.bool(false, "Hide accelerators under ±threshold (off = reference)", group=grpG, tooltip="Off (reference): accelerators show from the range / delta expansion formula alone (e.g. their 25 Sep 18:35 BeAx+ with −1.4K). The ±1.7K rule is the ENTER confirmation (gate 4) above. On: no triangle unless |delta| ≥ threshold.")
+minDelta     = input.float(1700, "Delta threshold (±)", minval=0, step=100, group=grpG, tooltip="PDF rule: Buy − Sell must clear +1.7K for longs / −1.7K for shorts.")
+
+grpV = "④ Signal Display"
+sigMode     = input.string(MODE_ALL, "Show signals", options=[MODE_ALL, MODE_ANY, MODE_BLK], group=grpV, tooltip="Reference: accelerators only print when the candle touches a shown supply/demand block. Mid-move candles away from any block are hidden.")
+showSigText = input.bool(true, "Show 'D: / R:' text on signal", group=grpV)
+labelSize   = input.string("Tiny", "Triangle size", options=["Tiny", "Small", "Normal", "Large"], group=grpV)
+sigPos      = input.string("Under the candle (reference)", "Triangle position", options=["Under the candle (reference)", "At close"], group=grpV, tooltip="Reference: the triangle sits on the accelerator's close and the D:/R: text is printed right under it (above it for bearish).")
+bullColor   = input.color(#1E8E3E, "Bullish signal", group=grpV)
+bearColor   = input.color(#D32F2F, "Bearish signal", group=grpV)
+sigHalo     = input.bool(false, "Outline triangle (visible on top of blocks)", group=grpV)
+axCandle    = input.bool(true, "Color the accelerator candle", inline="axc", group=grpV, tooltip="Reference: the accelerator candle itself is painted dark green (bullish) / dark red (bearish).")
+cAxBull     = input.color(#1B8A3C, "", inline="axc", group=grpV)
+cAxBear     = input.color(#B71C1C, "", inline="axc", group=grpV)
+sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
+axInval     = input.string("Wick through the candle", "Remove failed accelerators", options=["Wick through the candle", "Close through the candle", "Off"], group=grpV, tooltip="Reference: an accelerator disappears once price later trades back through it. BuAx+ is removed when price goes below its low, BeAx+ when price goes above its high. ENTER signals stay (trade history). Visual only: gates, ENTER and W / L are not changed.")
+maxSigShown = input.int(100, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference keeps every accelerator on the chart. Lower it to see only the most recent ones.")
+refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
+
+grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
+showBlocks = input.bool(true, "Show FVG zones", group=grpB, tooltip="Off = only orderblocks on the chart. FVG zones are only drawn; the 60% gate uses the orderblocks, so ENTER and W / L do not change.")
+showObs    = input.bool(true, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
+gateOb     = input.string("OrderBlock 1.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
+zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
+fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
+fvgHideOvl = input.bool(true, "FVG · Hide overlapping zones", group=grpB, tooltip="Clean view (like the reference): when zones overlap, only the one nearest to price is drawn. Stacks of small zones in a range become one.")
+fvgMax     = input.int(150, "FVG · Max stored", minval=5, maxval=300, group=grpB, tooltip="Zones stay until a candle closes through them, so more are kept in memory; the chart only shows the top ones near price.")
+fvgVolLen  = input.int(20, "FVG · Volume MA length", minval=2, group=grpB)
+fvgEmaLen  = input.int(50, "FVG · Trend EMA length", minval=2, group=grpB)
+fvgMinAtr  = input.float(0.0, "FVG · Min gap (x ATR) · 0 = any", minval=0, step=0.05, group=grpB)
+fvgSent    = input.string(SENT_FIRST, "FVG · Sentiment volume", options=[SENT_FIRST, SENT_PROF, SENT_AFTER, SENT_RETEST, SENT_FORM], group=grpB, tooltip="Reference: the % is fixed when the zone forms (the 4251 zone stays 20/80 for days) and is the buy/sell split of the FIRST candle of the 3-candle gap, the one just before the displacement. That is why values are extreme like 20/80 or 26/74.")
+sentLook   = input.int(50, "FVG · Sentiment lookback (bars before)", minval=1, maxval=300, group=grpB)
+sentH      = input.float(15, "Sentiment bar height %", minval=5, maxval=100, group=grpB)
+blockStyle = input.string(BS_REF, "Block style", options=[BS_REF, BS_CLASS], group=grpB, tooltip="Reference: '#3 ▼ 67%' tag (own-side %: buyers for demand ▲, sellers for supply ▼), buyer|seller split bar and a bias word.")
+biasFrom   = input.float(55, "Bias from own-side %", minval=50, maxval=95, group=grpB, tooltip="Reference wording: 55% = Bull/Bear Bias, 52-54% = Neutral.")
+biasNeutral = input.float(45, "Neutral from own-side %", minval=0, maxval=60, group=grpB, tooltip="Own-side % ≥ owner threshold → Bull/Bear Bias · ≥ this → Neutral · below → Weak Bull/Bear.")
+swingLen   = input.int(5, "Swing length", minval=2, group=grpB)
+blockVolMode = input.string(BV_CANDLE, "Block volume mode", options=[BV_CANDLE, BV_ZONE, BV_BARS], group=grpB, tooltip="Zone mode splits each 1-minute candle and keeps only the part that traded inside the block price range (closest to the reference).")
+volBars    = input.int(1, "Bars counted into block volume", minval=1, maxval=10, group=grpB, tooltip="OB candle + the displacement candles after it.")
+ownerPct   = input.float(60, "Owner threshold %", minval=50, maxval=95, group=grpB)
+obText     = input.string("Volume + Buyers / Sellers", "OrderBlock 1.0 · Text on the block", options=["Volume + Buyers / Sellers", "Buyers / Sellers", "Full (volume + owner + buyers / sellers)", "Off"], group=grpB, tooltip="Volume + Buyers / Sellers (BTrader Concept 2.0 style): '2.139K (48%)' and 'Buyers: 48.59% | Sellers: 51.41%'. The % after the volume is the block's share of the volume of the blocks shown on the same side. Buyers / Sellers: only the second line. Full: '1.2K (40%) · Strong Bear' + buyers / sellers. Off: only the small OB tag.")
+maxPerSide = input.int(2, "Blocks shown per side (nearest to price)", minval=1, maxval=15, group=grpB, tooltip="Reference shows the 2 nearest unbroken supply + 2 nearest unbroken demand blocks, even if they are days old.")
+maxStore   = input.int(30, "Unbroken blocks kept in memory per side", minval=2, maxval=60, group=grpB)
+obPick     = input.string(PICK_OPP, "OB candle", options=[PICK_EXT, PICK_OPP], group=grpB, tooltip="Extreme = the candle with the highest high (supply) / lowest low (demand) of the leg, whatever its color.")
+obNextWick = input.bool(true, "Extend extreme with next candle's wick", group=grpB, tooltip="Supply: top = higher high of the OB candle and the candle after it. Demand: bottom = lower low of the two.")
+obZone     = input.string(Z_HALF, "Zone height", options=[Z_HALF, Z_FULL, Z_BODY], group=grpB, tooltip="Wick extreme → 50%: supply = high down to the candle middle, demand = low up to the candle middle.")
+blockExt   = input.int(30, "Extend blocks right (bars)", minval=1, maxval=100, group=grpB)
+obBarPct   = input.int(60, "Buyer / seller bars: 100% = this % of the zone width", minval=10, maxval=100, group=grpB, tooltip="For orderblocks and FVG zones. A zone with 74% sellers gets a red bar 0.74 × this share of the zone's width. Raise it for longer bars.")
+barLen     = input.int(25, "Buyer/Seller bar length (bars)", minval=5, maxval=100, group=grpB)
+nearAtr    = input.float(0.5, "'At block' tolerance (x ATR)", minval=0, step=0.1, group=grpB)
+cBlkBull   = input.color(#26A69A, "Buyers color", group=grpB)
+cBlkBear   = input.color(#F23645, "Sellers color", group=grpB)
+cBlkNeu    = input.color(#787B86, "Neutral color", group=grpB)
+blkColorBy = input.string("Type (supply / demand)", "Color blocks by", options=["Type (supply / demand)", "Owner (60% side)"], group=grpB, tooltip="Reference style = Type: supply blocks red, demand blocks green, whatever the buyer/seller split.")
+barTransp  = input.int(60, "Buyer/Seller bar transparency", minval=0, maxval=95, group=grpB, tooltip="Higher = lighter bars, so signals drawn over a block stay visible.")
+
+grpO2   = "⑤b OrderBlock 2.0 (Volumetric)"
+showOb2 = input.bool(false, "Show OrderBlock 2.0", group=grpO2)
+ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], group=grpO2, tooltip="Internal = small swings (length below, 5 like BTrader Concept 2.0). Swing = big swings (50).")
+ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
+ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
+ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
+ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (BTrader Concept 2.0): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
+ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (BTrader Concept 2.0): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
+ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (BTrader Concept 2.0): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
+ob2Vol  = input.string("Auto (5m whole leg, others candle → break)", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches BTrader Concept 2.0 on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
+ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
+ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
+ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
+
+grpX = "⑥ Combo Entry · Gates 1 + 5"
+enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
+slBufTicks = input.int(5, "SL buffer (ticks)", minval=0, group=grpX)
+showSL     = input.bool(true, "Draw SL line", group=grpX)
+entrySize  = input.string("Tiny", "ENTER box size", options=["Tiny", "Small", "Normal"], group=grpX)
+entryShort = input.bool(true, "ENTER box · short text", group=grpX, tooltip="On: 'SHORT · SL 4299.40'. Off: 'ENTER SHORT / SL 4299.400 (above block)'. The full text is always in the tooltip.")
+entryOff   = input.float(1.6, "ENTER box distance from candle (x ATR)", minval=0.5, step=0.2, group=grpX, tooltip="Raise it if the ENTER box covers the triangle or the D:/R: text at your zoom level.")
+
+grpD = "⑦ Delta Candle Colors"
+colorCandles = input.bool(true, "Color candles by delta strength", group=grpD)
+strongMult   = input.float(1.5, "Strong threshold (x avg delta)", step=0.1, group=grpD)
+neutralMult  = input.float(0.3, "Neutral threshold (x avg delta)", step=0.1, group=grpD)
+cStrongBull  = input.color(#2EF5C8, "BuBC · bullish unfair (strong)", group=grpD)
+cWeakBull    = input.color(color.white, "Weak bullish (fair)", group=grpD)
+cNeutral     = input.color(color.white, "NBC · fair pricing", group=grpD)
+cWeakBear    = input.color(color.white, "Weak bearish (fair)", group=grpD)
+cStrongBear  = input.color(#9C27B0, "BeBC · bearish unfair (strong)", group=grpD)
+
+grpP = "⑧ Volume Profile (buy / sell split)"
+showVP     = input.bool(true, "Show profile", group=grpP)
+vpLookback = input.int(300, "Lookback bars", minval=20, maxval=900, group=grpP)
+vpRows     = input.int(40, "Rows", minval=10, maxval=100, group=grpP)
+vpWidth    = input.int(40, "Max width (bars)", minval=5, maxval=150, group=grpP)
+vpOffset   = input.int(45, "Offset from last bar", minval=0, maxval=200, group=grpP)
+
+grpM = "⑨ Extras"
+mobileView = input.bool(false, "Mobile view (clean & compact)", group=grpM, tooltip="For phones: small 3-line dashboard, no volume profile, smaller ENTER boxes.")
+showDash = input.bool(true, "Show 5-gate dashboard", group=grpM)
+dashPos  = input.string("Bottom Right", "Dashboard position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grpM)
+
+grpL = "⑩ Key Levels"
+showMid  = input.bool(true, "Midnight (00:00 New York)", group=grpL)
+showFF   = input.bool(true, "FF.Open (Frankfurt 08:00)", group=grpL)
+showLO   = input.bool(true, "LO.Open (London 08:00)", group=grpL)
+showNY   = input.bool(false, "NY.Open (New York 09:30)", group=grpL)
+showTK   = input.bool(false, "TK.Open (Tokyo 09:00)", group=grpL)
+showPDHL = input.bool(true, "Previous Day High / Low", group=grpL)
+showPDO  = input.bool(true, "Previous Day Open", group=grpL)
+showPDC  = input.bool(false, "Previous Day Close", group=grpL)
+keepHist = input.bool(false, "Keep older days' lines", group=grpL)
+lvlExt   = input.int(10, "Extend lines right (bars)", minval=0, maxval=200, group=grpL)
+cSess    = input.color(#5B9CF6, "Session open color", group=grpL)
+cMid     = input.color(#9598A1, "Midnight color", group=grpL)
+cPD      = input.color(#B2B5BE, "Previous day color", group=grpL)
+
+grpI = "⑫ Inspect a candle"
+inspectOn = input.bool(false, "Inspect a candle (show every value)", group=grpI, tooltip="Shows why a candle fired or did not fire, plus the calibration values. Use it on the same candle as the reference indicator.")
+inspectT  = input.time(timestamp("25 Sep 2026 11:25 +0000"), "Candle time 1", group=grpI, tooltip="Default = their BeAx+ 25 Sep 18:25 (UTC+7).")
+inspectT2 = input.time(timestamp("25 Sep 2026 14:35 +0000"), "Candle time 2", group=grpI, tooltip="Default = their BuAx+ 25 Sep 21:35 (UTC+7).")
+inspectT3 = input.time(timestamp("25 Sep 2026 15:55 +0000"), "Candle time 3", group=grpI, tooltip="Default = their BuAx+ 25 Sep 22:55 (UTC+7).")
+
+grpT = "⑪ Structure"
+cdStyle   = input.bool(true, "Reference style: CDL / CDS breaks with ★ grade", group=grpT, tooltip="Like Sn1P3r: a bullish change of direction prints 'CDL 1-3★', a bearish one 'CDS 1-3★'. ★ grade: +1 if the break candle is a strong body (≥ 60% of its range), +1 if its volume is above its 20-bar average.")
+showProt  = input.bool(true, "Show protected levels (CDL SL / CDS SH)", group=grpT, tooltip="After a CDL, the low that started the move is protected (CDL SL). After a CDS, the high is protected (CDS SH). Each one stays until price closes through it.")
+protMax   = input.int(5, "Protected levels kept (per side)", minval=1, maxval=20, group=grpT)
+showChoch = input.bool(true, "Show CHoCH", group=grpT)
+showBos   = input.bool(false, "Show BOS", group=grpT)
+cChBull   = input.color(#089981, "Bullish CHoCH / BOS", group=grpT)
+cChBear   = input.color(#B22833, "Bearish CHoCH / BOS", group=grpT)
+
+// ════════════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════════════
+f_size(string s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.small : s == "Normal" ? size.normal : size.large
+
+f_k(float x) =>
+    float a = math.abs(x)
+    a >= 1000 ? str.tostring(x / 1000, "#.#") + "K" : str.tostring(x, "#")
+
+f_ks(float x) =>
+    (x > 0 ? "+" : "") + f_k(x)
+
+f_x(float r) =>
+    str.tostring(r, "#.##") + "x"
+
+sigSize  = f_size(labelSize)
+haloSize = labelSize == "Tiny" ? size.small : labelSize == "Small" ? size.normal : labelSize == "Normal" ? size.large : size.huge
+txtBg    = sigTextBg ? color.new(chart.bg_color, 20) : color.new(color.white, 100)
+atr14   = ta.atr(14)
+
+// ════════════════════════════════════════════════════════════════════
+// DELTA  (Footprint → Intrabar → Synthetic)
+// ════════════════════════════════════════════════════════════════════
+barRange = high - low
+
+// Synthetic
+float synBuy = volume / 2
+if barRange > 0
+    float fitFrac = math.max(-1.0, math.min(1.0, (fitA * (close - open) + fitB * ((math.min(open, close) - low) - (high - math.max(open, close)))) / barRange))
+    synBuy := synMode == SYN_FIT ? volume * (0.5 + 0.5 * fitFrac) : synMode == SYN_BODY ? volume * (0.5 + 0.5 * (close - open) / barRange) : volume * (close - low) / barRange
+float synSell = volume - synBuy
+
+// Intrabar (lower timeframe candles classified up / down)
+int    chartSec = timeframe.in_seconds()
+string ltf      = timeframe.in_seconds(ltfIn) < chartSec ? ltfIn : timeframe.period
+[ibO, ibH, ibL, ibC, ibV] = request.security_lower_tf(syminfo.tickerid, ltf, [open, high, low, close, volume])
+float ibBuy   = 0.0
+float ibSell  = 0.0
+float ibaBuy  = 0.0
+float ibaSell = 0.0
+float ibClvD  = 0.0
+float ibTickD = 0.0
+int   ibN    = array.size(ibC)
+if ibN > 0
+    for i = 0 to ibN - 1
+        float o = array.get(ibO, i)
+        float c = array.get(ibC, i)
+        float v = nz(array.get(ibV, i))
+        float r = array.get(ibH, i) - array.get(ibL, i)
+        float bFrac = r > 0 ? 0.5 + 0.5 * (c - o) / r : 0.5
+        ibaBuy  += v * bFrac
+        ibaSell += v * (1 - bFrac)
+        ibClvD  += r > 0 ? v * (2 * c - array.get(ibH, i) - array.get(ibL, i)) / r : 0.0
+        float pc = i == 0 ? nz(close[1], o) : array.get(ibC, i - 1)
+        ibTickD += c > pc ? v : c < pc ? -v : 0.0
+        if c > o
+            ibBuy += v
+        else if c < o
+            ibSell += v
+        else
+            ibBuy  += v / 2
+            ibSell += v / 2
+
+// Footprint (only requested when selected)
+float fpBuy  = na
+float fpSell = na
+if deltaSrcIn == SRC_FP
+    fp = request.footprint(fpTicks, 70)
+    if not na(fp)
+        fpBuy  := fp.buy_volume()
+        fpSell := fp.sell_volume()
+
+float  buyVol  = na
+float  sellVol = na
+string srcUsed = "SYNTHETIC (candle anatomy)"
+if deltaSrcIn == SRC_FP and not na(fpBuy) and (fpBuy + fpSell) > 0
+    buyVol  := fpBuy
+    sellVol := fpSell
+    srcUsed := "FOOTPRINT"
+else if deltaSrcIn == SRC_IA and ibN > 0 and (ibaBuy + ibaSell) > 0
+    buyVol  := ibaBuy
+    sellVol := ibaSell
+    srcUsed := "INTRABAR ANATOMY (" + ltf + ")"
+else if (deltaSrcIn == SRC_FP or deltaSrcIn == SRC_IB) and ibN > 0 and (ibBuy + ibSell) > 0
+    buyVol  := ibBuy
+    sellVol := ibSell
+    srcUsed := "INTRABAR (" + ltf + ")"
+else
+    buyVol  := synBuy
+    sellVol := synSell
+
+float delta = buyVol - sellVol
+
+// ---- keep each 5M bar's 1-minute candles so blocks can measure the volume INSIDE their zone ----
+type IBar
+    array<float> h
+    array<float> l
+    array<float> v
+    array<float> bf
+    float ch
+    float cl
+    float cb
+    float cs
+    array<float> ud
+
+var array<IBar> ibHist = array.new<IBar>()
+IBar curIB = IBar.new(array.new<float>(), array.new<float>(), array.new<float>(), array.new<float>(), high, low, buyVol, sellVol, array.new<float>())
+if ibN > 0
+    for i = 0 to ibN - 1
+        float o  = array.get(ibO, i)
+        float hh = array.get(ibH, i)
+        float ll = array.get(ibL, i)
+        float c  = array.get(ibC, i)
+        float r  = hh - ll
+        curIB.h.push(hh)
+        curIB.l.push(ll)
+        curIB.v.push(nz(array.get(ibV, i)))
+        curIB.bf.push(deltaSrcIn == SRC_IB ? (c > o ? 1.0 : c < o ? 0.0 : 0.5) : (r > 0 ? 0.5 + 0.5 * (c - o) / r : 0.5))
+        curIB.ud.push(c > o ? 1.0 : c < o ? 0.0 : 0.5)
+ibHist.unshift(curIB)
+if ibHist.size() > 320
+    ibHist.pop()
+
+// ════════════════════════════════════════════════════════════════════
+// AVERAGES  (every formula the reference could use; one is active)
+//   Range types: 0 SMA HL incl · 1 SMA HL prev · 2 SMA TR incl · 3 SMA TR prev
+//                4 EMA HL incl · 5 EMA HL prev · 6 ATR (RMA TR)
+//   Delta formulas: 0 body · 1 close location · 2 intrabar · 3 intrabar anatomy · 4 delta source input
+//   Delta avg types: 0 SMA incl · 1 SMA prev · 2 same-side incl · 3 same-side prev
+//                    4 EMA incl · 5 EMA prev · 6 RMA incl
+// ════════════════════════════════════════════════════════════════════
+const int CAL_N = 50
+float trS      = na(close[1]) ? barRange : math.max(barRange, math.abs(high - close[1]), math.abs(low - close[1]))
+float deltaSrc = delta
+float dBody    = barRange > 0 ? volume * (close - open) / barRange : 0.0
+float dClv     = barRange > 0 ? volume * (2 * close - high - low) / barRange : 0.0
+float dIb      = ibBuy - ibSell
+float dIa      = ibaBuy - ibaSell
+float hiT      = na(close[1]) ? high : math.max(high, close[1])
+float loT      = na(close[1]) ? low : math.min(low, close[1])
+float dTrClv   = hiT - loT > 0 ? volume * (2 * close - hiT - loT) / (hiT - loT) : 0.0
+float dIbClv   = ibClvD
+float dIbTick  = ibTickD
+const int NF   = 7   // candidate delta formulas 0..6 · index NF = delta source input
+
+f_raType(string m) =>
+    m == RA_SMA_INC ? 0 : m == RA_SMA_PRE ? 1 : m == RA_TR_INC ? 2 : m == RA_TR_PRE ? 3 : m == RA_EMA_INC ? 4 : m == RA_EMA_PRE ? 5 : m == RA_MED_PRE ? 7 : 6
+f_daType(string m) =>
+    m == DA_SMA_INC ? 0 : m == DA_SMA_PRE ? 1 : m == DA_SIDE_INC ? 2 : m == DA_SIDE_PRE ? 3 : m == DA_EMA_INC ? 4 : m == DA_EMA_PRE ? 5 : 6
+f_raName(int t) =>
+    t == 0 ? RA_SMA_INC : t == 1 ? RA_SMA_PRE : t == 2 ? RA_TR_INC : t == 3 ? RA_TR_PRE : t == 4 ? RA_EMA_INC : t == 5 ? RA_EMA_PRE : t == 7 ? RA_MED_PRE : RA_ATR
+f_daName(int t) =>
+    t == 0 ? DA_SMA_INC : t == 1 ? DA_SMA_PRE : t == 2 ? DA_SIDE_INC : t == 3 ? DA_SIDE_PRE : t == 4 ? DA_EMA_INC : t == 5 ? DA_EMA_PRE : DA_RMA
+f_fName(int f) =>
+    f == 0 ? "Synthetic · Body (close - open)" : f == 1 ? "Synthetic · Close location" : f == 2 ? "Intrabar (lower TF)" : f == 3 ? "Intrabar anatomy" : f == 4 ? "Synthetic · Close location vs true range" : f == 5 ? "Intrabar close location" : f == 6 ? "Intrabar tick rule (close vs prev close)" : "Delta source input"
+
+// delta of formula f, k bars ago
+f_dAt(int f, int k) =>
+    f == 0 ? dBody[k] : f == 1 ? dClv[k] : f == 2 ? dIb[k] : f == 3 ? dIa[k] : f == 4 ? dTrClv[k] : f == 5 ? dIbClv[k] : f == 6 ? dIbTick[k] : deltaSrc[k]
+
+// recursive averages: value up to the PREVIOUS confirmed bar (updated at the end of the script)
+var array<float> stEmaHL = array.new<float>(CAL_N + 1, na)
+var array<float> stRmaTR = array.new<float>(CAL_N + 1, na)
+var array<float> stEmaD  = array.new<float>((NF + 1) * (CAL_N + 1), na)
+var array<float> stRmaD  = array.new<float>((NF + 1) * (CAL_N + 1), na)
+
+f_step(float prev, float x, float a) =>
+    na(prev) ? x : a * x + (1 - a) * prev
+
+// median of the previous n candle ranges: one very big candle does not pull it up like an average
+f_medPrev(int n) =>
+    array<float> a = array.new<float>()
+    for i = 1 to n
+        a.push(nz(barRange[i]))
+    a.median()
+
+f_rangeCand(int t, int n) =>
+    float v = na
+    if t <= 3
+        int   off = t % 2 == 1 ? 1 : 0
+        float s   = 0.0
+        for i = off to off + n - 1
+            s += t <= 1 ? nz(barRange[i]) : nz(trS[i])
+        v := s / n
+    else if t == 4
+        v := f_step(stEmaHL.get(math.min(n, CAL_N)), barRange, 2.0 / (math.min(n, CAL_N) + 1))
+    else if t == 5
+        v := stEmaHL.get(math.min(n, CAL_N))
+    else if t == 7
+        v := f_medPrev(n)
+    else
+        v := f_step(stRmaTR.get(math.min(n, CAL_N)), trS, 1.0 / math.min(n, CAL_N))
+    v
+
+f_deltaCand(int f, int t, int n) =>
+    float v  = na
+    float d0 = nz(f_dAt(f, 0))
+    int   m  = math.min(n, CAL_N)   // EMA / RMA states exist up to length 50
+    int   k  = f * (CAL_N + 1) + m
+    if t <= 3
+        int   off = t % 2 == 1 ? 1 : 0
+        float s   = 0.0
+        int   c   = 0
+        for i = off to off + n - 1
+            float di = nz(f_dAt(f, i))
+            if t <= 1 or math.sign(di) == math.sign(d0)
+                s += math.abs(di)
+                c += 1
+        v := c > 0 ? s / (t <= 1 ? n : c) : na
+    else if t == 4
+        v := f_step(stEmaD.get(k), math.abs(d0), 2.0 / (m + 1))
+    else if t == 5
+        v := stEmaD.get(k)
+    else
+        v := f_step(stRmaD.get(k), math.abs(d0), 1.0 / m)
+    v
+
+// ---- deep formula families (searched by the auto-calibration, lengths up to 200) ----
+const int LMAX = 200
+const int DN   = 100   // max length for recursive (EMA / RMA) families
+const int NRF  = 19
+const int NDF  = 11
+const string RF0  = "SMA high-low (incl.)"
+const string RF1  = "SMA high-low (prev.)"
+const string RF2  = "SMA true range (incl.)"
+const string RF3  = "SMA true range (prev.)"
+const string RF4  = "SMA body (incl.)"
+const string RF5  = "SMA body (prev.)"
+const string RF6  = "WMA high-low (incl.)"
+const string RF7  = "WMA high-low (prev.)"
+const string RF8  = "EMA high-low (incl.)"
+const string RF9  = "EMA high-low (prev.)"
+const string RF10 = "RMA high-low (incl.)"
+const string RF11 = "RMA high-low (prev.)"
+const string RF12 = "ATR · RMA true range (incl.)"
+const string RF13 = "RMA true range (prev.)"
+const string RF14 = "EMA true range (incl.)"
+const string RF15 = "EMA true range (prev.)"
+const string RF16 = "Same-direction SMA high-low (incl.)"
+const string RF17 = "Same-direction SMA high-low (prev.)"
+const string RF18 = "Median high-low (prev.)"
+const string DF0 = "SMA |delta| (incl.)"
+const string DF1 = "SMA |delta| (prev.)"
+const string DF2 = "Same-side SMA |delta| (incl.)"
+const string DF3 = "Same-side SMA |delta| (prev.)"
+const string DF4 = "WMA |delta| (incl.)"
+const string DF5 = "WMA |delta| (prev.)"
+const string DF6 = "EMA |delta| (incl.)"
+const string DF7 = "EMA |delta| (prev.)"
+const string DF8 = "RMA |delta| (incl.)"
+const string DF9 = "RMA |delta| (prev.)"
+const string DF10 = "Median |delta| (prev.)"
+
+f_rfName(int f) =>
+    f == 0 ? RF0 : f == 1 ? RF1 : f == 2 ? RF2 : f == 3 ? RF3 : f == 4 ? RF4 : f == 5 ? RF5 : f == 6 ? RF6 : f == 7 ? RF7 : f == 8 ? RF8 : f == 9 ? RF9 : f == 10 ? RF10 : f == 11 ? RF11 : f == 12 ? RF12 : f == 13 ? RF13 : f == 14 ? RF14 : f == 15 ? RF15 : f == 16 ? RF16 : f == 17 ? RF17 : RF18
+f_rfIdx(string m) =>
+    m == RF0 ? 0 : m == RF1 ? 1 : m == RF2 ? 2 : m == RF3 ? 3 : m == RF4 ? 4 : m == RF5 ? 5 : m == RF6 ? 6 : m == RF7 ? 7 : m == RF8 ? 8 : m == RF9 ? 9 : m == RF10 ? 10 : m == RF11 ? 11 : m == RF12 ? 12 : m == RF13 ? 13 : m == RF14 ? 14 : m == RF15 ? 15 : m == RF16 ? 16 : m == RF17 ? 17 : 18
+f_dfName(int f) =>
+    f == 0 ? DF0 : f == 1 ? DF1 : f == 2 ? DF2 : f == 3 ? DF3 : f == 4 ? DF4 : f == 5 ? DF5 : f == 6 ? DF6 : f == 7 ? DF7 : f == 8 ? DF8 : f == 9 ? DF9 : DF10
+f_dfIdx(string m) =>
+    m == DF0 ? 0 : m == DF1 ? 1 : m == DF2 ? 2 : m == DF3 ? 3 : m == DF4 ? 4 : m == DF5 ? 5 : m == DF6 ? 6 : m == DF7 ? 7 : m == DF8 ? 8 : m == DF9 ? 9 : 10
+
+float absBody = math.abs(close - open)
+float absDS   = math.abs(deltaSrc)
+float sgnDS   = math.sign(deltaSrc)
+float cdir    = math.sign(close - open)   // candle direction, for same-direction averages
+
+// recursive states for lengths 2..DN, value up to the previous confirmed bar
+var array<float> dsHLE = array.new<float>(DN + 1, na)
+var array<float> dsHLR = array.new<float>(DN + 1, na)
+var array<float> dsTRR = array.new<float>(DN + 1, na)
+var array<float> dsTRE = array.new<float>(DN + 1, na)
+var array<float> dsDE  = array.new<float>(DN + 1, na)
+var array<float> dsDR  = array.new<float>(DN + 1, na)
+
+// range average of family fam, length n, on the current bar
+f_rDeep(int fam, int n) =>
+    float v = na
+    if fam <= 7
+        int   off = fam % 2
+        float s   = 0.0
+        float w   = 0.0
+        for i = 0 to n - 1
+            float x  = fam <= 1 or fam >= 6 ? nz(barRange[i + off]) : fam <= 3 ? nz(trS[i + off]) : nz(absBody[i + off])
+            float wt = fam >= 6 ? n - i : 1
+            s += x * wt
+            w += wt
+        v := s / w
+    else if fam == 16 or fam == 17
+        // only candles of the same direction as this one (up candles for an up candle)
+        int   off = fam == 17 ? 1 : 0
+        float s   = 0.0
+        int   c   = 0
+        for i = off to off + n - 1
+            if nz(cdir[i]) == cdir
+                s += nz(barRange[i])
+                c += 1
+        v := c > 0 ? s / c : na
+    else if fam == 18
+        v := f_medPrev(n)
+    else if n <= DN
+        bool  inc = fam % 2 == 0
+        int   g   = int(math.floor((fam - 8) / 2))
+        float a   = g == 0 or g == 3 ? 2.0 / (n + 1) : 1.0 / n
+        float x   = g <= 1 ? barRange : trS
+        float st  = g == 0 ? dsHLE.get(n) : g == 1 ? dsHLR.get(n) : g == 2 ? dsTRR.get(n) : dsTRE.get(n)
+        v := inc ? f_step(st, x, a) : st
+    v
+
+// |delta| average of family fam, length n, on the current bar (delta = the delta source above)
+f_dDeep(int fam, int n) =>
+    float v = na
+    if fam <= 5
+        int   off = fam % 2
+        float s   = 0.0
+        float w   = 0.0
+        for i = 0 to n - 1
+            bool  use = fam == 2 or fam == 3 ? math.sign(nz(deltaSrc[i + off])) == sgnDS : true
+            float wt  = fam >= 4 ? n - i : 1
+            if use
+                s += nz(absDS[i + off]) * wt
+                w += wt
+        v := w > 0 ? s / w : na
+    else if fam == 10
+        array<float> arr = array.new<float>()
+        for i = 1 to n
+            arr.push(nz(absDS[i]))
+        v := arr.median()
+    else if n <= DN
+        bool  inc = fam % 2 == 0
+        float a   = fam <= 7 ? 2.0 / (n + 1) : 1.0 / n
+        float st  = fam <= 7 ? dsDE.get(n) : dsDR.get(n)
+        v := inc ? f_step(st, absDS, a) : st
+    v
+
+// ════ reference search runs BEFORE the averages, so a matching formula is used on the reference candle itself ════
+var bool calRFound = false
+var bool calDFound = false
+var int  cRF = 1
+var int  cRN = 20
+var int  cDF = 1
+var int  cDN = 20
+grpC  = "⑬ Auto-calibrate"
+calOn = input.bool(false, "Show calculation panels (calibration table + REF CHECK)", group="⑨ Extras", tooltip="Debug panels used to match the reference. Off = clean chart.")
+
+// Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
+// Volume > 0 → the candle with exactly that volume within ±12 h of the time is used.
+r1On = input.bool(false, "Ref 1", inline="r1a", group=grpC)
+r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
+r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
+r1Rg = input.float(12.54, "Range", inline="r1b", group=grpC)
+r1R  = input.float(6.81, "Avg", inline="r1b", group=grpC)
+r1RR = input.float(0, "Ratio", inline="r1b", group=grpC)
+r1D  = input.float(-4800, "Delta", inline="r1c", group=grpC)
+r1DA = input.float(3100, "Avg", inline="r1c", group=grpC)
+r1DR = input.float(0, "Ratio", inline="r1c", group=grpC)
+r2On = input.bool(false, "Ref 2", inline="r2a", group=grpC)
+r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
+r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
+r2Rg = input.float(14.5, "Range", inline="r2b", group=grpC)
+r2R  = input.float(8.75, "Avg", inline="r2b", group=grpC)
+r2RR = input.float(0, "Ratio", inline="r2b", group=grpC)
+r2D  = input.float(2900, "Delta", inline="r2c", group=grpC)
+r2DA = input.float(1800, "Avg", inline="r2c", group=grpC)
+r2DR = input.float(0, "Ratio", inline="r2c", group=grpC)
+r3On = input.bool(true, "Ref 3", inline="r3a", group=grpC)
+r3T  = input.time(timestamp("25 Sep 2026 06:00 +0000"), "", inline="r3a", group=grpC)
+r3V  = input.int(3968, "Vol", inline="r3a", group=grpC)
+r3Rg = input.float(5.82, "Range", inline="r3b", group=grpC)
+r3R  = input.float(3.56, "Avg", inline="r3b", group=grpC)
+r3RR = input.float(1.63, "Ratio", inline="r3b", group=grpC)
+r3D  = input.float(2800, "Delta", inline="r3c", group=grpC)
+r3DA = input.float(1100, "Avg", inline="r3c", group=grpC)
+r3DR = input.float(2.51, "Ratio", inline="r3c", group=grpC, tooltip="Ratio 0 = not known. Averages are checked the way the reference rounds them: range to 0.01, delta to 0.1K, ratios to 0.01x.")
+// Refs 4-5: accelerators on the reference's 25 Sep chart, only their on-chart text is known (D: and R: / D: ratios)
+r4On = input.bool(true, "Ref 4 · BeAx+ 18:25", inline="r4a", group=grpC)
+r4T  = input.time(timestamp("25 Sep 2026 11:25 +0000"), "", inline="r4a", group=grpC)
+r4V  = input.int(1971, "Vol", inline="r4a", group=grpC)
+r4Rg = input.float(5.75, "Range", inline="r4b", group=grpC)
+r4R  = input.float(3.43, "Avg", inline="r4b", group=grpC)
+r4RR = input.float(1.68, "Ratio", inline="r4b", group=grpC)
+r4D  = input.float(-1400, "Delta", inline="r4c", group=grpC)
+r4DA = input.float(650, "Avg", inline="r4c", group=grpC)
+r4DR = input.float(2.12, "Ratio", inline="r4c", group=grpC)
+r5On = input.bool(true, "Ref 5 · BuAx+ 21:35", inline="r5a", group=grpC)
+r5T  = input.time(timestamp("25 Sep 2026 14:35 +0000"), "", inline="r5a", group=grpC)
+r5V  = input.int(5484, "Vol", inline="r5a", group=grpC)
+r5Rg = input.float(9.03, "Range", inline="r5b", group=grpC)
+r5R  = input.float(4.64, "Avg", inline="r5b", group=grpC)
+r5RR = input.float(1.95, "Ratio", inline="r5b", group=grpC)
+r5D  = input.float(3700, "Delta", inline="r5c", group=grpC)
+r5DA = input.float(685, "Avg", inline="r5c", group=grpC)
+r5DR = input.float(5.37, "Ratio", inline="r5c", group=grpC)
+dSlack = input.float(5, "Delta average tolerance %", minval=0, maxval=30, group=grpC, tooltip="Our delta on older candles is a close estimate of the reference's, so delta averages are matched within this margin. Range averages are matched exactly (high − low is the same on both charts).")
+
+var array<int>    mR   = array.new<int>(NRF * (LMAX + 1), 0)
+var array<float>  eRs  = array.new<float>(NRF * (LMAX + 1), 0.0)
+var array<int>    mD   = array.new<int>(NDF * (LMAX + 1), 0)
+var array<float>  eDs  = array.new<float>(NDF * (LMAX + 1), 0.0)
+var array<string> calDiag = array.new<string>(5, "not found on chart")
+var int    calHits  = 0
+var string calFound = ""
+var bool   gotA = false
+var bool   gotB = false
+var bool   gotC = false
+var bool   gotD = false
+var bool   gotE = false
+var int    nRFull = 0
+var int    nDFull = 0
+var string rBest  = "—"
+var string dBest  = "—"
+var int    dFitOK = 0
+
+f_isRef(bool on, int t, int v) =>
+    on and (v > 0 ? math.abs(time - t) <= 12 * 3600 * 1000 and volume == v : time <= t and time_close > t)
+bool isA = calOn and not gotA and f_isRef(r1On, r1T, r1V)
+bool isB = calOn and not gotB and f_isRef(r2On, r2T, r2V)
+bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
+bool isD = calOn and not gotD and f_isRef(r4On, r4T, r4V)
+bool isE = calOn and not gotE and f_isRef(r5On, r5T, r5V)
+int  calNeed = (r1On ? 1 : 0) + (r2On ? 1 : 0) + (r3On ? 1 : 0) + (r4On ? 1 : 0) + (r5On ? 1 : 0)
+
+// does a candidate average reproduce the reference's rounded numbers?
+f_rOK(float v, float ref, float rr) =>
+    not na(v) and v > 0 and (ref <= 0 or math.abs(v - ref) <= 0.0051) and (rr <= 0 or math.abs(barRange / v - rr) <= 0.0051)
+// delta average: the reference's Delta (±50) ÷ its ratio (±0.005) gives the range its average must be in
+f_dOK(float v, float ref, float dr, float rd) =>
+    float lo = (math.abs(rd) - 50) / (dr + 0.005) * (1 - dSlack / 100)
+    float hi = (math.abs(rd) + 50) / math.max(dr - 0.005, 0.01) * (1 + dSlack / 100)
+    bool  okA = ref <= 0 or math.abs(v - ref) <= 50.5 + ref * dSlack / 100
+    bool  okR = dr <= 0 or (v >= lo and v <= hi)
+    not na(v) and v > 0 and okA and okR
+f_rErr(float v, float ref, float rr) =>
+    na(v) or v <= 0 ? 1.0 : ref > 0 ? math.abs(v - ref) / ref : math.abs(barRange / v - rr) / rr
+f_dErr(float v, float ref, float dr, float rd) =>
+    float tgt = ref > 0 ? ref : math.abs(rd) / dr
+    na(v) or v <= 0 ? 1.0 : math.abs(v - tgt) / tgt
+
+if (isA or isB or isC or isD or isE) and bar_index > LMAX + 2
+    float refAvg = isA ? r1R : isB ? r2R : isC ? r3R : isD ? r4R : r5R
+    float refRR  = isA ? r1RR : isB ? r2RR : isC ? r3RR : isD ? r4RR : r5RR
+    float refRg  = isA ? r1Rg : isB ? r2Rg : isC ? r3Rg : isD ? r4Rg : r5Rg
+    float refD   = isA ? r1D : isB ? r2D : isC ? r3D : isD ? r4D : r5D
+    float refDA  = isA ? r1DA : isB ? r2DA : isC ? r3DA : isD ? r4DA : r5DA
+    float refDR  = isA ? r1DR : isB ? r2DR : isC ? r3DR : isD ? r4DR : r5DR
+    gotA := gotA or isA
+    gotB := gotB or isB
+    gotC := gotC or isC
+    gotD := gotD or isD
+    gotE := gotE or isE
+    calHits  += 1
+    calFound += isA ? " 1" : isB ? " 2" : isC ? " 3" : isD ? " 4" : " 5"
+    int   hitR = 0
+    int   hitD = 0
+    string exR = ""
+    string exD = ""
+    // range, loop families (SMA / WMA): one pass with running sums per source
+    for src = 0 to 2
+        float a0 = 0.0
+        float a1 = 0.0
+        float b0 = 0.0
+        float b1 = 0.0
+        for n = 1 to LMAX
+            float xi = src == 0 ? nz(barRange[n - 1]) : src == 1 ? nz(trS[n - 1]) : nz(absBody[n - 1])
+            float xp = src == 0 ? nz(barRange[n]) : src == 1 ? nz(trS[n]) : nz(absBody[n])
+            a0 += xi
+            a1 += (n - 1) * xi
+            b0 += xp
+            b1 += (n - 1) * xp
+            if n >= 2
+                float tri = n * (n + 1) / 2.0
+                for q = 0 to (src == 0 ? 3 : 1)
+                    int   fam = src == 0 ? (q <= 1 ? q : q + 4) : src * 2 + q
+                    float v   = q == 0 ? a0 / n : q == 1 ? b0 / n : q == 2 ? (n * a0 - a1) / tri : (n * b0 - b1) / tri
+                    int   j   = fam * (LMAX + 1) + n
+                    eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+                    if f_rOK(v, refAvg, refRR)
+                        mR.set(j, mR.get(j) + 1)
+                        hitR += 1
+                        if exR == ""
+                            exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // range, recursive families (EMA / RMA)
+    for fam = 8 to NRF - 1
+        for n = 2 to DN
+            float v = f_rDeep(fam, n)
+            int   j = fam * (LMAX + 1) + n
+            eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+            if f_rOK(v, refAvg, refRR)
+                mR.set(j, mR.get(j) + 1)
+                hitR += 1
+                if exR == ""
+                    exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // range: same-direction candles only (16 incl · 17 prev) and median of previous ranges (18)
+    float q0 = 0.0
+    float qc = 0.0
+    float u0 = 0.0
+    float uc = 0.0
+    array<float> medR = array.new<float>()
+    for n = 1 to LMAX
+        if nz(cdir[n - 1]) == cdir
+            q0 += nz(barRange[n - 1])
+            qc += 1
+        if nz(cdir[n]) == cdir
+            u0 += nz(barRange[n])
+            uc += 1
+        if n <= DN
+            medR.push(nz(barRange[n]))
+        if n >= 2
+            for q = 0 to (n <= DN ? 2 : 1)
+                int   fam = 16 + q
+                float v   = q == 0 ? (qc > 0 ? q0 / qc : na) : q == 1 ? (uc > 0 ? u0 / uc : na) : medR.median()
+                int   j   = fam * (LMAX + 1) + n
+                eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+                if f_rOK(v, refAvg, refRR)
+                    mR.set(j, mR.get(j) + 1)
+                    hitR += 1
+                    if exR == ""
+                        exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // delta average, loop families (SMA / same-side / WMA): one pass
+    float s0 = 0.0
+    float s1 = 0.0
+    float p0 = 0.0
+    float p1 = 0.0
+    float ss = 0.0
+    float sc = 0.0
+    float ps = 0.0
+    float pc = 0.0
+    for n = 1 to LMAX
+        float xi = nz(absDS[n - 1])
+        float xp = nz(absDS[n])
+        s0 += xi
+        s1 += (n - 1) * xi
+        p0 += xp
+        p1 += (n - 1) * xp
+        if math.sign(nz(deltaSrc[n - 1])) == sgnDS
+            ss += xi
+            sc += 1
+        if math.sign(nz(deltaSrc[n])) == sgnDS
+            ps += xp
+            pc += 1
+        if n >= 2
+            float tri = n * (n + 1) / 2.0
+            for fam = 0 to 5
+                float v = fam == 0 ? s0 / n : fam == 1 ? p0 / n : fam == 2 ? (sc > 0 ? ss / sc : na) : fam == 3 ? (pc > 0 ? ps / pc : na) : fam == 4 ? (n * s0 - s1) / tri : (n * p0 - p1) / tri
+                int   j = fam * (LMAX + 1) + n
+                eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+                if f_dOK(v, refDA, refDR, refD)
+                    mD.set(j, mD.get(j) + 1)
+                    hitD += 1
+                    if exD == ""
+                        exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    // delta average, recursive families
+    for fam = 6 to NDF - 1
+        for n = 2 to DN
+            float v = f_dDeep(fam, n)
+            int   j = fam * (LMAX + 1) + n
+            eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+            if f_dOK(v, refDA, refDR, refD)
+                mD.set(j, mD.get(j) + 1)
+                hitD += 1
+                if exD == ""
+                    exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    // delta average: median of previous |delta|
+    array<float> medD = array.new<float>()
+    medD.push(nz(absDS[1]))
+    for n = 2 to DN
+        medD.push(nz(absDS[n]))
+        float v = medD.median()
+        int   j = 10 * (LMAX + 1) + n
+        eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+        if f_dOK(v, refDA, refDR, refD)
+            mD.set(j, mD.get(j) + 1)
+            hitD += 1
+            if exD == ""
+                exD := f_dfName(10) + " " + str.tostring(n) + " = " + f_k(v)
+    bool dOKc = math.abs(deltaSrc - refD) <= math.max(150.0, math.abs(refD) * 0.06)
+    dFitOK += dOKc ? 1 : 0
+    string d = "OHLC " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
+    d += " · range " + str.tostring(barRange, "#.##") + (math.abs(barRange - refRg) < 0.02 ? " ✓" : " ✗ ref " + str.tostring(refRg, "#.##")) + " · vol " + str.tostring(volume, "#")
+    d += "\nReference's range avg here ≈ " + str.tostring(refAvg > 0 ? refAvg : barRange / refRR, "#.###") + " · delta avg ≈ " + f_k(refDA > 0 ? refDA : math.abs(refD) / refDR)
+    d += "\nDelta " + f_ks(deltaSrc) + " vs ref " + f_ks(refD) + (dOKc ? " ✓" : " ✗") + " · body " + f_ks(dBody) + " · CLV " + f_ks(dClv)
+    d += "\nRange avg: " + str.tostring(hitR) + " formulas match this candle" + (exR != "" ? " (e.g. " + exR + ")" : "")
+    d += "\nDelta avg: " + str.tostring(hitD) + " formulas match this candle" + (exD != "" ? " (e.g. " + exD + ")" : "")
+    calDiag.set(isA ? 0 : isB ? 1 : isC ? 2 : isD ? 3 : 4, d)
+
+    // best: matches every reference candle found so far (then the smallest error)
+    int   bRj = -1
+    int   bRc = -1
+    float bRe = 1e9
+    nRFull := 0
+    for j = 0 to NRF * (LMAX + 1) - 1
+        int c = mR.get(j)
+        if c == calHits
+            nRFull += 1
+        if c > bRc or (c == bRc and eRs.get(j) < bRe)
+            bRc := c
+            bRe := eRs.get(j)
+            bRj := j
+    cRF := int(math.floor(bRj / (LMAX + 1)))
+    cRN := bRj % (LMAX + 1)
+    // exact match on every reference candle, or (fallback) within 3% on average
+    calRFound := calHits >= calNeed and (bRc == calHits or bRe / calHits < 0.03)
+    rBest := f_rfName(cRF) + " · length " + str.tostring(cRN) + " · matches " + str.tostring(bRc) + "/" + str.tostring(calHits) + (nRFull > 1 ? " (" + str.tostring(nRFull) + " formulas match all)" : "")
+    int   bDj = -1
+    int   bDc = -1
+    float bDe = 1e9
+    nDFull := 0
+    for j = 0 to NDF * (LMAX + 1) - 1
+        int c = mD.get(j)
+        if c == calHits
+            nDFull += 1
+        if c > bDc or (c == bDc and eDs.get(j) < bDe)
+            bDc := c
+            bDe := eDs.get(j)
+            bDj := j
+    cDF := int(math.floor(bDj / (LMAX + 1)))
+    cDN := bDj % (LMAX + 1)
+    calDFound := calHits >= calNeed and dFitOK == calHits and (bDc == calHits or bDe / calHits < 0.03)
+    dBest := f_dfName(cDF) + " · length " + str.tostring(cDN) + " · matches " + str.tostring(bDc) + "/" + str.tostring(calHits) + (nDFull > 1 ? " (" + str.tostring(nDFull) + " formulas match all)" : "")
+
+// ---- active settings ----
+grpC0     = "⑬ Auto-calibrate"
+calApply  = input.bool(false, "Apply a formula that matches the reference", group=grpC0, tooltip="Applied only when a formula reproduces the reference's shown numbers on EVERY reference candle. It starts at the last reference candle; to use it on all candles, copy it into 'Use on all candles' below.")
+manDeep   = input.bool(false, "Use on all candles:", inline="md1", group=grpC0)
+manRF     = input.string(RF1, "Range", options=[RF0, RF1, RF2, RF3, RF4, RF5, RF6, RF7, RF8, RF9, RF10, RF11, RF12, RF13, RF14, RF15, RF16, RF17, RF18], inline="md1", group=grpC0)
+manRN     = input.int(20, "len", minval=2, maxval=200, inline="md1", group=grpC0)
+manDF     = input.string(DF1, "Delta avg", options=[DF0, DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8, DF9, DF10], inline="md2", group=grpC0)
+manDN     = input.int(20, "len", minval=2, maxval=200, inline="md2", group=grpC0)
+bool useCalR = manDeep or (calApply and calRFound)
+bool useCal  = manDeep or (calApply and calDFound)
+int  aRF = manDeep ? f_rfIdx(manRF) : cRF
+int  aRN = manDeep ? manRN : cRN
+int  aDF = manDeep ? f_dfIdx(manDF) : cDF
+int  aDN = manDeep ? manDN : cDN
+
+float avgRangeRaw = useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
+float avgDeltaRaw = useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
+// reference: averages only take in finished hours (held from the first candle of each hour)
+bool  newHour = ta.change(time("60")) != 0
+var float hRange = na
+var float hDelta = na
+if newHour or na(hRange)
+    hRange := avgRangeRaw
+if newHour or na(hDelta)
+    hDelta := avgDeltaRaw
+bool  holdAvg     = avgHold == "Each completed hour"
+float avgRange    = holdAvg ? hRange : avgRangeRaw
+float avgAbsDelta = holdAvg ? hDelta : avgDeltaRaw
+float avgVol      = ta.sma(volume, lookback)[1]
+
+// ---- calibration lines (compare with the reference tooltip on the SAME candle) ----
+float cR5   = ta.sma(barRange, 5)[1]
+float cR10  = ta.sma(barRange, 10)[1]
+float cR14  = ta.sma(barRange, 14)[1]
+float cR20  = ta.sma(barRange, 20)[1]
+float cR10i = ta.sma(barRange, 10)
+float cR20i = ta.sma(barRange, 20)
+float cAtr  = ta.atr(14)
+float cR30  = ta.sma(barRange, 30)[1]
+float cR50  = ta.sma(barRange, 50)[1]
+float cRE20 = ta.ema(barRange, 20)[1]
+float cD10  = ta.sma(math.abs(delta), 10)[1]
+float cD14  = ta.sma(math.abs(delta), 14)[1]
+float cD20  = ta.sma(math.abs(delta), 20)[1]
+float cD30  = ta.sma(math.abs(delta), 30)[1]
+float cD50  = ta.sma(math.abs(delta), 50)[1]
+float cD20i = ta.sma(math.abs(delta), 20)
+float cDE20 = ta.ema(math.abs(delta), 20)[1]
+float cMR10  = ta.median(barRange, 10)[1]
+float cMR20  = ta.median(barRange, 20)[1]
+float cMR30  = ta.median(barRange, 30)[1]
+float cMR50  = ta.median(barRange, 50)[1]
+float cMR100 = ta.median(barRange, 100)[1]
+float cR100  = ta.sma(barRange, 100)[1]
+float cR200  = ta.sma(barRange, 200)[1]
+float cB20   = ta.sma(math.abs(close - open), 20)[1]
+float cB50   = ta.sma(math.abs(close - open), 50)[1]
+float cMD10  = ta.median(math.abs(delta), 10)[1]
+float cMD20  = ta.median(math.abs(delta), 20)[1]
+float cMD30  = ta.median(math.abs(delta), 30)[1]
+float cMD50  = ta.median(math.abs(delta), 50)[1]
+float cMD100 = ta.median(math.abs(delta), 100)[1]
+float cD100  = ta.sma(math.abs(delta), 100)[1]
+float cD200  = ta.sma(math.abs(delta), 200)[1]
+
+float rangeRatio = nz(avgRange) > 0 ? barRange / avgRange : 0.0
+float deltaRatio = nz(avgAbsDelta) > 0 ? math.abs(delta) / avgAbsDelta : 0.0
+float volRatio   = nz(avgVol) > 0 ? volume / avgVol : 0.0
+float mid        = math.avg(high, low)
+
+// Buy / sell volume that traded INSIDE [zBot, zTop] during the 5M bar k bars ago
+f_zoneSplit(int k, float zTop, float zBot) =>
+    float bv = 0.0
+    float sv = 0.0
+    if k < ibHist.size()
+        IBar ib = ibHist.get(k)
+        int n = blockVolMode == BV_CANDLE ? 0 : ib.v.size()
+        if n > 0
+            for i = 0 to n - 1
+                float h   = ib.h.get(i)
+                float l   = ib.l.get(i)
+                float v   = ib.v.get(i)
+                float bf  = ib.bf.get(i)
+                float rng = h - l
+                float ov  = rng > 0 ? math.max(0.0, math.min(h, zTop) - math.max(l, zBot)) / rng : (l <= zTop and l >= zBot ? 1.0 : 0.0)
+                bv += v * ov * bf
+                sv += v * ov * (1 - bf)
+        else
+            float rng = ib.ch - ib.cl
+            float ov  = rng > 0 ? math.max(0.0, math.min(ib.ch, zTop) - math.max(ib.cl, zBot)) / rng : 1.0
+            bv := nz(ib.cb) * ov
+            sv := nz(ib.cs) * ov
+    [bv, sv]
+
+f_calib() =>
+    string c = "\n── Calibration (match reference) ──"
+    c += "\nMEDIAN range prev 10/20/30/50/100: " + str.tostring(cMR10, "#.##") + " / " + str.tostring(cMR20, "#.##") + " / " + str.tostring(cMR30, "#.##") + " / " + str.tostring(cMR50, "#.##") + " / " + str.tostring(cMR100, "#.##")
+    c += "\nSMA range prev 100/200: " + str.tostring(cR100, "#.##") + " / " + str.tostring(cR200, "#.##") + " | SMA body prev 20/50: " + str.tostring(cB20, "#.##") + " / " + str.tostring(cB50, "#.##")
+    c += "\nMEDIAN |delta| prev 10/20/30/50/100: " + f_k(cMD10) + " / " + f_k(cMD20) + " / " + f_k(cMD30) + " / " + f_k(cMD50) + " / " + f_k(cMD100)
+    c += "\nSMA |delta| prev 100/200: " + f_k(cD100) + " / " + f_k(cD200)
+    c += "\nAvg range prev SMA 5/10/14/20: " + str.tostring(cR5, "#.##") + " / " + str.tostring(cR10, "#.##") + " / " + str.tostring(cR14, "#.##") + " / " + str.tostring(cR20, "#.##")
+    c += "\nAvg range incl SMA 10/20: " + str.tostring(cR10i, "#.##") + " / " + str.tostring(cR20i, "#.##") + " | ATR14: " + str.tostring(cAtr, "#.##")
+    c += "\nAvg range prev SMA 30/50: " + str.tostring(cR30, "#.##") + " / " + str.tostring(cR50, "#.##") + " | EMA20: " + str.tostring(cRE20, "#.##")
+    c += "\nAvg |delta| prev SMA 10/14/20: " + f_k(cD10) + " / " + f_k(cD14) + " / " + f_k(cD20)
+    c += "\nAvg |delta| prev SMA 30/50: " + f_k(cD30) + " / " + f_k(cD50) + " | incl 20: " + f_k(cD20i) + " | EMA20: " + f_k(cDE20)
+    c += "\nDelta body: " + f_ks(dBody) + " | CLV: " + f_ks(dClv)
+    c += "\nDelta TR-CLV: " + f_ks(dTrClv) + " | Volume: " + str.tostring(volume, "#")
+    c += "\nDelta intrabar: " + f_ks(dIb) + " | IB anatomy: " + f_ks(dIa)
+    c += "\nDelta IB close-loc: " + f_ks(dIbClv) + " | IB tick rule: " + f_ks(dIbTick)
+    c += "\nOHLC: " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
+    c
+
+// ════════════════════════════════════════════════════════════════════
+// ORDERBLOCKS + VOLUMETRIX %
+// ════════════════════════════════════════════════════════════════════
+type Block
+    box   bx
+    box   bBuy
+    box   bSell
+    label info
+    label tag
+    float top
+    float bot
+    int   left
+    float vol
+    float buyPct
+    float sellPct
+    int   bias
+    int   kind
+    int   id
+    bool  vis   = false
+    float score = 0.0
+    float bvAcc = 0.0
+    float svAcc = 0.0
+    int   born  = 0
+    int   rank  = 0
+    bool  isOb  = false
+    int   ver   = 1
+    line  mid
+
+var array<Block> blocks = array.new<Block>()   // FVG zones (display)
+var array<Block> obs    = array.new<Block>()   // OrderBlock 1.0
+var array<Block> obs2   = array.new<Block>()   // OrderBlock 2.0
+array<Block>     gArr   = gateOb == "OrderBlock 2.0" ? obs2 : obs   // the blocks gate 2 uses
+var int blockId = 0
+
+f_newBlock(float top, float bot, int left, float bv, float sv, int kind, int id) =>
+    float tot  = bv + sv
+    float bp   = tot > 0 ? bv / tot * 100 : 50.0
+    float sp   = 100 - bp
+    int   bias = bp >= ownerPct ? 1 : sp >= ownerPct ? -1 : 0
+    Block.new(na, na, na, na, na, top, bot, left, tot, bp, sp, bias, kind, id, false, 0.0, bv, sv, bar_index, 0)
+
+bool fvgMode = zoneType == ZT_FVG
+
+// number shown on the zone: strength rank for FVG zones (reference), creation id for orderblocks
+f_num(Block b) =>
+    str.tostring(fvgMode and not b.isOb ? b.rank : b.id)
+
+f_setPct(Block b) =>
+    float tot = b.bvAcc + b.svAcc
+    b.vol     := tot
+    b.buyPct  := tot > 0 ? b.bvAcc / tot * 100 : 50.0
+    b.sellPct := 100 - b.buyPct
+    b.bias    := b.buyPct >= ownerPct ? 1 : b.sellPct >= ownerPct ? -1 : 0
+
+// own-side % = buyers for a demand block (▲), sellers for a supply block (▼)
+f_ownPct(Block b) =>
+    b.kind == 1 ? b.buyPct : b.sellPct
+
+// reference wording: ≥ owner % → "Bull/Bear Bias" · ≥ neutral % → "Neutral" · below → "Weak Bull/Bear"
+f_biasWord(Block b) =>
+    float p = f_ownPct(b)
+    string side = b.kind == 1 ? "Bull" : "Bear"
+    p >= biasFrom ? side + " Bias" : p >= biasNeutral ? "Neutral" : "Weak " + side
+
+// create the drawings of a block (only for blocks that are shown)
+f_drawBlock(Block b) =>
+    if na(b.bx)
+        color base = blkColorBy == "Owner (60% side)" ? (b.bias == 1 ? cBlkBull : b.bias == -1 ? cBlkBear : cBlkNeu) : (b.kind == 1 ? cBlkBull : cBlkBear)
+        float midY = (b.top + b.bot) / 2
+        if blockStyle == BS_REF and not b.isOb
+            // one split bar in the lower part of the zone: buyers (left) | sellers (right), % written inside
+            float h    = b.top - b.bot
+            float yBot = b.bot
+            float yTop = b.bot + h * sentH / 100
+            int   span = math.max(barLen, int(math.round((bar_index + blockExt - b.left) * obBarPct / 100)))
+            int   wB   = math.max(1, int(math.round(span * b.buyPct / 100)))
+            int   wS   = math.max(1, span - wB)
+            b.bx    := box.new(b.left, b.top, bar_index + blockExt, b.bot, border_color=color.new(base, 40), border_width=1, bgcolor=color.new(base, 85), text=f_biasWord(b), text_color=color.new(base, 10), text_size=size.small, text_halign=text.align_right, text_valign=text.align_bottom)
+            b.bBuy  := box.new(b.left, yTop, b.left + wB, yBot, border_color=color.new(cBlkBull, 100), bgcolor=color.new(cBlkBull, barTransp), text=str.tostring(b.buyPct, "#") + "%", text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
+            b.bSell := box.new(b.left + wB, yTop, b.left + wB + wS, yBot, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, barTransp), text=str.tostring(b.sellPct, "#") + "%", text_color=color.white, text_size=size.tiny, text_halign=text.align_right)
+            b.tag   := label.new(bar_index + blockExt, midY, "", style=label.style_label_left, color=base, textcolor=color.white, size=size.small)
+        else
+            // orderblocks: bars scale with the block's width, so 75% sellers really looks like 3/4
+            int   span = math.max(barLen, int(math.round((bar_index + blockExt - b.left) * obBarPct / 100)))
+            int   wB   = math.max(1, int(math.round(span * b.buyPct / 100)))
+            int   wS   = math.max(1, int(math.round(span * b.sellPct / 100)))
+            b.bx    := box.new(b.left, b.top, bar_index + blockExt, b.bot, border_color=color.new(base, 50), border_width=1, bgcolor=color.new(base, 88))
+            b.bBuy  := box.new(b.left, b.top, b.left + wB, midY, border_color=color.new(cBlkBull, 100), bgcolor=color.new(cBlkBull, barTransp))
+            b.bSell := box.new(b.left, midY, b.left + wS, b.bot, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, barTransp))
+            b.info  := label.new(bar_index + blockExt, midY, "", style=label.style_label_right, color=color.new(color.white, 100), textcolor=base, size=size.small, textalign=text.align_right)
+            if b.ver == 2 and ob2Mid
+                b.mid := line.new(b.left, midY, bar_index + blockExt, midY, color=color.new(base, 30), style=line.style_dotted, width=1)
+            if b.ver == 1
+                b.tag := label.new(bar_index + blockExt, midY, "", style=label.style_label_left, color=base, textcolor=color.white, size=size.tiny)
+            b.tag := b.tag   // both style branches end with a label (Pine needs matching block types)
+
+f_deleteBlock(Block b) =>
+    line.delete(b.mid)
+    box.delete(b.bx)
+    box.delete(b.bBuy)
+    box.delete(b.bSell)
+    label.delete(b.info)
+    label.delete(b.tag)
+
+f_hideBlock(Block b) =>
+    if not na(b.bx)
+        f_deleteBlock(b)
+        b.bx    := na
+        b.bBuy  := na
+        b.bSell := na
+        b.info  := na
+        b.tag   := na
+        b.mid   := na
+
+f_refreshBlock(Block b, float totalAll) =>
+    float  share = totalAll > 0 ? b.vol / totalAll * 100 : 0.0
+    string owner = b.bias == 1 ? (b.buyPct >= 70 ? "Strong Bull" : "Bull") : b.bias == -1 ? (b.sellPct >= 70 ? "Strong Bear" : "Bear") : "Neutral"
+    string txt   = f_k(b.vol) + " (" + str.tostring(share, "#") + "%) · " + owner
+    txt += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
+    if blockStyle == BS_REF and not b.isOb
+        // reference tag: arrow by block type, own-side %
+        label.set_text(b.tag, "#" + f_num(b) + " " + (b.kind == 1 ? "▲" : "▼") + " " + str.tostring(f_ownPct(b), "#") + "%")
+    else if b.ver == 2
+        // BTrader Concept 2.0 metrics: "1.963K (57%)" + buyers | sellers
+        string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
+        t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
+        label.set_text(b.info, t2)
+        label.set_x(b.info, bar_index + blockExt)
+        if not na(b.mid)
+            line.set_x2(b.mid, bar_index + blockExt)
+    else
+        string bsTxt = "Buyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
+        string vTxt  = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)\n" + bsTxt
+        label.set_text(b.info, not b.isOb or obText == "Full (volume + owner + buyers / sellers)" ? txt : obText == "Volume + Buyers / Sellers" ? vTxt : obText == "Buyers / Sellers" ? bsTxt : "")
+        float  dom   = math.max(b.buyPct, b.sellPct)
+        string arrow = b.buyPct >= b.sellPct ? "▲" : "▼"
+        label.set_text(b.tag, (b.isOb ? "OB " : "#" + f_num(b) + " ") + arrow + " " + str.tostring(dom, "#") + "%")
+        label.set_x(b.info, bar_index + blockExt)
+    box.set_right(b.bx, bar_index + blockExt)
+    if not na(b.tag)
+        label.set_x(b.tag, bar_index + blockExt)
+
+// dir: 1 = buyers-owned, -1 = sellers-owned, 0 = any block
+f_findBlock(int dir, float tol) =>
+    int idx = -1
+    int n   = gArr.size()
+    if n > 0
+        for i = 0 to n - 1
+            Block b = gArr.get(i)
+            bool dirOK = dir == 0 or b.bias == dir
+            if idx < 0 and b.vis and dirOK and low <= b.top + tol and high >= b.bot - tol
+                idx := i
+    idx
+
+// memory cap: drop the oldest unbroken blocks of one side beyond maxStore
+f_trimSide(int kind) =>
+    int cnt = 0
+    for b in obs
+        if b.kind == kind
+            cnt += 1
+    if cnt > maxStore
+        for i = obs.size() - 1 to 0
+            Block b = obs.get(i)
+            if b.kind == kind and cnt > maxStore
+                f_deleteBlock(b)
+                obs.remove(i)
+                cnt -= 1
+
+// --- mitigation: remove blocks that price closed through ---
+if obs.size() > 0
+    for i = obs.size() - 1 to 0
+        Block b = obs.get(i)
+        if b.kind == 1 ? close < b.bot : close > b.top
+            f_deleteBlock(b)
+            obs.remove(i)
+if blocks.size() > 0
+    for i = blocks.size() - 1 to 0
+        Block b = blocks.get(i)
+        bool broken = b.kind == 1 ? close < b.bot : close > b.top
+        if broken
+            f_deleteBlock(b)
+            blocks.remove(i)
+
+// --- structure: swing highs / lows ---
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+var float shPrice = na
+var int   shBar   = na
+var bool  shUsed  = true
+var float slPrice = na
+var int   slBar   = na
+var bool  slUsed  = true
+if not na(ph)
+    shPrice := ph
+    shBar   := bar_index - swingLen
+    shUsed  := false
+if not na(pl)
+    slPrice := pl
+    slBar   := bar_index - swingLen
+    slUsed  := false
+
+bool bullBreak = not shUsed and not na(shPrice) and close > shPrice
+bool bearBreak = not slUsed and not na(slPrice) and close < slPrice
+
+// CHoCH = first break against the current trend · BOS = break with the trend
+// reference names: CDL = change of direction long (bullish CHoCH), CDS = change of direction short
+var int trendDir = 0
+float volMa20 = ta.sma(volume, 20)
+f_grade() =>
+    int g = 1
+    if barRange > 0 and math.abs(close - open) / barRange >= 0.6
+        g += 1
+    if volume > nz(volMa20[1])
+        g += 1
+    g
+
+// protected level: a thin band + text, extended right until price closes through it
+type ProtLvl
+    box   bx
+    float px
+    int   dir
+
+// every protected level stays until price closes through it (the reference keeps older CDS SH / CDL SL too)
+var array<ProtLvl> protLs = array.new<ProtLvl>()
+var array<ProtLvl> protHs = array.new<ProtLvl>()
+
+f_newProt(int x1, float px, int dir, string txt, color col) =>
+    float h = nz(atr14) * 0.12
+    box b = box.new(x1, dir == 1 ? px + h : px, bar_index + 10, dir == 1 ? px : px - h, border_color=color.new(col, 100), bgcolor=color.new(col, 70), text=txt, text_color=col, text_size=size.tiny, text_halign=text.align_right, text_valign=dir == 1 ? text.align_top : text.align_bottom)
+    ProtLvl.new(b, px, dir)
+
+if bullBreak
+    shUsed := true
+    bool isCh = trendDir == -1
+    if isCh and cdStyle
+        line.new(shBar, shPrice, bar_index, shPrice, color=cChBull, style=line.style_dashed, width=1)
+        label.new(int(math.round((shBar + bar_index) / 2.0)), shPrice, "CDL " + str.tostring(f_grade()) + "★", style=label.style_label_down, color=color.new(color.white, 100), textcolor=cChBull, size=size.tiny)
+    else if (isCh and showChoch) or (not isCh and trendDir == 1 and showBos)
+        line.new(shBar, shPrice, bar_index, shPrice, color=cChBull, style=line.style_dashed, width=1)
+        label.new(int(math.round((shBar + bar_index) / 2.0)), shPrice, isCh ? "CHoCH" : "BOS", style=label.style_label_down, color=color.new(color.white, 100), textcolor=cChBull, size=size.tiny)
+    if isCh and showProt
+        // the low of the move that broke structure is now protected
+        int   lb  = math.max(1, math.min(bar_index - shBar, 150))
+        float lo  = low
+        int   lox = bar_index
+        for k = 1 to lb
+            if low[k] < lo
+                lo  := low[k]
+                lox := bar_index - k
+        protLs.unshift(f_newProt(lox, lo, 1, "CDL SL", cChBull))
+        if protLs.size() > protMax
+            box.delete(protLs.pop().bx)
+    trendDir := 1
+if bearBreak
+    slUsed := true
+    bool isCh = trendDir == 1
+    if isCh and cdStyle
+        line.new(slBar, slPrice, bar_index, slPrice, color=cChBear, style=line.style_dashed, width=1)
+        label.new(int(math.round((slBar + bar_index) / 2.0)), slPrice, "CDS " + str.tostring(f_grade()) + "★", style=label.style_label_up, color=color.new(color.white, 100), textcolor=cChBear, size=size.tiny)
+    else if (isCh and showChoch) or (not isCh and trendDir == -1 and showBos)
+        line.new(slBar, slPrice, bar_index, slPrice, color=cChBear, style=line.style_dashed, width=1)
+        label.new(int(math.round((slBar + bar_index) / 2.0)), slPrice, isCh ? "CHoCH" : "BOS", style=label.style_label_up, color=color.new(color.white, 100), textcolor=cChBear, size=size.tiny)
+    if isCh and showProt
+        // the high of the move that broke structure is now protected
+        int   lb  = math.max(1, math.min(bar_index - slBar, 150))
+        float hi  = high
+        int   hix = bar_index
+        for k = 1 to lb
+            if high[k] > hi
+                hi  := high[k]
+                hix := bar_index - k
+        protHs.unshift(f_newProt(hix, hi, -1, "CDS SH", cChBear))
+        if protHs.size() > protMax
+            box.delete(protHs.pop().bx)
+    trendDir := -1
+
+// keep protected levels alive until price closes through them
+if protLs.size() > 0
+    for i = protLs.size() - 1 to 0
+        ProtLvl pv = protLs.get(i)
+        if close < pv.px
+            box.delete(pv.bx)
+            protLs.remove(i)
+        else
+            box.set_right(pv.bx, bar_index + 10)
+if protHs.size() > 0
+    for i = protHs.size() - 1 to 0
+        ProtLvl pv = protHs.get(i)
+        if close > pv.px
+            box.delete(pv.bx)
+            protHs.remove(i)
+        else
+            box.set_right(pv.bx, bar_index + 10)
+
+// Bullish OB: close breaks above the last swing high → last down candle of the leg
+if bullBreak
+    int   span    = math.min(bar_index - shBar, 150)
+    int   best    = -1
+    float bestLow = na
+    if span >= 1
+        for k = 1 to span
+            bool colorOK = obPick == PICK_EXT or close[k] < open[k]
+            if colorOK and (na(bestLow) or low[k] < bestLow)
+                bestLow := low[k]
+                best    := k
+    if best > 0
+        float bv   = 0.0
+        float sv   = 0.0
+        int   kEnd = math.max(best - volBars + 1, 0)
+        float cH   = high[best]
+        float cL   = obNextWick ? math.min(low[best], low[best - 1]) : low[best]
+        float zTop = obZone == Z_FULL ? cH : obZone == Z_BODY ? math.max(open[best], close[best]) : (cH + cL) / 2
+        float zBot = obZone == Z_BODY ? math.min(open[best], close[best]) : cL
+        for k = best to kEnd
+            if blockVolMode != BV_BARS
+                [zb, zs] = f_zoneSplit(k, zTop, zBot)
+                bv += zb
+                sv += zs
+            else
+                bv += nz(buyVol[k])
+                sv += nz(sellVol[k])
+        blockId += 1
+        Block ob = f_newBlock(zTop, zBot, bar_index - best, bv, sv, 1, blockId)
+        ob.isOb := true
+        obs.unshift(ob)
+        f_trimSide(1)
+
+// Bearish OB: close breaks below the last swing low → last up candle of the leg
+if bearBreak
+    int   span     = math.min(bar_index - slBar, 150)
+    int   best     = -1
+    float bestHigh = na
+    if span >= 1
+        for k = 1 to span
+            bool colorOK = obPick == PICK_EXT or close[k] > open[k]
+            if colorOK and (na(bestHigh) or high[k] > bestHigh)
+                bestHigh := high[k]
+                best     := k
+    if best > 0
+        float bv   = 0.0
+        float sv   = 0.0
+        int   kEnd = math.max(best - volBars + 1, 0)
+        float cH   = obNextWick ? math.max(high[best], high[best - 1]) : high[best]
+        float cL   = low[best]
+        float zTop = obZone == Z_BODY ? math.max(open[best], close[best]) : cH
+        float zBot = obZone == Z_FULL ? cL : obZone == Z_BODY ? math.min(open[best], close[best]) : (cH + cL) / 2
+        for k = best to kEnd
+            if blockVolMode != BV_BARS
+                [zb, zs] = f_zoneSplit(k, zTop, zBot)
+                bv += zb
+                sv += zs
+            else
+                bv += nz(buyVol[k])
+                sv += nz(sellVol[k])
+        blockId += 1
+        Block ob = f_newBlock(zTop, zBot, bar_index - best, bv, sv, -1, blockId)
+        ob.isOb := true
+        obs.unshift(ob)
+        f_trimSide(-1)
+
+// ════════════════════════════════════════════════════════════════════
+// FVG ZONES (reference: Sn1P3r "FVG Zones" · strength = volume vs MA × trend × gap size)
+// ════════════════════════════════════════════════════════════════════
+float fvgVolMa = ta.sma(volume, fvgVolLen)
+float fvgEma   = ta.ema(close, fvgEmaLen)
+
+f_fvgScore(int kind, float gap) =>
+    float vr = nz(fvgVolMa[1]) > 0 ? volume[1] / fvgVolMa[1] : 1.0
+    bool  tr = kind == 1 ? close > fvgEma : close < fvgEma
+    vr * (tr ? 1.5 : 1.0)
+
+if showBlocks and fvgMode and bar_index > 2
+    float gMin = nz(atr14) * fvgMinAtr
+    bool  gBull = low > high[2] and low - high[2] > gMin
+    bool  gBear = high < low[2] and low[2] - high > gMin
+    if gBull or gBear
+        int   kind = gBull ? 1 : -1
+        float zTop = gBull ? low : low[2]
+        float zBot = gBull ? high[2] : high
+        // formation = middle (displacement) candle, share of it inside the gap
+        float ov = barRange[1] > 0 ? math.max(0.0, math.min(high[1], zTop) - math.max(low[1], zBot)) / barRange[1] : 0.0
+        blockId += 1
+        float fb = fvgSent == SENT_AFTER ? 0.0 : nz(buyVol[1]) * ov
+        float fs = fvgSent == SENT_AFTER ? 0.0 : nz(sellVol[1]) * ov
+        if fvgSent == SENT_FIRST
+            // buy / sell split of the first candle of the gap (2 bars ago), whole candle
+            fb := nz(buyVol[2])
+            fs := nz(sellVol[2])
+        if fvgSent == SENT_PROF
+            // volume-profile slice: every earlier candle's buy/sell volume inside the zone band
+            fb := 0.0
+            fs := 0.0
+            for k = 0 to math.min(sentLook, bar_index - 1)
+                float rk = high[k] - low[k]
+                float ok = rk > 0 ? math.max(0.0, math.min(high[k], zTop) - math.max(low[k], zBot)) / rk : 0.0
+                fb += nz(buyVol[k]) * ok
+                fs += nz(sellVol[k]) * ok
+        Block nb = f_newBlock(zTop, zBot, bar_index - 1, fb, fs, kind, blockId)
+        nb.score := f_fvgScore(kind, zTop - zBot)
+        blocks.unshift(nb)
+        while blocks.size() > fvgMax
+            f_deleteBlock(blocks.pop())
+
+// sentiment: add every later confirmed candle's buy/sell volume that traded inside the zone
+if showBlocks and fvgMode and fvgSent != SENT_FORM and fvgSent != SENT_FIRST and barstate.isconfirmed and barRange > 0 and blocks.size() > 0
+    for b in blocks
+        if b.born < bar_index
+            float ov = math.max(0.0, math.min(high, b.top) - math.max(low, b.bot)) / barRange
+            if ov > 0
+                b.bvAcc += buyVol * ov
+                b.svAcc += sellVol * ov
+                f_setPct(b)
+
+// ---- FVG: show the N zones nearest to price, numbered by strength rank (#1 = strongest) ----
+if fvgMode and blocks.size() > 0
+    for b in blocks
+        b.vis  := false
+        b.rank := 0
+    array<int> picked = array.new<int>()
+    for n = 1 to fvgTop
+        int   bestI = -1
+        float bestD = na
+        for i = 0 to blocks.size() - 1
+            Block b = blocks.get(i)
+            float d = close > b.top ? close - b.top : close < b.bot ? b.bot - close : 0.0
+            bool ovl = false
+            if fvgHideOvl and barstate.islast and not b.vis and picked.size() > 0
+                for j in picked
+                    Block o = blocks.get(j)
+                    if b.bot <= o.top and b.top >= o.bot
+                        ovl := true
+            if not b.vis and not ovl and (na(bestD) or d < bestD)
+                bestD := d
+                bestI := i
+        if bestI >= 0
+            Block bShow = blocks.get(bestI)
+            bShow.vis := true
+            picked.push(bestI)
+    for n = 1 to fvgTop
+        int   bestI = -1
+        float bestS = na
+        for i = 0 to blocks.size() - 1
+            Block b = blocks.get(i)
+            if b.vis and b.rank == 0 and (na(bestS) or b.score > bestS)
+                bestS := b.score
+                bestI := i
+        if bestI >= 0
+            Block bRank = blocks.get(bestI)
+            bRank.rank := n
+
+// ════════════════════════════════════════════════════════════════════
+// ORDERBLOCK 2.0 (volumetric, like BTrader Concept 2.0)
+//   structure break of its own swings (internal 5 / swing 50) → the extreme candle of the leg
+//   (lowest low for bullish, highest high for bearish) = the block, full candle ("precise")
+//   volume + buy / sell activity = the 1-minute candles of the whole leg (swing → break) that traded inside the block
+// ════════════════════════════════════════════════════════════════════
+int ob2Len = ob2Src == "Internal" ? ob2Int : ob2Sw
+ph2 = ta.pivothigh(high, ob2Len, ob2Len)
+pl2 = ta.pivotlow(low, ob2Len, ob2Len)
+var float sh2P = na
+var int   sh2B = na
+var bool  sh2U = true
+var float sl2P = na
+var int   sl2B = na
+var bool  sl2U = true
+if not na(ph2)
+    sh2P := ph2
+    sh2B := bar_index - ob2Len
+    sh2U := false
+if not na(pl2)
+    sl2P := pl2
+    sl2B := bar_index - ob2Len
+    sl2U := false
+
+// buy / sell volume of the 1-minute candles of the 5-minute bar k bars ago that traded inside [zBot, zTop]
+f_ibInside(int k, float zTop, float zBot) =>
+    float bv = 0.0
+    float sv = 0.0
+    if k < ibHist.size()
+        IBar ib = ibHist.get(k)
+        int  n  = ib.v.size()
+        if n > 0
+            for i = 0 to n - 1
+                float h   = ib.h.get(i)
+                float l   = ib.l.get(i)
+                float rng = h - l
+                float ov  = rng > 0 ? math.max(0.0, math.min(h, zTop) - math.max(l, zBot)) / rng : (l <= zTop and l >= zBot ? 1.0 : 0.0)
+                float f = ob2Split == "1-minute up / down" ? ib.ud.get(i) : ib.bf.get(i)
+                bv += ib.v.get(i) * ov * f
+                sv += ib.v.get(i) * ov * (1 - f)
+        else
+            float rng = ib.ch - ib.cl
+            float ov  = rng > 0 ? math.max(0.0, math.min(ib.ch, zTop) - math.max(ib.cl, zBot)) / rng : 1.0
+            bv := nz(ib.cb) * ov
+            sv := nz(ib.cs) * ov
+    [bv, sv]
+
+f_ob2(int dir, int fromBar, int id) =>
+    int   span = math.min(bar_index - fromBar, 300)
+    int   best = -1
+    float ext  = na
+    if span >= 1
+        for k = 1 to span
+            if dir == 1 ? (na(ext) or low[k] < ext) : (na(ext) or high[k] > ext)
+                ext  := dir == 1 ? low[k] : high[k]
+                best := k
+    if best > 0
+        // precise = the wick on the extreme side; if there is no wick, the whole candle
+        float bodyLo = math.min(open[best], close[best])
+        float bodyHi = math.max(open[best], close[best])
+        bool  wick   = ob2Pos == "Wick only"
+        bool  prec   = ob2Pos == "Precise"
+        float zTop   = dir == 1 ? (wick and bodyLo > low[best] ? bodyLo : prec and bodyHi > low[best] ? bodyHi : high[best]) : high[best]
+        float zBot   = dir == 1 ? low[best] : (wick and bodyHi < high[best] ? bodyHi : prec and bodyLo < high[best] ? bodyLo : low[best])
+        // internal buy / sell activity: the 1-minute candles that traded inside the block
+        float bv = 0.0
+        float sv = 0.0
+        string vMode = ob2Vol == "Auto (5m whole leg, others candle → break)" ? (timeframe.in_seconds() <= 300 ? "Whole leg (swing → break)" : "Orderblock candle → break") : ob2Vol
+        int kFrom = vMode == "Whole leg (swing → break)" ? span : best
+        int kTo   = vMode == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : 0
+        for k = kFrom to kTo
+            [zb, zs] = f_ibInside(k, zTop, zBot)
+            bv += zb
+            sv += zs
+        Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
+        nb2.isOb := true
+        nb2.ver  := 2
+        obs2.unshift(nb2)
+        while obs2.size() > 100
+            f_deleteBlock(obs2.pop())
+
+if not sh2U and not na(sh2P) and close > sh2P
+    sh2U := true
+    blockId += 1
+    f_ob2(1, sh2B, blockId)
+if not sl2U and not na(sl2P) and close < sl2P
+    sl2U := true
+    blockId += 1
+    f_ob2(-1, sl2B, blockId)
+
+// mitigation
+if obs2.size() > 0
+    for i = obs2.size() - 1 to 0
+        Block b = obs2.get(i)
+        bool gone = ob2Mit == "Wick through" ? (b.kind == 1 ? low < b.bot : high > b.top) : (b.kind == 1 ? close < b.bot : close > b.top)
+        if gone and b.born < bar_index
+            f_deleteBlock(b)
+            obs2.remove(i)
+
+// show the last N per side (newest first), skipping blocks that overlap one already shown
+if obs2.size() > 0
+    for b in obs2
+        b.vis := false
+    for side in array.from(1, -1)
+        int shown = 0
+        for i = 0 to obs2.size() - 1
+            Block b = obs2.get(i)
+            if b.kind == side and shown < ob2Last
+                bool ovl = false
+                if ob2Hide
+                    for j = 0 to obs2.size() - 1
+                        Block o = obs2.get(j)
+                        if j != i and o.vis and o.kind == side and b.bot <= o.top and b.top >= o.bot
+                            ovl := true
+                if not ovl
+                    b.vis := true
+                    shown += 1
+
+// ---- orderblocks: the N nearest unbroken blocks per side (drawn, and checked by gate 2) ----
+if obs.size() > 0
+    for b in obs
+        b.vis := false
+    for side in array.from(1, -1)
+        for n = 1 to maxPerSide
+            int   bestI = -1
+            float bestD = na
+            for i = 0 to obs.size() - 1
+                Block b = obs.get(i)
+                if b.kind == side and not b.vis
+                    float d = math.abs(close - (b.top + b.bot) / 2)
+                    if na(bestD) or d < bestD
+                        bestD := d
+                        bestI := i
+            if bestI >= 0
+                Block bShow = obs.get(bestI)
+                bShow.vis := true
+
+// ════════════════════════════════════════════════════════════════════
+// ACCELERATORS (Gate 3) + DELTA GATE (Gate 4) + COMBO (Gates 1-5)
+// ════════════════════════════════════════════════════════════════════
+bool is5m  = timeframe.isminutes and timeframe.multiplier == 5
+bool volOK = volNeed <= 0 or volRatio >= volNeed
+float atrLong   = ta.atr(100)
+float sizeRatio = nz(atrLong) > 0 ? barRange / atrLong : 0.0
+bool  sizeOK    = minSize <= 0 or sizeRatio >= minSize
+bool meters = rangeRatio >= rangeNeed and (not deltaConf or deltaRatio >= deltaNeed) and volOK and sizeOK
+
+float emaT = ta.ema(close, emaLen)
+bool trendBullOK = trendFilter == TF_OFF or (trendFilter == TF_STRUCT ? trendDir >= 0 : close > emaT)
+bool trendBearOK = trendFilter == TF_OFF or (trendFilter == TF_STRUCT ? trendDir <= 0 : close < emaT)
+
+// direction from the candle, "+" (plus velocity) when the close is past the candle middle
+bool bullPlus = close > mid
+bool bearPlus = close < mid
+bool bullWk   = not wickless or high - close <= syminfo.mintick
+bool bearWk   = not wickless or close - low <= syminfo.mintick
+bool bodyOK = barRange > 0 and math.abs(close - open) / barRange * 100 >= bodyNeed
+bool bullAx = showBull and (not axDeltaGate or delta >= minDelta) and bodyOK and close > open and (not deltaConf or delta > 0) and (bullPlus or not plusOnly) and bullWk and meters and trendBullOK
+bool bearAx = showBear and (not axDeltaGate or delta <= -minDelta) and bodyOK and close < open and (not deltaConf or delta < 0) and (bearPlus or not plusOnly) and bearWk and meters and trendBearOK
+string bullTag = bullPlus ? "BuAx+" : "BuAx"
+string bearTag = bearPlus ? "BeAx+" : "BeAx"
+
+bool bullGate4 = not useDeltaGate or delta >= minDelta
+bool bearGate4 = not useDeltaGate or delta <= -minDelta
+
+var int lastBullBar = -100000
+var int lastBearBar = -100000
+bool bullAxOK = bullAx and (bar_index - lastBullBar > cooldown)
+bool bearAxOK = bearAx and (bar_index - lastBearBar > cooldown)
+
+float tol     = nz(atr14) * nearAtr
+int   bullIdx = bullAxOK ? f_findBlock(1, tol) : -1
+int   bearIdx = bearAxOK ? f_findBlock(-1, tol) : -1
+bool  gate1   = not enforce5m or is5m
+bool  comboLong  = bullIdx >= 0 and gate1 and bullGate4
+bool  comboShort = bearIdx >= 0 and gate1 and bearGate4
+
+bool atAnyBull = bullAxOK and sigMode == MODE_ANY ? f_findBlock(0, tol) >= 0 : false
+bool atAnyBear = bearAxOK and sigMode == MODE_ANY ? f_findBlock(0, tol) >= 0 : false
+bool drawBull = bullAxOK and (sigMode == MODE_ALL or atAnyBull or comboLong)
+bool drawBear = bearAxOK and (sigMode == MODE_ALL or atAnyBear or comboShort)
+
+// the reference keeps only the latest accelerator on the chart; older ones are removed
+type SigDraw
+    array<label> lbs
+    array<line>  lns
+    array<label> axl
+    int   dir  = 0
+    float lvl  = na
+    int   born = na
+    bool  keep = false
+
+var array<SigDraw> sigHist = array.new<SigDraw>()
+var label inspLbl = na
+var int   inspIdx = na
+
+f_keepSignals() =>
+    while sigHist.size() > maxSigShown
+        SigDraw old = sigHist.pop()
+        for l in old.lbs
+            label.delete(l)
+        for l in old.axl
+            label.delete(l)
+        for ln in old.lns
+            line.delete(ln)
+
+var string lastSigTxt = "—"
+var int    lastSigBar = na
+float slBuf = slBufTicks * syminfo.mintick
+
+f_blockLine(int idx) =>
+    string s = "none at price"
+    if idx >= 0
+        Block b = gArr.get(idx)
+        s := "#" + f_num(b) + " Buyers " + str.tostring(b.buyPct, "#.##") + "% | Sellers " + str.tostring(b.sellPct, "#.##") + "%"
+        s += b.bias != 0 ? " ✓ (≥" + str.tostring(ownerPct, "#") + "%)" : " ✗ (under " + str.tostring(ownerPct, "#") + "%)"
+    s
+
+string eSize = mobileView or entrySize == "Tiny" ? size.tiny : entrySize == "Small" ? size.small : size.normal
+bool  sigAtClose = sigPos == "At close"
+float bullTriY = sigAtClose ? close : low - atr14 * 0.18
+float bullTxtY = sigAtClose ? close - atr14 * 0.15 : low - atr14 * 0.32
+float bearTriY = sigAtClose ? close : high + atr14 * 0.18
+float bearTxtY = sigAtClose ? close + atr14 * 0.15 : high + atr14 * 0.32
+
+// remove accelerators that price has traded back through (not ENTER signals)
+if axInval != "Off" and sigHist.size() > 0
+    for i = sigHist.size() - 1 to 0
+        SigDraw sg = sigHist.get(i)
+        if sg.dir != 0 and bar_index > sg.born
+            bool wk   = axInval == "Wick through the candle"
+            bool fail = sg.dir == 1 ? (wk ? low : close) < sg.lvl : (wk ? high : close) > sg.lvl
+            if fail and not na(inspLbl) and sg.born == inspIdx
+                label.set_text(inspLbl, label.get_text(inspLbl) + "\n✗ REMOVED at " + str.format_time(time, "dd MMM HH:mm") + ": price went " + (sg.dir == 1 ? "below its low " : "above its high ") + str.tostring(sg.lvl, format.mintick) + "\n  (④ Remove failed accelerators → Off keeps it)")
+            if fail
+                // the accelerator triangle + text go; an ENTER label, its SL line and the W / L stay
+                for l in sg.axl
+                    label.delete(l)
+                sg.axl.clear()
+                if not sg.keep
+                    for l in sg.lbs
+                        label.delete(l)
+                    for ln in sg.lns
+                        line.delete(ln)
+                    sigHist.remove(i)
+                else
+                    sg.dir := 0
+
+if drawBull
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), array.new<label>(), 1, low, bar_index, comboLong)
+    sigHist.unshift(sd)
+    lastBullBar := bar_index
+    lastSigBar  := bar_index
+    lastSigTxt  := comboLong ? bullTag + " COMBO" : bullTag
+    int anyIdx = bullIdx >= 0 ? bullIdx : f_findBlock(0, tol)
+    string tt = "Bullish Accelerator | " + bullTag + "\nVelocity: " + (bullPlus ? "Plus (close > mid)" : "Normal (close ≤ mid)") + "\nDelta Source: " + srcUsed
+    tt += "\nRange: " + str.tostring(barRange, "#.##") + " | Avg: " + str.tostring(avgRange, "#.##") + " | Ratio: " + f_x(rangeRatio) + " | Need: " + f_x(rangeNeed)
+    tt += "\nDelta: " + f_ks(delta) + " | Avg: +" + f_k(avgAbsDelta) + " | Ratio: " + f_x(deltaRatio) + " | Need: " + f_x(deltaNeed)
+    tt += "\nVolume: " + str.tostring(volume, "#")
+    if not refTooltip
+        tt += "\nSize: " + f_x(sizeRatio) + " ATR100 | Need: " + f_x(minSize)
+        tt += "\n──────────\nDelta gate: " + (delta >= minDelta ? "✓ " : "✗ ") + f_ks(delta) + " vs +" + f_k(minDelta)
+        tt += "\nBlock: " + f_blockLine(anyIdx)
+        tt += "\n" + (comboLong ? "COMBO: ALL 5 GATES PASS → LONG" : "Combo: not complete")
+    tt += calib ? f_calib() : ""
+    // Gate 5: structure stop (near/inside block → below block, far → below entry candle)
+    if sigHalo
+        sd.axl.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.axl.push(label.new(bar_index, bullTriY, "", style=label.style_triangleup, color=bullColor, size=sigSize, tooltip=tt))
+    if showSigText
+        sd.axl.push(label.new(bar_index, bullTxtY, bullTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_up, color=txtBg, textcolor=bullColor, size=size.tiny, tooltip=tt))
+    if comboLong
+        Block b = gArr.get(bullIdx)
+        bool  near = low <= b.top and high >= b.bot
+        float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
+        sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)") + "\n" + tt))
+        if showSL
+            sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
+
+if drawBear
+    SigDraw sd = SigDraw.new(array.new<label>(), array.new<line>(), array.new<label>(), -1, high, bar_index, comboShort)
+    sigHist.unshift(sd)
+    lastBearBar := bar_index
+    lastSigBar  := bar_index
+    lastSigTxt  := comboShort ? bearTag + " COMBO" : bearTag
+    int anyIdx = bearIdx >= 0 ? bearIdx : f_findBlock(0, tol)
+    string tt = "Bearish Accelerator | " + bearTag + "\nVelocity: " + (bearPlus ? "Plus (close < mid)" : "Normal (close ≥ mid)") + "\nDelta Source: " + srcUsed
+    tt += "\nRange: " + str.tostring(barRange, "#.##") + " | Avg: " + str.tostring(avgRange, "#.##") + " | Ratio: " + f_x(rangeRatio) + " | Need: " + f_x(rangeNeed)
+    tt += "\nDelta: " + f_ks(delta) + " | Avg: +" + f_k(avgAbsDelta) + " | Ratio: " + f_x(deltaRatio) + " | Need: " + f_x(deltaNeed)
+    tt += "\nVolume: " + str.tostring(volume, "#")
+    if not refTooltip
+        tt += "\nSize: " + f_x(sizeRatio) + " ATR100 | Need: " + f_x(minSize)
+        tt += "\n──────────\nDelta gate: " + (delta <= -minDelta ? "✓ " : "✗ ") + f_ks(delta) + " vs -" + f_k(minDelta)
+        tt += "\nBlock: " + f_blockLine(anyIdx)
+        tt += "\n" + (comboShort ? "COMBO: ALL 5 GATES PASS → SHORT" : "Combo: not complete")
+    tt += calib ? f_calib() : ""
+    // Gate 5: structure stop (near/inside block → above block, far → above entry candle)
+    if sigHalo
+        sd.axl.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=chart.bg_color, size=haloSize, tooltip=tt))
+    sd.axl.push(label.new(bar_index, bearTriY, "", style=label.style_triangledown, color=bearColor, size=sigSize, tooltip=tt))
+    if showSigText
+        sd.axl.push(label.new(bar_index, bearTxtY, bearTag + "\nD:" + f_ks(delta) + "\nR:" + f_x(rangeRatio) + " D:" + f_x(deltaRatio), style=label.style_label_down, color=txtBg, textcolor=bearColor, size=size.tiny, tooltip=tt))
+    if comboShort
+        Block b = gArr.get(bearIdx)
+        bool  near = low <= b.top and high >= b.bot
+        float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
+        sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)") + "\n" + tt))
+        if showSL
+            sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
+
+if drawBull or drawBear
+    f_keepSignals()
+
+// ════════════════════════════════════════════════════════════════════
+// BACKTEST · WIN / LOSS  (follows the 5-gate rule: enter on ENTER LONG / SHORT
+// at the signal close, SL = the rule's stop, TP = entry ± R multiple)
+// ════════════════════════════════════════════════════════════════════
+grpW    = "⑮ Backtest · Win / Loss"
+showWL  = input.bool(true, "Show W / L on the chart", group=grpW)
+tpMode  = input.string("Fixed price distance", "Take profit type", options=["Fixed price distance", "R multiple"], group=grpW, tooltip="Fixed: TP = entry ± the price distance below (20.00 = 200 points on XAUUSD). R multiple: TP = entry ± R × (entry → SL distance).")
+tpPts   = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
+tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="Only for 'R multiple': 2 = TP at twice the risk.")
+oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
+bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
+cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
+cLoss   = input.color(#F23645, "Loss color", inline="wl", group=grpW)
+
+type Trade
+    int   dir
+    float entry
+    float sl
+    float tp
+    int   bar
+    line  lTp
+    line  lSl
+    int   tm = na
+
+var Trade trd    = na
+var int   wins   = 0
+var int   losses = 0
+var float netR   = 0.0
+var float netPts = 0.0
+
+// 1) manage the open trade (from the candle after entry, on closed candles only)
+if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
+    bool hitSL = trd.dir == 1 ? low <= trd.sl : high >= trd.sl
+    bool hitTP = trd.dir == 1 ? high >= trd.tp : low <= trd.tp
+    if hitSL or hitTP
+        bool  win  = hitTP and (not hitSL or bothBar == "Win")
+        float rsk  = math.abs(trd.entry - trd.sl)
+        float gain = math.abs(trd.tp - trd.entry)
+        wins   += win ? 1 : 0
+        losses += win ? 0 : 1
+        netR   += win ? gain / rsk : -1.0
+        netPts += win ? gain : -rsk
+        if showWL
+            float px = win ? trd.tp : trd.sl
+            bool  up = (trd.dir == 1) == win
+            label.new(bar_index, px, win ? "W" : "L", style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.small, tooltip=(trd.dir == 1 ? "LONG" : "SHORT") + " " + (win ? "WIN +" + str.tostring(gain, "#.##") + " (" + str.tostring(gain / rsk, "#.#") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(trd.entry, format.mintick) + " · SL " + str.tostring(trd.sl, format.mintick) + " · TP " + str.tostring(trd.tp, format.mintick))
+            line.set_x2(trd.lTp, bar_index)
+            line.set_x2(trd.lSl, bar_index)
+        trd := na
+    else if showWL
+        line.set_x2(trd.lTp, bar_index)
+        line.set_x2(trd.lSl, bar_index)
+
+// 2) open a trade on a confirmed ENTER signal
+bool enterL = drawBull and comboLong
+bool enterS = drawBear and comboShort
+if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
+    Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
+    bool  near = low <= eb.top and high >= eb.bot
+    float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
+    float risk = math.abs(close - sl)
+    if risk > 0
+        int   d  = enterL ? 1 : -1
+        float tp = close + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
+        line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
+        line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
+        trd := Trade.new(d, close, sl, tp, bar_index, l1, l2)
+
+// ════════════════════════════════════════════════════════════════════
+// BACKTEST · EVERY ACCELERATOR  (each BuAx+ / BeAx+ is a trade on its own,
+// entry at its close, TP = fixed distance = 1R, SL = same distance or the candle)
+// ════════════════════════════════════════════════════════════════════
+grpW2   = "⑮b Backtest · Every accelerator"
+axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
+axBtWL  = input.bool(true, "Show its W / L on the chart", group=grpW2, tooltip="Small 'w' / 'l' marks (lower case, so they are not mixed up with the 5-gate W / L).")
+axTp    = input.float(10.0, "TP distance (price) = 1R", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points on XAUUSD.")
+axSlMd  = input.string("Same as TP (1R)", "Stop loss", options=["Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
+axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
+
+var array<Trade> axOpen = array.new<Trade>()
+var int   axW  = 0
+var int   axL  = 0
+var float axPts = 0.0
+var float axR   = 0.0
+var int   axWB = 0
+var int   axLB = 0
+var int   axWS = 0
+var int   axLS = 0
+
+if axBtOn and barstate.isconfirmed and axOpen.size() > 0
+    for i = axOpen.size() - 1 to 0
+        Trade t = axOpen.get(i)
+        if bar_index > t.bar
+            bool hitSL = t.dir == 1 ? low <= t.sl : high >= t.sl
+            bool hitTP = t.dir == 1 ? high >= t.tp : low <= t.tp
+            if hitSL or hitTP
+                bool  win  = hitTP and (not hitSL or bothBar == "Win")
+                float rsk  = math.abs(t.entry - t.sl)
+                float gain = math.abs(t.tp - t.entry)
+                axW   += win ? 1 : 0
+                axL   += win ? 0 : 1
+                axWB  += win and t.dir == 1 ? 1 : 0
+                axLB  += not win and t.dir == 1 ? 1 : 0
+                axWS  += win and t.dir == -1 ? 1 : 0
+                axLS  += not win and t.dir == -1 ? 1 : 0
+                axPts += win ? gain : -rsk
+                axR   += win ? gain / rsk : -1.0
+                if axBtWL
+                    float px = win ? t.tp : t.sl
+                    bool  up = (t.dir == 1) == win
+                    label.new(bar_index, px, win ? "w" : "l", style=up ? label.style_label_down : label.style_label_up, color=color.new(win ? cWin : cLoss, 25), textcolor=color.white, size=size.tiny, tooltip="Every-accelerator test · " + (t.dir == 1 ? "BuAx+ LONG" : "BeAx+ SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
+                axOpen.remove(i)
+
+if axBtOn and barstate.isconfirmed and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
+    int   d  = drawBull ? 1 : -1
+    float tp = close + d * axTp
+    float sl = axSlMd == "Same as TP (1R)" ? close - d * axTp : (d == 1 ? low - slBuf : high + slBuf)
+    if math.abs(close - sl) > 0
+        axOpen.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
+
+// ════════════════════════════════════════════════════════════════════
+// KOB · KTR ❖ + OFX 2.0 COMBO  (double / triple confirmation on 5m)
+//   KOB²: 5m KTR ❖ entry + OFX 2.0 ENTER combo (OrderBlock 1.0), same direction, close together
+//   KOB³: KOB² + a 15m KTR ❖ entry in the same direction shortly before
+//   Each has its own Win / Loss (entry at the close of the candle that completes the pair).
+// ════════════════════════════════════════════════════════════════════
+grpK   = "⓪ KTR ❖ (for KOB)"
+kSTf   = input.float(2.0, "Supertrend factor", step=0.5, group=grpK)
+kSTa   = input.int(10, "Supertrend ATR length", group=grpK)
+kRsiOn = input.bool(true, "RSI context filter", group=grpK)
+kRsiLo = input.float(35, "Buy zone: RSI was below", group=grpK)
+kRsiHi = input.float(65, "Sell zone: RSI was above", group=grpK)
+kCool  = input.int(3, "Min bars between alerts", minval=0, group=grpK)
+kWin   = input.int(12, "Entry ❖ confirm window (bars)", minval=1, group=grpK)
+kCont  = input.bool(true, "Continuation signals (trend pullbacks)", group=grpK)
+kVolC  = input.bool(true, "❖ needs above-average volume (Boys confirm)", group=grpK)
+kVolM  = input.float(1.0, "Min relative volume for ❖", step=0.1, group=grpK)
+kHtf   = input.timeframe("15", "Higher KTR timeframe", group=grpK)
+kShow5 = input.bool(true, "Show 5m KTR diamonds + ❖", group=grpK)
+kShowH = input.bool(true, "Show 15m KTR ❖ (small '15' mark)", group=grpK)
+
+grpKB   = "⓪b KOB · Double / triple confirmation"
+kobWin  = input.int(6, "5m ❖ and OFX combo within (bars)", minval=0, maxval=50, group=grpKB, tooltip="The 5m KTR ❖ and the OFX 2.0 ENTER combo must be in the same direction and at most this many 5m candles apart (6 = 30 min). The trade starts at the close of the candle where the second one appears.")
+kobWinH = input.int(4, "15m ❖ no older than (15m bars)", minval=1, maxval=50, group=grpKB, tooltip="KOB³: the last 15m KTR ❖ must be in the same direction and closed at most this many 15m candles before the KOB² signal (4 = 1 hour).")
+kobSlMd = input.string("OFX rule (combo SL)", "Stop loss", options=["OFX rule (combo SL)", "Fixed distance"], group=grpKB, tooltip="OFX rule: the SL of the ENTER combo (below / above the block or the candle), unchanged. Fixed: entry ± the distance below.")
+kobSl   = input.float(10.0, "Fixed SL distance (price)", minval=0.1, step=0.5, group=grpKB)
+kobTpMd = input.string("Fixed price distance", "Take profit type", options=["Fixed price distance", "R multiple"], group=grpKB)
+kobTp   = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="10.00 = 100 points on XAUUSD.")
+kobTpR  = input.float(1.0, "Take profit (R)", minval=0.5, step=0.5, group=grpKB)
+kobOne  = input.bool(true, "One trade at a time (per setup)", group=grpKB)
+kobLab  = input.bool(true, "Show KOB entries + W / L on the chart", group=grpKB)
+cK2     = input.color(#AB47BC, "KOB² colour", inline="kc", group=grpKB)
+cK3     = input.color(#FFB300, "KOB³ colour", inline="kc", group=grpKB)
+
+// KTR ❖ logic (same rules as the KTR module) → [alert buy, alert sell, ❖ buy, ❖ sell]
+f_ktr() =>
+    [kst1, kd1] = ta.supertrend(kSTf, kSTa)
+    [kst2, kd2] = ta.supertrend(kSTf * 2.0, kSTa)
+    bool  up     = kd1 < 0
+    bool  slowUp = kd2 < 0
+    float rsi    = ta.rsi(close, 7)
+    float rLo    = ta.lowest(rsi, 5)
+    float rHi    = ta.highest(rsi, 5)
+    bool  bullTh = close > open and close > high[1]
+    bool  bearTh = close < open and close < low[1]
+    bool  atLow  = ta.barssince(low == ta.lowest(low, 12)) <= 3
+    bool  atHigh = ta.barssince(high == ta.highest(high, 12)) <= 3
+    bool  revBuy  = not up and bullTh and (not kRsiOn or rLo <= kRsiLo or atLow)
+    bool  revSell = up and bearTh and (not kRsiOn or rHi >= kRsiHi or atHigh)
+    bool  conBuy  = kCont and slowUp and not up and bullTh and (not kRsiOn or rLo <= 45)
+    bool  conSell = kCont and not slowUp and up and bearTh and (not kRsiOn or rHi >= 55)
+    var int upRun = 0
+    var int dnRun = 0
+    upRun := close > open ? upRun + 1 : 0
+    dnRun := close < open ? dnRun + 1 : 0
+    bool  micSell = kCont and not slowUp and not up and upRun[1] >= 2 and bearTh
+    bool  micBuy  = kCont and slowUp and up and dnRun[1] >= 2 and bullTh
+    var int lastSig = -99999
+    bool  coolOK = bar_index - lastSig >= kCool
+    bool  aBuy   = (revBuy or conBuy or micBuy) and coolOK
+    bool  aSell  = (revSell or conSell or micSell) and coolOK
+    if aBuy or aSell
+        lastSig := bar_index
+    var int   buyBar   = -99999
+    var int   sellBar  = -99999
+    var float buyHigh  = na
+    var float sellLow  = na
+    var bool  buyDone  = true
+    var bool  sellDone = true
+    if aBuy
+        buyBar  := bar_index
+        buyHigh := high
+        buyDone := false
+    if aSell
+        sellBar  := bar_index
+        sellLow  := low
+        sellDone := false
+    bool  flipUp = up and not up[1]
+    bool  flipDn = not up and up[1]
+    float relVol = volume / ta.sma(volume, 20)
+    bool  volOK  = not kVolC or relVol >= kVolM
+    bool  eBuy   = not buyDone and bar_index - buyBar <= kWin and volOK and (flipUp or (bar_index > buyBar and close > buyHigh))
+    bool  eSell  = not sellDone and bar_index - sellBar <= kWin and volOK and (flipDn or (bar_index > sellBar and close < sellLow))
+    if eBuy
+        buyDone := true
+    if eSell
+        sellDone := true
+    [aBuy, aSell, eBuy, eSell]
+
+// the finished higher-timeframe candle only (no repainting): its ❖ and its open time
+f_ktrH() =>
+    [ha, hb, hc, hd] = f_ktr()
+    [hc[1], hd[1], time[1]]
+
+[kA5B, kA5S, k5B, k5S] = f_ktr()
+[kHB, kHS, kHT] = request.security(syminfo.tickerid, kHtf, f_ktrH(), lookahead=barmerge.lookahead_on)
+
+plotshape(kShow5 and kA5B ? low - atr14 * 0.25 : na, "KTR buy alert", style=shape.diamond, location=location.absolute, color=color.aqua, size=size.tiny)
+plotshape(kShow5 and kA5S ? high + atr14 * 0.25 : na, "KTR sell alert", style=shape.diamond, location=location.absolute, color=color.red, size=size.tiny)
+plotchar(kShow5 and k5B ? low - atr14 * 0.6 : na, "KTR BUY ❖", char="❖", location=location.absolute, color=color.rgb(255, 200, 120), size=size.tiny)
+plotchar(kShow5 and k5S ? high + atr14 * 0.6 : na, "KTR SELL ❖", char="❖", location=location.absolute, color=color.rgb(255, 200, 120), size=size.tiny)
+
+// 15m ❖: register each finished 15m ❖ once
+var int  lastHDir = 0
+var int  lastHT   = na
+bool     newH     = (kHB or kHS) and (na(lastHT) or kHT != lastHT)
+if newH
+    lastHDir := kHB ? 1 : -1
+    lastHT   := kHT
+plotshape(kShowH and newH and lastHDir == 1 ? low - atr14 * 0.9 : na, "15m KTR BUY ❖", style=shape.diamond, location=location.absolute, color=color.rgb(255, 160, 0), size=size.tiny, text="15", textcolor=color.rgb(255, 160, 0))
+plotshape(kShowH and newH and lastHDir == -1 ? high + atr14 * 0.9 : na, "15m KTR SELL ❖", style=shape.diamond, location=location.absolute, color=color.rgb(255, 160, 0), size=size.tiny, text="15", textcolor=color.rgb(255, 160, 0))
+
+// events: last 5m ❖ and last OFX combo (with its rule SL)
+var int   last5Dir = 0
+var int   last5Bar = na
+var bool  k5Used   = true
+var int   lastCDir = 0
+var int   lastCBar = na
+var float lastCSL  = na
+var bool  cUsed    = true
+if barstate.isconfirmed and (k5B or k5S)
+    last5Dir := k5B ? 1 : -1
+    last5Bar := bar_index
+    k5Used   := false
+if barstate.isconfirmed and (enterL or enterS)
+    Block cb    = gArr.get(enterL ? bullIdx : bearIdx)
+    bool  cNear = low <= cb.top and high >= cb.bot
+    lastCDir := enterL ? 1 : -1
+    lastCBar := bar_index
+    lastCSL  := enterL ? (cNear ? math.min(low, cb.bot) - slBuf : low - slBuf) : (cNear ? math.max(high, cb.top) + slBuf : high + slBuf)
+    cUsed    := false
+
+bool  kobPair = barstate.isconfirmed and ((k5B or k5S) or (enterL or enterS)) and lastCDir != 0 and lastCDir == last5Dir and not cUsed and not k5Used and bar_index - lastCBar <= kobWin and bar_index - last5Bar <= kobWin
+int   kobDir  = kobPair ? lastCDir : 0
+float kobSL   = kobDir == 0 ? na : kobSlMd == "OFX rule (combo SL)" ? lastCSL : close - kobDir * kobSl
+bool  kob2    = kobDir != 0 and (kobDir == 1 ? kobSL < close : kobSL > close)
+bool  kob3    = kob2 and lastHDir == kobDir and not na(lastHT) and time - (lastHT + timeframe.in_seconds(kHtf) * 1000) <= kobWinH * timeframe.in_seconds(kHtf) * 1000
+if kobPair
+    cUsed  := true
+    k5Used := true
+
+type KobSt
+    string nm
+    color  col
+    array<Trade> open
+    int    w  = 0
+    int    l  = 0
+    int    wB = 0
+    int    lB = 0
+    int    wS = 0
+    int    lS = 0
+    float  pts = 0.0
+    float  r   = 0.0
+
+var KobSt kS2 = KobSt.new("KOB²", cK2, array.new<Trade>())
+var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>())
+
+f_kobRun(KobSt s) =>
+    if s.open.size() > 0
+        for i = s.open.size() - 1 to 0
+            Trade t = s.open.get(i)
+            if bar_index > t.bar
+                bool hitSL = t.dir == 1 ? low <= t.sl : high >= t.sl
+                bool hitTP = t.dir == 1 ? high >= t.tp : low <= t.tp
+                if hitSL or hitTP
+                    bool  win  = hitTP and (not hitSL or bothBar == "Win")
+                    float rsk  = math.abs(t.entry - t.sl)
+                    float gain = math.abs(t.tp - t.entry)
+                    s.w   += win ? 1 : 0
+                    s.l   += win ? 0 : 1
+                    s.wB  += win and t.dir == 1 ? 1 : 0
+                    s.lB  += not win and t.dir == 1 ? 1 : 0
+                    s.wS  += win and t.dir == -1 ? 1 : 0
+                    s.lS  += not win and t.dir == -1 ? 1 : 0
+                    s.pts += win ? gain : -rsk
+                    s.r   += win ? gain / rsk : -1.0
+                    if kobLab
+                        bool up = (t.dir == 1) == win
+                        label.new(bar_index, win ? t.tp : t.sl, s.nm + (win ? " W" : " L"), style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.tiny, tooltip=s.nm + " " + (t.dir == 1 ? "LONG" : "SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
+                    s.open.remove(i)
+    s
+
+f_kobOpen(KobSt s, int d, float sl) =>
+    if not kobOne or s.open.size() == 0
+        float rsk = math.abs(close - sl)
+        float tp  = close + d * (kobTpMd == "R multiple" ? kobTpR * rsk : kobTp)
+        s.open.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
+        if kobLab
+            label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT"), style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(close, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
+    s
+
+if barstate.isconfirmed
+    f_kobRun(kS2)
+    f_kobRun(kS3)
+    if kob2
+        f_kobOpen(kS2, kobDir, kobSL)
+    if kob3
+        f_kobOpen(kS3, kobDir, kobSL)
+
+f_kobTxt(KobSt s) =>
+    int n = s.w + s.l
+    str.tostring(s.w) + "W " + str.tostring(s.l) + "L" + (n > 0 ? " (" + str.tostring(s.w * 100.0 / n, "#") + "%)" : "") + (s.open.size() > 0 ? " · open" : "") + " · " + str.tostring(s.pts, "+#.##;-#.##") + " (" + str.tostring(s.r, "+#.#;-#.#") + "R)"
+f_kobTip(KobSt s) =>
+    "LONG: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + (s.wB + s.lB > 0 ? " (" + str.tostring(s.wB * 100.0 / (s.wB + s.lB), "#") + "%)" : "") + "\nSHORT: " + str.tostring(s.wS) + "W " + str.tostring(s.lS) + "L" + (s.wS + s.lS > 0 ? " (" + str.tostring(s.wS * 100.0 / (s.wS + s.lS), "#") + "%)" : "")
+
+alertcondition(kob2, "KOB² double confirmation", "KOB²: 5m KTR ❖ + OFX 2.0 combo")
+alertcondition(kob3, "KOB³ triple confirmation", "KOB³: 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo")
+
+// ════════════════════════════════════════════════════════════════════
+// UN-AUCTIONED PRICE (UH / UL): a candle with no wick on one side leaves a level
+// that was never auctioned. It stays until price trades through it.
+// ════════════════════════════════════════════════════════════════════
+grpU     = "⑭ Un-auctioned price (UH / UL)"
+showUHUL = input.bool(true, "Enable UH/UL detection", group=grpU)
+showUSym = input.bool(true, "Show $$$ sign", inline="u1", group=grpU)
+showUTxt = input.bool(true, "Show UH/UL text", inline="u1", group=grpU)
+uStrict  = input.bool(false, "Strict: accelerator candles only", group=grpU)
+cUH      = input.color(#F23645, "UH color", inline="u2", group=grpU)
+cUL      = input.color(#00E676, "UL color", inline="u2", group=grpU)
+uMax     = input.int(30, "Max active levels", minval=1, maxval=100, group=grpU)
+
+type ULvl
+    line  ln
+    label lb
+    float px
+    int   dir
+    int   born
+
+var array<ULvl> uLv = array.new<ULvl>()
+
+if showUHUL and barstate.isconfirmed
+    // remove levels price has now traded through, extend the rest
+    if uLv.size() > 0
+        for i = uLv.size() - 1 to 0
+            ULvl u = uLv.get(i)
+            bool hit = u.born < bar_index and (u.dir == 1 ? high > u.px : low < u.px)
+            if hit
+                line.delete(u.ln)
+                label.delete(u.lb)
+                uLv.remove(i)
+            else
+                line.set_x2(u.ln, bar_index + 3)
+    float eps = syminfo.mintick / 2
+    bool  axOK = not uStrict or drawBull or drawBear
+    bool  isUH = barRange > 0 and axOK and high - math.max(open, close) <= eps
+    bool  isUL = barRange > 0 and axOK and math.min(open, close) - low <= eps
+    if isUH
+        string t = (showUTxt ? "UH" : "") + (showUTxt and showUSym ? "\n" : "") + (showUSym ? "$$$" : "")
+        uLv.unshift(ULvl.new(line.new(bar_index, high, bar_index + 3, high, color=cUH, width=1), t != "" ? label.new(bar_index, high, t, style=label.style_label_down, color=color.new(color.white, 100), textcolor=cUH, size=size.tiny) : na, high, 1, bar_index))
+    if isUL
+        string t = (showUSym ? "$$$" : "") + (showUTxt and showUSym ? "\n" : "") + (showUTxt ? "UL" : "")
+        uLv.unshift(ULvl.new(line.new(bar_index, low, bar_index + 3, low, color=cUL, width=1), t != "" ? label.new(bar_index, low, t, style=label.style_label_up, color=color.new(color.white, 100), textcolor=cUL, size=size.tiny) : na, low, -1, bar_index))
+    while uLv.size() > uMax
+        ULvl u = uLv.pop()
+        line.delete(u.ln)
+        label.delete(u.lb)
+
+// ---- Inspect a candle: why it fired / did not fire ----
+f_hit(int t) => time <= t and time_close > t
+bool inspectBar = inspectOn and (f_hit(inspectT) or f_hit(inspectT2) or f_hit(inspectT3))
+if inspectBar
+    bool   up   = delta >= 0
+    string res  = drawBull ? "RESULT: BuAx+ fired" : drawBear ? "RESULT: BeAx+ fired" : "RESULT: no signal"
+    string fl   = ""
+    if up and not (close > open)
+        fl += "\n✗ candle is not green"
+    if not up and not (close < open)
+        fl += "\n✗ candle is not red"
+    if plusOnly and up and not bullPlus
+        fl += "\n✗ plus velocity only: close not above mid"
+    if plusOnly and not up and not bearPlus
+        fl += "\n✗ plus velocity only: close not below mid"
+    if wickless and ((up and not bullWk) or (not up and not bearWk))
+        fl += "\n✗ strict wickless: candle has a wick"
+    if not bodyOK
+        fl += "\n✗ body " + str.tostring(barRange > 0 ? math.abs(close - open) / barRange * 100 : 0, "#") + "% of range < " + str.tostring(bodyNeed, "#") + "%"
+    if rangeRatio < rangeNeed
+        fl += "\n✗ range ratio " + f_x(rangeRatio) + " < " + f_x(rangeNeed)
+    if deltaConf and deltaRatio < deltaNeed
+        fl += "\n✗ delta ratio " + f_x(deltaRatio) + " < " + f_x(deltaNeed)
+    if not volOK
+        fl += "\n✗ volume ratio " + f_x(volRatio) + " < " + f_x(volNeed)
+    if not sizeOK
+        fl += "\n✗ candle size " + f_x(sizeRatio) + " ATR100 < " + f_x(minSize)
+    if axDeltaGate and math.abs(delta) < minDelta
+        fl += "\n✗ hidden: ③ 'Hide accelerators under ±threshold' is ON (turn it off)"
+    if useDeltaGate and math.abs(delta) < minDelta
+        fl += "\n(entry only) delta gate " + f_ks(delta) + " inside ±" + f_k(minDelta)
+    if up and not trendBullOK
+        fl += "\n✗ trend filter (bearish)"
+    if not up and not trendBearOK
+        fl += "\n✗ trend filter (bullish)"
+    if (up and bullAx and not bullAxOK) or (not up and bearAx and not bearAxOK)
+        fl += "\n✗ cooldown"
+    string it = "INSPECT · " + srcUsed + "\n" + res + fl
+    it += "\nRange: " + str.tostring(barRange, "#.##") + " | Avg: " + str.tostring(avgRange, "#.##") + " | Ratio: " + f_x(rangeRatio)
+    it += "\nDelta: " + f_ks(delta) + " | Avg: +" + f_k(avgAbsDelta) + " | Ratio: " + f_x(deltaRatio)
+    it += "\nVolume: " + str.tostring(volume, "#") + " | Size: " + f_x(sizeRatio) + " ATR100"
+    it += f_calib()
+    inspIdx := bar_index
+    inspLbl := label.new(bar_index, high + atr14 * 2, it, style=label.style_label_down, color=color.new(#131722, 5), textcolor=color.white, size=size.small, textalign=text.align_left)
+    line.new(bar_index, high + atr14 * 2, bar_index, low, color=color.new(#E3B341, 20), style=line.style_dotted, width=1)
+
+// ════════════════════════════════════════════════════════════════════
+// DELTA CANDLE COLORS
+// ════════════════════════════════════════════════════════════════════
+color candleColor = cNeutral
+if deltaRatio < neutralMult
+    candleColor := cNeutral
+else if delta > 0
+    candleColor := deltaRatio >= strongMult ? cStrongBull : cWeakBull
+else if delta < 0
+    candleColor := deltaRatio >= strongMult ? cStrongBear : cWeakBear
+color axCol = axCandle and drawBull ? cAxBull : axCandle and drawBear ? cAxBear : na
+barcolor(not na(axCol) ? axCol : colorCandles ? candleColor : na)
+
+// ════════════════════════════════════════════════════════════════════
+// KEY LEVELS: session opens + previous day
+// ════════════════════════════════════════════════════════════════════
+type LvlLine
+    line  ln
+    label lb
+
+f_sessStart(string sess, string tz) =>
+    bool inS = not na(time(timeframe.period, sess, tz))
+    inS and not inS[1]
+
+f_lvl(LvlLine o, bool start, bool show, float price, string name, color col, string lstyle, bool labelAtStart) =>
+    if show and start and not na(price)
+        if not keepHist
+            line.delete(o.ln)
+            label.delete(o.lb)
+        o.ln := line.new(bar_index, price, bar_index + lvlExt, price, color=col, style=lstyle, width=1)
+        o.lb := label.new(labelAtStart ? bar_index : bar_index + lvlExt, price, name, style=labelAtStart ? label.style_label_lower_left : label.style_label_lower_right, color=color.new(color.white, 100), textcolor=col, size=size.tiny)
+    if show and not na(o.ln)
+        line.set_x2(o.ln, bar_index + lvlExt)
+        if not labelAtStart
+            label.set_x(o.lb, bar_index + lvlExt)
+
+bool stMid = f_sessStart("0000-0100", "America/New_York")
+bool stFF  = f_sessStart("0800-0900", "Europe/Berlin")
+bool stLO  = f_sessStart("0800-0900", "Europe/London")
+bool stNY  = f_sessStart("0930-1030", "America/New_York")
+bool stTK  = f_sessStart("0900-1000", "Asia/Tokyo")
+
+[pdH, pdL, pdO, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], open[1], close[1]], lookahead=barmerge.lookahead_on)
+bool newDay = timeframe.change("D")
+
+var LvlLine lMid = LvlLine.new()
+var LvlLine lFF  = LvlLine.new()
+var LvlLine lLO  = LvlLine.new()
+var LvlLine lNY  = LvlLine.new()
+var LvlLine lTK  = LvlLine.new()
+var LvlLine lPDH = LvlLine.new()
+var LvlLine lPDL = LvlLine.new()
+var LvlLine lPDO = LvlLine.new()
+var LvlLine lPDC = LvlLine.new()
+
+f_lvl(lMid, stMid, showMid, open, "Midnight", cMid, line.style_dashed, false)
+f_lvl(lFF,  stFF,  showFF,  open, "FF.Open", cSess, line.style_dotted, false)
+f_lvl(lLO,  stLO,  showLO,  open, "LO.Open", cSess, line.style_dotted, false)
+f_lvl(lNY,  stNY,  showNY,  open, "NY.Open", cSess, line.style_dotted, false)
+f_lvl(lTK,  stTK,  showTK,  open, "TK.Open", cSess, line.style_dotted, false)
+f_lvl(lPDH, newDay, showPDHL, pdH, "Previous Day • High", cPD, line.style_solid, true)
+f_lvl(lPDL, newDay, showPDHL, pdL, "Previous Day • Low", cPD, line.style_solid, true)
+f_lvl(lPDO, newDay, showPDO,  pdO, "Previous Day • Open", cPD, line.style_dashed, true)
+f_lvl(lPDC, newDay, showPDC,  pdC, "Previous Day • Close", cPD, line.style_dashed, true)
+
+// ════════════════════════════════════════════════════════════════════
+// LAST-BAR DRAWING: block text, volume profile, dashboard
+// ════════════════════════════════════════════════════════════════════
+var array<box> vpBoxes = array.new<box>()
+
+if barstate.islast
+    // refresh blocks (share % of all active blocks, extend right)
+    float totBull = 0.0
+    float totBear = 0.0
+    for b in blocks
+        if b.vis
+            if b.kind == 1
+                totBull += b.vol
+            else
+                totBear += b.vol
+    for b in blocks
+        if b.vis and showBlocks
+            if fvgMode
+                f_hideBlock(b)
+            f_drawBlock(b)
+            f_refreshBlock(b, b.kind == 1 ? totBull : totBear)
+        else
+            f_hideBlock(b)
+    float obBull = 0.0
+    float obBear = 0.0
+    for b in obs
+        if b.vis
+            if b.kind == 1
+                obBull += b.vol
+            else
+                obBear += b.vol
+    for b in obs
+        if b.vis and showObs
+            f_drawBlock(b)
+            f_refreshBlock(b, b.kind == 1 ? obBull : obBear)
+        else
+            f_hideBlock(b)
+    float o2Bull = 0.0
+    float o2Bear = 0.0
+    for b in obs2
+        if b.vis
+            if b.kind == 1
+                o2Bull += b.vol
+            else
+                o2Bear += b.vol
+    for b in obs2
+        if b.vis and showOb2
+            f_hideBlock(b)
+            f_drawBlock(b)
+            f_refreshBlock(b, b.kind == 1 ? o2Bull : o2Bear)
+        else
+            f_hideBlock(b)
+
+    // volume profile with buyer / seller split
+    for bx in vpBoxes
+        box.delete(bx)
+    vpBoxes.clear()
+    if showVP and not mobileView
+        int   n   = math.min(vpLookback, bar_index + 1)
+        float pHi = high
+        float pLo = low
+        for i = 0 to n - 1
+            pHi := math.max(pHi, high[i])
+            pLo := math.min(pLo, low[i])
+        float step = (pHi - pLo) / vpRows
+        if step > 0
+            array<float> rb = array.new<float>(vpRows, 0.0)
+            array<float> rs = array.new<float>(vpRows, 0.0)
+            for i = 0 to n - 1
+                float h   = high[i]
+                float l   = low[i]
+                float rng = h - l
+                float bvI = nz(buyVol[i])
+                float svI = nz(sellVol[i])
+                int   r0  = math.max(0, math.min(vpRows - 1, int(math.floor((l - pLo) / step))))
+                int   r1  = math.max(0, math.min(vpRows - 1, int(math.floor((h - pLo) / step))))
+                for r = r0 to r1
+                    float rLo = pLo + r * step
+                    float ov  = rng > 0 ? (math.min(h, rLo + step) - math.max(l, rLo)) / rng : 1.0 / (r1 - r0 + 1)
+                    ov := math.max(ov, 0.0)
+                    rb.set(r, rb.get(r) + bvI * ov)
+                    rs.set(r, rs.get(r) + svI * ov)
+            float mx  = 0.0
+            int   poc = 0
+            for r = 0 to vpRows - 1
+                float t = rb.get(r) + rs.get(r)
+                if t > mx
+                    mx  := t
+                    poc := r
+            if mx > 0
+                int x0 = bar_index + vpOffset
+                for r = 0 to vpRows - 1
+                    int   wB = int(math.round(rb.get(r) / mx * vpWidth))
+                    int   wS = int(math.round(rs.get(r) / mx * vpWidth))
+                    float yT = pLo + (r + 1) * step
+                    float yB = pLo + r * step
+                    int   tr = r == poc ? 20 : 55
+                    if wB > 0
+                        vpBoxes.push(box.new(x0, yT, x0 + wB, yB, border_color=color.new(cBlkBull, 100), bgcolor=color.new(cBlkBull, tr)))
+                    if wS > 0
+                        vpBoxes.push(box.new(x0 + wB, yT, x0 + wB + wS, yB, border_color=color.new(cBlkBear, 100), bgcolor=color.new(cBlkBear, tr)))
+
+// dashboard
+var table dash = na
+if showDash and na(dash)
+    pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
+    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 6 : 11, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+
+if showDash and barstate.islast
+    color gold = #E3B341
+    color ok   = #26A69A
+    color bad  = #F23645
+    color txt  = #D1D4DC
+
+    string nb   = "none"
+    float  best = na
+    for b in gArr
+        if b.bias != 0 and b.vis
+            float d = math.abs(close - (b.top + b.bot) / 2)
+            if na(best) or d < best
+                best := d
+                nb   := "#" + f_num(b) + (b.bias == 1 ? " Buyers " + str.tostring(b.buyPct, "#") : " Sellers " + str.tostring(b.sellPct, "#")) + "%"
+
+    bool dPass = math.abs(delta) >= minDelta
+    int    nTr   = wins + losses
+    string wlTxt = str.tostring(wins) + "W " + str.tostring(losses) + "L" + (nTr > 0 ? " (" + str.tostring(wins * 100.0 / nTr, "#") + "%)" : "") + (na(trd) ? "" : " · open")
+    int    axN   = axW + axL
+    string axTxt = str.tostring(axW) + "W " + str.tostring(axL) + "L" + (axN > 0 ? " (" + str.tostring(axW * 100.0 / axN, "#") + "%)" : "") + (axOpen.size() > 0 ? " · " + str.tostring(axOpen.size()) + " open" : "")
+    string sig = na(lastSigBar) ? "—" : lastSigTxt + " · " + str.tostring(bar_index - lastSigBar) + " bars ago"
+    string st  = comboLong and drawBull ? "ENTER LONG" : comboShort and drawBear ? "ENTER SHORT" : "NO PASS, NO TRADE"
+
+    if mobileView
+        // compact: last accelerator + status only
+        table.cell(dash, 0, 0, sig, text_color=txt, text_size=size.tiny)
+        table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 0, 2, wlTxt, text_color=netR >= 0 ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 2, str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=netPts >= 0 ? ok : bad, text_size=size.tiny)
+        if axBtOn
+            table.cell(dash, 0, 3, "AX " + axTxt, text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
+            table.cell(dash, 1, 3, str.tostring(axPts, "+#.##;-#.##") + " pts", text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 0, 4, "KOB²", text_color=cK2, text_size=size.tiny)
+        table.cell(dash, 1, 4, f_kobTxt(kS2), text_color=kS2.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS2))
+        table.cell(dash, 0, 5, "KOB³", text_color=cK3, text_size=size.tiny)
+        table.cell(dash, 1, 5, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS3))
+    else
+        table.cell(dash, 0, 0, "KOB · OFX 2.0", text_color=gold, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
+        table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=size.small)
+        table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 3, sig, text_color=txt, text_size=size.small)
+        table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
+        table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small)
+        if axBtOn
+            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()))
+        string kobTpS = kobTpMd == "R multiple" ? str.tostring(kobTpR, "#.#") + "R" : str.tostring(kobTp, "#.##")
+        table.cell(dash, 0, 9, "KOB² 5m ❖ + Combo · TP " + kobTpS, text_color=cK2, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 9, f_kobTxt(kS2), text_color=kS2.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS2))
+        table.cell(dash, 0, 10, "KOB³ 15m ❖ + 5m ❖ + Combo", text_color=cK3, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 10, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS3))
+
+// ════════════════════════════════════════════════════════════════════
+// EXTRA TOOLS (like BTrader Concept 2.0): POC line · range box · RSI divergence
+// ════════════════════════════════════════════════════════════════════
+grpE    = "⑯ POC · Range · Divergence"
+showPoc = input.bool(true, "Show POC line", group=grpE, tooltip="Price with the most volume over the lookback (orange line).")
+pocLook = input.int(80, "POC lookback (bars)", minval=10, maxval=500, group=grpE)
+cPoc    = input.color(#FF9800, "POC color", group=grpE)
+showRng = input.bool(true, "Show range box", group=grpE, tooltip="Sideways range: the last N closes all stay within SMA(N) ± width × ATR. Blue = unbroken, green = broken up, red = broken down.")
+rngLen  = input.int(20, "Minimum range length", minval=5, group=grpE)
+rngMult = input.float(1.0, "Range width (x ATR)", minval=0.1, step=0.1, group=grpE)
+rngAtrL = input.int(500, "ATR length", minval=10, group=grpE)
+cRngU   = input.color(#2962FF, "Unbroken", inline="rc", group=grpE)
+cRngUp  = input.color(#089981, "Broken up", inline="rc", group=grpE)
+cRngDn  = input.color(#F23645, "Broken down", inline="rc", group=grpE)
+showDiv = input.bool(true, "Show RSI divergence (⚠ + line)", group=grpE, tooltip="Regular divergence on close pivots: higher high in price + lower high in RSI (bearish), lower low in price + higher low in RSI (bullish).")
+divPiv  = input.int(5, "Pivot period", minval=2, group=grpE)
+divRsiL = input.int(14, "RSI length", minval=2, group=grpE)
+divMaxB = input.int(100, "Maximum bars to check", minval=10, maxval=300, group=grpE)
+divLast = input.bool(true, "Show only last divergence", group=grpE)
+cDiv    = input.color(#5B7FB5, "Divergence color", group=grpE)
+
+// ---- range box (range detector) ----
+float rAtr = ta.atr(rngAtrL) * rngMult
+float rMa  = ta.sma(close, rngLen)
+int   rOut = 0
+for i = 0 to rngLen - 1
+    rOut += math.abs(close[i] - rMa) > rAtr ? 1 : 0
+var box rBox = na
+var int rOs  = 0
+if showRng
+    if rOut == 0 and nz(rOut[1], 1) != 0
+        if not na(rBox) and bar_index - rngLen <= box.get_right(rBox) and rOs == 0
+            // overlapping the running range: widen it
+            box.set_top(rBox, math.max(box.get_top(rBox), rMa + rAtr))
+            box.set_bottom(rBox, math.min(box.get_bottom(rBox), rMa - rAtr))
+            box.set_right(rBox, bar_index)
+        else
+            rBox := box.new(bar_index - rngLen, rMa + rAtr, bar_index, rMa - rAtr, border_color=color.new(cRngU, 40), bgcolor=color.new(cRngU, 80))
+            rOs  := 0
+    else if not na(rBox) and rOs == 0
+        if close > box.get_top(rBox)
+            rOs := 1
+            box.set_bgcolor(rBox, color.new(cRngUp, 80))
+            box.set_border_color(rBox, color.new(cRngUp, 40))
+        else if close < box.get_bottom(rBox)
+            rOs := -1
+            box.set_bgcolor(rBox, color.new(cRngDn, 80))
+            box.set_border_color(rBox, color.new(cRngDn, 40))
+        else
+            box.set_right(rBox, bar_index)
+
+// ---- RSI regular divergence on close pivots ----
+float dRsi = ta.rsi(close, divRsiL)
+float dPH  = ta.pivothigh(close, divPiv, divPiv)
+float dPL  = ta.pivotlow(close, divPiv, divPiv)
+var float pPH = na
+var float rPH = na
+var int   bPH = na
+var float pPL = na
+var float rPL = na
+var int   bPL = na
+var line  dLn = na
+var label dLb = na
+if showDiv and not na(dPH)
+    int   b = bar_index - divPiv
+    float r = dRsi[divPiv]
+    if not na(pPH) and b - bPH <= divMaxB and dPH > pPH and r < rPH
+        if divLast
+            line.delete(dLn)
+            label.delete(dLb)
+        dLn := line.new(bPH, pPH, b, dPH, color=cDiv, width=1)
+        dLb := label.new(bPH, pPH, "⚠", style=label.style_none, textcolor=#F7C548, size=size.small)
+    pPH := dPH
+    rPH := r
+    bPH := b
+if showDiv and not na(dPL)
+    int   b = bar_index - divPiv
+    float r = dRsi[divPiv]
+    if not na(pPL) and b - bPL <= divMaxB and dPL < pPL and r > rPL
+        if divLast
+            line.delete(dLn)
+            label.delete(dLb)
+        dLn := line.new(bPL, pPL, b, dPL, color=cDiv, width=1)
+        dLb := label.new(bPL, pPL, "⚠", style=label.style_none, textcolor=#F7C548, size=size.small)
+    pPL := dPL
+    rPL := r
+    bPL := b
+
+// ---- POC line (last bar) ----
+var line pocLn = na
+if showPoc and barstate.islast
+    int   n   = math.min(pocLook, bar_index + 1)
+    float pHi = high
+    float pLo = low
+    for i = 0 to n - 1
+        pHi := math.max(pHi, high[i])
+        pLo := math.min(pLo, low[i])
+    int   rows = 50
+    float st   = (pHi - pLo) / rows
+    if st > 0
+        array<float> vr = array.new<float>(rows, 0.0)
+        for i = 0 to n - 1
+            float rg = high[i] - low[i]
+            int   r0 = math.max(0, math.min(rows - 1, int(math.floor((low[i] - pLo) / st))))
+            int   r1 = math.max(0, math.min(rows - 1, int(math.floor((high[i] - pLo) / st))))
+            for r = r0 to r1
+                float lo = pLo + r * st
+                float ov = rg > 0 ? math.max(0.0, math.min(high[i], lo + st) - math.max(low[i], lo)) / rg : 1.0 / (r1 - r0 + 1)
+                vr.set(r, vr.get(r) + volume[i] * ov)
+        int pr = vr.indexof(vr.max())
+        float pocPx = pLo + (pr + 0.5) * st
+        line.delete(pocLn)
+        pocLn := line.new(bar_index - n + 1, pocPx, bar_index + 20, pocPx, color=cPoc, width=2)
+
+// ════════════════════════════════════════════════════════════════════
+// ALERTS  (set "Once Per Bar Close" when creating the alert)
+// ════════════════════════════════════════════════════════════════════
+alertcondition(drawBull, "BuAx+ Accelerator", "BuAx+ on {{ticker}} {{interval}} · close {{close}}")
+alertcondition(drawBear, "BeAx+ Accelerator", "BeAx+ on {{ticker}} {{interval}} · close {{close}}")
+alertcondition(drawBull and comboLong, "COMBO LONG (all 5 gates)", "COMBO LONG on {{ticker}} {{interval}} · close {{close}}")
+alertcondition(drawBear and comboShort, "COMBO SHORT (all 5 gates)", "COMBO SHORT on {{ticker}} {{interval}} · close {{close}}")
+
+// ════════════════════════════════════════════════════════════════════
+// DATA WINDOW READOUT (hover any candle with the Data Window open)
+// ════════════════════════════════════════════════════════════════════
+float dwR5i  = ta.sma(barRange, 5)
+float dwR10p = ta.sma(barRange, 10)[1]
+float dwR14p = ta.sma(barRange, 14)[1]
+float dwR20p = ta.sma(barRange, 20)[1]
+float dwR20i = ta.sma(barRange, 20)
+float dwD5i  = ta.sma(math.abs(delta), 5)
+float dwD10p = ta.sma(math.abs(delta), 10)[1]
+float dwD20p = ta.sma(math.abs(delta), 20)[1]
+float dwD20i = ta.sma(math.abs(delta), 20)
+plot(barRange,    "Range",                display=display.data_window)
+plot(avgRange,    "Range avg (in use)",   display=display.data_window)
+plot(rangeRatio,  "Range ratio (in use)", display=display.data_window)
+plot(dwR5i,       "Range avg SMA5 incl",  display=display.data_window)
+plot(dwR10p,      "Range avg SMA10 prev", display=display.data_window)
+plot(dwR14p,      "Range avg SMA14 prev", display=display.data_window)
+plot(dwR20p,      "Range avg SMA20 prev", display=display.data_window)
+plot(dwR20i,      "Range avg SMA20 incl", display=display.data_window)
+plot(ta.atr(14),  "ATR14",                display=display.data_window)
+plot(delta,       "Delta (in use)",       display=display.data_window)
+plot(avgAbsDelta, "Delta avg (in use)",   display=display.data_window)
+plot(deltaRatio,  "Delta ratio (in use)", display=display.data_window)
+plot(dBody,       "Delta body formula",   display=display.data_window)
+plot(dClv,        "Delta CLV formula",    display=display.data_window)
+plot(dIa,         "Delta intrabar anatomy", display=display.data_window)
+plot(dTrClv,      "Delta TR close-location", display=display.data_window)
+plot(dIbClv,      "Delta intrabar close-location", display=display.data_window)
+plot(dIbTick,     "Delta intrabar tick rule", display=display.data_window)
+plot(volume,      "Volume",               display=display.data_window)
+plot(dwD5i,       "Delta avg SMA5 incl",  display=display.data_window)
+plot(dwD10p,      "Delta avg SMA10 prev", display=display.data_window)
+plot(dwD20p,      "Delta avg SMA20 prev", display=display.data_window)
+plot(dwD20i,      "Delta avg SMA20 incl", display=display.data_window)
+
+// ---- REF CHECK: on each reference candle, print our numbers next to the reference's and why it fired / did not ----
+f_refWhy(bool bull) =>
+    string w = ""
+    if bull and not (close > open)
+        w += "\n✗ candle is not green"
+    if not bull and not (close < open)
+        w += "\n✗ candle is not red"
+    if not bodyOK
+        w += "\n✗ body " + str.tostring(barRange > 0 ? math.abs(close - open) / barRange * 100 : 0, "#") + "% < " + str.tostring(bodyNeed, "#") + "%"
+    if rangeRatio < rangeNeed
+        w += "\n✗ range ratio " + f_x(rangeRatio) + " < " + f_x(rangeNeed) + "  → our range avg is too big"
+    if deltaConf and (bull ? delta <= 0 : delta >= 0)
+        w += "\n✗ delta has the wrong sign"
+    if deltaConf and deltaRatio < deltaNeed
+        w += "\n✗ delta ratio " + f_x(deltaRatio) + " < " + f_x(deltaNeed) + "  → our delta avg is too big"
+    if axDeltaGate and math.abs(delta) < minDelta
+        w += "\n✗ |delta| " + f_k(math.abs(delta)) + " < " + f_k(minDelta)
+    if not volOK
+        w += "\n✗ volume ratio"
+    if not sizeOK
+        w += "\n✗ min size"
+    if not (bull ? trendBullOK : trendBearOK)
+        w += "\n✗ trend filter"
+    if (bull and bullAx and not bullAxOK) or (not bull and bearAx and not bearAxOK)
+        w += "\n✗ cooldown"
+    w
+
+if isA or isB or isC or isD or isE
+    float rD  = isA ? r1D : isB ? r2D : isC ? r3D : isD ? r4D : r5D
+    float rRR = isA ? r1RR : isB ? r2RR : isC ? r3RR : isD ? r4RR : r5RR
+    float rDR = isA ? r1DR : isB ? r2DR : isC ? r3DR : isD ? r4DR : r5DR
+    float rA  = isA ? r1R : isB ? r2R : isC ? r3R : isD ? r4R : r5R
+    float rDA = isA ? r1DA : isB ? r2DA : isC ? r3DA : isD ? r4DA : r5DA
+    string t = "REF CHECK · Ref " + (isA ? "1" : isB ? "2" : isC ? "3" : isD ? "4" : "5") + "   (ours  |  reference)"
+    t += "\nRange " + str.tostring(barRange, "#.##") + "  |  " + str.tostring(isA ? r1Rg : isB ? r2Rg : isC ? r3Rg : isD ? r4Rg : r5Rg, "#.##") + "   volume " + str.tostring(volume, "#")
+    t += "\nRange avg " + str.tostring(avgRange, "#.##") + "  |  " + str.tostring(rA, "#.##") + "   ratio " + f_x(rangeRatio) + "  |  " + f_x(rRR > 0 ? rRR : barRange / rA)
+    t += "\nDelta " + f_ks(delta) + "  |  " + f_ks(rD)
+    t += "\nDelta avg " + f_k(avgAbsDelta) + "  |  " + f_k(rDA) + "   ratio " + f_x(deltaRatio) + "  |  " + f_x(rDR > 0 ? rDR : math.abs(rD) / rDA)
+    t += "\nUsing: range avg " + (useCalR ? f_rfName(aRF) + " " + str.tostring(aRN) : rangeAvgMode + " " + str.tostring(rangeLen)) + " · delta avg " + (useCal ? f_dfName(aDF) + " " + str.tostring(aDN) : deltaAvgMode + " " + str.tostring(lookback))
+    t += "\nMedian range prev 10/14/20/30/50: " + str.tostring(f_medPrev(10), "#.##") + " / " + str.tostring(f_medPrev(14), "#.##") + " / " + str.tostring(f_medPrev(20), "#.##") + " / " + str.tostring(f_medPrev(30), "#.##") + " / " + str.tostring(f_medPrev(50), "#.##")
+    bool fired = rD > 0 ? drawBull : drawBear
+    t += "\n" + (fired ? "✓ ours fired here too" : "✗ ours did NOT fire:" + f_refWhy(rD > 0))
+    label.new(bar_index, rD > 0 ? low - atr14 * 1.2 : high + atr14 * 1.2, t, style=rD > 0 ? label.style_label_up : label.style_label_down, color=color.new(#131722, 0), textcolor=fired ? #26A69A : #E3B341, size=size.small, textalign=text.align_left)
+
+var table calTbl = na
+if calOn and barstate.islast
+    if na(calTbl)
+        calTbl := table.new(position.bottom_left, 2, 10, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
+    color cg = #E3B341
+    color ct = #D1D4DC
+    color okC  = #26A69A
+    color badC = #F23645
+    table.cell(calTbl, 0, 0, "AUTO-CALIBRATION", text_color=cg, text_size=size.small)
+    table.cell(calTbl, 1, 0, "Reference candles found: " + str.tostring(calHits) + "/" + str.tostring(calNeed) + calFound, text_color=calHits >= calNeed ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 1, "Delta formula", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 1, srcUsed + (synMode == SYN_FIT and deltaSrcIn == SRC_SY ? " · fitted " + str.tostring(fitA, "#.##") + " / " + str.tostring(fitB, "#.##") : "") + " · matches " + str.tostring(dFitOK) + "/" + str.tostring(calHits), text_color=dFitOK == calHits and calHits > 0 ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 2, "Range average", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 2, rBest + (calRFound ? " ✓" : " ✗"), text_color=calRFound ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 3, "Delta average", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 3, dBest + (calDFound ? " ✓" : " ✗"), text_color=calDFound ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 4, "Status", text_color=ct, text_size=size.small)
+    string useTxt = "To use it: ⑬ → tick 'Use on all candles' → Range " + f_rfName(cRF) + " len " + str.tostring(cRN) + " · Delta avg " + f_dfName(cDF) + " len " + str.tostring(cDN)
+    string stTxt = manDeep ? "Using the formulas set in 'Use on all candles'" : not calApply ? (calRFound and calDFound ? "FOUND · " + useTxt : calRFound ? "Range FOUND · delta avg not exact · " + useTxt : "No formula matches every reference candle yet") : calRFound and calDFound ? "APPLIED from the last reference candle · copy into 'Use on all candles'" : calRFound ? "Range APPLIED · delta avg NOT (no exact match)" : calDFound ? "Delta avg APPLIED · range NOT (no exact match)" : "NOT applied — no formula matches every reference candle"
+    table.cell(calTbl, 1, 4, stTxt, text_color=manDeep or calRFound or calDFound ? okC : badC, text_size=size.small)
+    for k = 0 to 4
+        table.cell(calTbl, 0, 5 + k, "Ref " + str.tostring(k + 1), text_color=ct, text_size=size.tiny)
+        table.cell(calTbl, 1, 5 + k, calDiag.get(k), text_color=ct, text_size=size.tiny, text_halign=text.align_left)
+
+// ---- advance the deep recursive averages ----
+if barstate.isconfirmed
+    for n = 2 to DN
+        float ae = 2.0 / (n + 1)
+        float ar = 1.0 / n
+        dsHLE.set(n, f_step(dsHLE.get(n), barRange, ae))
+        dsHLR.set(n, f_step(dsHLR.get(n), barRange, ar))
+        dsTRR.set(n, f_step(dsTRR.get(n), trS, ar))
+        dsTRE.set(n, f_step(dsTRE.get(n), trS, ae))
+        dsDE.set(n, f_step(dsDE.get(n), absDS, ae))
+        dsDR.set(n, f_step(dsDR.get(n), absDS, ar))
+
+// ---- advance the recursive averages (only on confirmed bars, so realtime ticks don't compound) ----
+if barstate.isconfirmed
+    for n = 2 to CAL_N
+        stEmaHL.set(n, f_step(stEmaHL.get(n), barRange, 2.0 / (n + 1)))
+        stRmaTR.set(n, f_step(stRmaTR.get(n), trS, 1.0 / n))
+        for f = 0 to NF
+            int   k  = f * (CAL_N + 1) + n
+            float ad = math.abs(nz(f_dAt(f, 0)))
+            stEmaD.set(k, f_step(stEmaD.get(k), ad, 2.0 / (n + 1)))
+            stRmaD.set(k, f_step(stRmaD.get(k), ad, 1.0 / n))
