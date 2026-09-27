@@ -105,6 +105,8 @@ i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b,
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
 i_kZones   = input.bool  (true,  "Show TP / SL zones",                group=G0b)
 i_kWLlab   = input.bool  (true,  "Show WIN / LOSS labels",            group=G0b)
+i_kPendLab = input.bool  (true,  "Show pending orders  (BUY / SELL LIMIT · filled · missed)", group=G0b)
+i_kDayLab  = input.bool  (true,  "Show DAY TARGET / DAY STOP labels", group=G0b)
 
 // ── PROP FIRM MODE (runs on the ❖ trades above) ──
 i_pfOn     = input.bool  (false, "Prop firm mode",                    group=G0c,
@@ -124,6 +126,7 @@ i_pfMinD   = input.int   (3,     "Min trading days per phase",        group=G0c,
 i_pfGuard  = input.bool  (true,  "Block ❖ trades that could break a limit", group=G0c,
      tooltip="Before each ❖: today's loss + the risk of all open / pending trades + this trade's SL must stay inside the daily and max loss (minus the buffer). Otherwise the ❖ is skipped ('blocked'). Off = take every ❖ and see if the account would fail.")
 i_pfBuf    = input.float (0.5,   "Safety buffer before a limit (%)",  group=G0c, minval=0, step=0.1)
+i_pfLab    = input.bool  (true,  "Show PASSED / FUNDED / FAILED / STOPPED labels", group=G0c)
 
 // ── INPUTS ──
 i_swing    = input.int   (10,    "Swing Length",                  group=G1, minval=2, maxval=50)
@@ -535,6 +538,7 @@ type KtrStats
     int    fails    = 0        // failed in Phase 1 / 2
     int    fundFail = 0        // funded accounts lost
     int    blocked  = 0        // ❖ skipped by the prop limits
+    int    stopped  = 0        // accounts stopped: not enough max-loss room left for one more trade
     float  fundPnl  = 0.0      // closed P&L while funded
 
 var array<KtrTrade> kOpen = array.new<KtrTrade>()
@@ -628,10 +632,12 @@ f_pfRoom(KtrStats st, float openRisk) =>
 // pending order cancelled before it filled (not a win, not a loss) — drawn for the picked spread only
 f_kCancel(KtrTrade t, string why) =>
     if t.sc == kSel
-        line.set_x2(t.lnPend, bar_index)
-        line.set_color(t.lnPend, color.gray)
-        label.set_text(t.lbPend, t.name + " ✕ " + why)
-        label.set_color(t.lbPend, color.new(color.gray, 20))
+        if not na(t.lnPend)
+            line.set_x2(t.lnPend, bar_index)
+            line.set_color(t.lnPend, color.gray)
+        if not na(t.lbPend)
+            label.set_text(t.lbPend, t.name + " ✕ " + why)
+            label.set_color(t.lbPend, color.new(color.gray, 20))
         if i_alKtr
             alert("KTR ❖ " + t.name + " CANCELLED — " + why + " — " + syminfo.ticker +
                  " | " + str.tostring(t.entry, format.mintick) + " not filled, not counted",
@@ -669,8 +675,10 @@ if kTrack and kOpen.size() > 0
                 if kMain
                     kFilled := true
                     f_kZones(kt)
-                    line.set_x2(kt.lnPend, bar_index)
-                    label.set_text(kt.lbPend, kt.name + " ✓ filled")
+                    if not na(kt.lnPend)
+                        line.set_x2(kt.lnPend, bar_index)
+                    if not na(kt.lbPend)
+                        label.set_text(kt.lbPend, kt.name + " ✓ filled")
                     if i_alKtr
                         alert("KTR ❖ " + kt.name + " FILLED — " + syminfo.ticker +
                              " | Entry:" + str.tostring(kt.entry, format.mintick) +
@@ -744,7 +752,7 @@ if kTrack and kOpen.size() > 0
                     st.daysTgt  += kTgt ? 1 : 0
                     st.daysLoss += kTgt ? 0 : 1
                     st.dayWhy   := kTgt ? "🎯 target hit" : "⛔ loss limit"
-                    if kMain
+                    if kMain and i_kDayLab
                         label.new(bar_index, kTgt ? high + atr14 * 1.5 : low - atr14 * 1.5,
                              (kTgt ? "🎯 DAY TARGET " : "⛔ DAY STOP ") + str.tostring(st.dayPts, "+#.##;-#.##") + " pts",
                              style=kTgt ? label.style_label_down : label.style_label_up,
@@ -752,11 +760,11 @@ if kTrack and kOpen.size() > 0
                              tooltip="Daily limit: target +" + str.tostring(i_kDayTp, "#.##") + " / loss −" + str.tostring(i_kDaySl, "#.##") +
                              " pts\nToday " + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L → no new ❖ trades until the next daily candle",
                              force_overlay=true)
-                        if i_alKtr
-                            alert("KTR ❖ DAILY " + (kTgt ? "TARGET HIT" : "LOSS LIMIT HIT") + " — " + syminfo.ticker +
-                                 " | Today " + str.tostring(st.dayPts, "+#.##;-#.##") + " pts (" + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L)" +
-                                 " | No new ❖ trades until tomorrow",
-                                 alert.freq_once_per_bar_close)
+                    if kMain and i_alKtr
+                        alert("KTR ❖ DAILY " + (kTgt ? "TARGET HIT" : "LOSS LIMIT HIT") + " — " + syminfo.ticker +
+                             " | Today " + str.tostring(st.dayPts, "+#.##;-#.##") + " pts (" + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L)" +
+                             " | No new ❖ trades until tomorrow",
+                             alert.freq_once_per_bar_close)
                 kOpen.remove(i)
         if not kDone and kMain
             if not na(kt.bxTp)
@@ -784,21 +792,29 @@ if kTrack and i_pfOn and barstate.isconfirmed
         bool  bDay   = i_pfDay > 0 and st.dayBal - eqLo >= dayAmt
         bool  bMax   = i_pfAcc - eqLo >= i_pfMax / 100 * i_pfAcc
         bool  bPass  = not (bDay or bMax) and st.phase < 3 and st.bal >= i_pfAcc * (1 + tgtPct / 100) and st.phDays >= i_pfMinD
-        if bDay or bMax or bPass
+        // with Block on, an account whose max-loss room is smaller than one trade can never trade again → stop it
+        bool  bStuck = not (bDay or bMax or bPass) and i_pfGuard and kPfRisk.get(sc) == 0 and st.bal < i_pfAcc and
+             (i_pfAcc - st.bal) + kRisk1 > (i_pfMax - i_pfBuf) / 100 * i_pfAcc
+        if bDay or bMax or bPass or bStuck
+            string kPh  = st.phase == 3 ? "FUNDED ACCOUNT" : "PHASE " + str.tostring(st.phase)
             string kEv  = bPass ? (st.phase == 1 and i_pfT2 > 0 ? "✅ PHASE 1 PASSED" : "🏆 FUNDED") :
-                 (st.phase == 3 ? "❌ FUNDED ACCOUNT LOST" : "❌ PHASE " + str.tostring(st.phase) + " FAILED") + (bDay ? " — daily loss" : " — max loss")
-            string kEvB = "$" + str.tostring(bPass ? st.bal : eqLo, "#,##0") + " after " + str.tostring(st.phDays) + " trading days"
+                 bStuck ? "⛔ " + kPh + " STOPPED — 1 more loss would break max loss" :
+                 (st.phase == 3 ? "❌ FUNDED ACCOUNT LOST" : "❌ " + kPh + " FAILED") + (bDay ? " — daily loss" : " — max loss")
+            string kEvB = "$" + str.tostring(bPass or bStuck ? st.bal : eqLo, "#,##0") + " after " + str.tostring(st.phDays) + " trading days"
             if bPass
                 st.p1Pass += st.phase == 1 ? 1 : 0
                 st.funded += st.phase == 2 or i_pfT2 == 0 ? 1 : 0
+            else if bStuck
+                st.stopped += 1
             else
                 st.fails    += st.phase < 3 ? 1 : 0
                 st.fundFail += st.phase == 3 ? 1 : 0
-            if sc == kSel
+            if sc == kSel and i_pfLab
                 label.new(bar_index, bPass ? high + atr14 * 2.5 : low - atr14 * 2.5, kEv + "\n" + kEvB,
                      style=bPass ? label.style_label_down : label.style_label_up,
                      color=bPass ? color.new(#FFD600, 10) : color.new(KLOSS, 10), textcolor=bPass ? color.black : color.white,
                      size=size.normal, force_overlay=true)
+            if sc == kSel
                 kPfLog.push(str.format_time(time, "dd MMM yy") + ": " + kEv + " · " + kEvB)
                 if kPfLog.size() > 10
                     kPfLog.shift()
@@ -843,7 +859,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                      filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId)
                 if sc == kSel
                     string kOffS = (kEn >= close ? "+" : "−") + kOffTxt
-                    if kPendOn
+                    if kPendOn and i_kPendLab
                         kNew.lnPend := line.new(bar_index, kEn, bar_index + 1, kEn, color=KPEACH, style=line.style_dashed, width=1, force_overlay=true)
                         kNew.lbPend := label.new(bar_index, kEn, kNm + " " + kOffS,
                              style=label.style_label_right, color=color.new(KPEACH, 20), textcolor=color.black, size=size.tiny,
@@ -851,7 +867,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                              "\nTP " + str.tostring(kTpPx, format.mintick) + " (+" + kTpTxt + " pts) · SL " + str.tostring(kSlPx, format.mintick) + " (−" + kSlTxt + " pts)" +
                              "\nCancelled after " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " or if price runs " + kRunTxt + " pts away first"),
                              force_overlay=true)
-                    else
+                    else if not kPendOn
                         f_kZones(kNew)
                     if i_alKtr
                         alert("KTR ❖ " + kNm + (kPendOn ? " PLACED" : " ENTRY") + " — " + syminfo.ticker +
@@ -1826,7 +1842,7 @@ f_sprRow(int r, int sc) =>
          " · skipped: " + str.tostring(st.skipDay) : "") +
          "\nLast: " + st.lastTxt +
          (i_pfOn ? "\nProp: Phase 1 passed " + str.tostring(st.p1Pass) + " · funded " + str.tostring(st.funded) +
-         " · failed " + str.tostring(st.fails + st.fundFail) + " · blocked " + str.tostring(st.blocked) : "")
+         " · failed " + str.tostring(st.fails + st.fundFail) + " · stopped " + str.tostring(st.stopped) + " · blocked " + str.tostring(st.blocked) : "")
     f_dRow(r, k, v, CR, vc, size.tiny, tip)
 
 // prop firm rows (picked spread)
@@ -1852,10 +1868,11 @@ string kPfLimTip = (i_pfDay > 0 ? "Daily loss: from $" + str.tostring(kM.dayBal,
      "\nBlock ❖ trades that could break a limit: " + (i_pfGuard ? "ON (buffer " + str.tostring(i_pfBuf) + "%)" : "OFF") +
      "\nClosed balance shown; open trades are checked at their worst price each candle"
 string kPfResStr = "P1 ✓" + str.tostring(kM.p1Pass) + " · funded " + str.tostring(kM.funded) + " · ✗" + str.tostring(kM.fails + kM.fundFail) +
-     (kM.blocked > 0 ? " · blocked " + str.tostring(kM.blocked) : "")
-color  kPfResCol = kM.fails + kM.fundFail == 0 ? KWIN : kM.funded > 0 ? color.orange : KLOSS
+     (kM.stopped > 0 ? " · ⛔" + str.tostring(kM.stopped) : "") + (kM.blocked > 0 ? " · blocked " + str.tostring(kM.blocked) : "")
+color  kPfResCol = kM.fails + kM.fundFail + kM.stopped == 0 ? KWIN : kM.funded > 0 ? color.orange : KLOSS
 string kPfResTip = "Phase 1 passed: " + str.tostring(kM.p1Pass) + " · reached funded: " + str.tostring(kM.funded) +
      "\nFailed in Phase 1 / 2: " + str.tostring(kM.fails) + " · funded accounts lost: " + str.tostring(kM.fundFail) +
+     "\n⛔ Stopped (max-loss room smaller than one trade, new Phase 1 started): " + str.tostring(kM.stopped) +
      "\n❖ blocked by the limits: " + str.tostring(kM.blocked) +
      "\nFunded P&L: $" + str.tostring(kM.fundPnl, "+#,##0;-#,##0") +
      (kPfLog.size() > 0 ? "\n\n" + kPfLog.join("\n") : "")
