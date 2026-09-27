@@ -900,6 +900,18 @@ if kTrack and i_kDayOn and barstate.isconfirmed and kOpen.size() > 0
 
 // 2) a confirmed ❖ opens a trade, or places the pending order — once per spread
 int kDir = ktrEntryBuy and not ktrEntrySell ? 1 : ktrEntrySell and not ktrEntryBuy ? -1 : 0
+// test period markers: dashed line where the test starts / ends
+var bool kTestStarted = false
+var bool kTestEnded   = false
+if kTrack and not kTestStarted and time >= i_kFrom and i_kFrom > kChartTm
+    kTestStarted := true
+    line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2, force_overlay=true)
+    label.new(bar_index, high + atr14 * 3, "▶ TEST FROM " + str.format_time(i_kFrom, "dd MMM yy"), style=label.style_label_left, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small, force_overlay=true)
+if kTrack and not kTestEnded and time > i_kTo
+    kTestEnded := true
+    line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2, force_overlay=true)
+    label.new(bar_index, high + atr14 * 3, "■ TEST TO " + str.format_time(i_kTo, "dd MMM yy"), style=label.style_label_right, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small, force_overlay=true)
+
 if kTrack and barstate.isconfirmed and kDir != 0 and time >= i_kFrom and time <= i_kTo
     string kNm = (kDir == 1 ? "BUY" : "SELL") + (kPendOn ? (kLimOn ? " LIMIT" : " STOP") : "")
     for sc = 0 to kSt.size() - 1

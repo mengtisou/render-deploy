@@ -1724,6 +1724,17 @@ btTo    = input.time(timestamp("31 Dec 2099 00:00 +0000"), "All tests · to date
 btSpr   = input.float(0.18, "All tests · spread (ask − bid)", options=[0.0, 0.18, 0.22, 0.30], group=grpW, tooltip="Chart prices are bid. BUY opens on the ask (close + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask (bid + spread). Same as the KTR script.")
 bool btIn = time >= btFrom and time <= btTo
 var int firstBarTime = time
+// test period markers: dashed line where the tests start / end
+var bool btStarted = false
+var bool btEnded   = false
+if not btStarted and time >= btFrom and btFrom > firstBarTime
+    btStarted := true
+    line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2)
+    label.new(bar_index, high + atr14 * 3, "▶ TEST FROM " + str.format_time(btFrom, "dd MMM yy"), style=label.style_label_left, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small)
+if not btEnded and time > btTo
+    btEnded := true
+    line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2)
+    label.new(bar_index, high + atr14 * 3, "■ TEST TO " + str.format_time(btTo, "dd MMM yy"), style=label.style_label_right, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small)
 bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
 cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
 cLoss   = input.color(#F23645, "Loss color", inline="wl", group=grpW)
