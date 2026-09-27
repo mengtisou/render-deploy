@@ -1719,7 +1719,7 @@ tpMode  = input.string("Fixed price distance", "Take profit type", options=["Fix
 tpPts   = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
 tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="Only for 'R multiple': 2 = TP at twice the risk.")
 oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
-btFrom  = input.time(timestamp("01 Jan 2020 00:00 +0000"), "All tests · from date", group=grpW, tooltip="Every Win / Loss test in this script (OFX, Every AX, KOB², KOB³, KTR ❖) only opens trades between these dates. Set the same dates in the KTR script to compare over exactly the same days.")
+btFrom  = input.time(timestamp("01 Jan 2020 00:00 +0000"), "All tests · from date", group=grpW, tooltip="Every Win / Loss test in this script (OFX, Every AX, KOB-15, KOB³, KTR ❖) only opens trades between these dates. Set the same dates in the KTR script to compare over exactly the same days.")
 btTo    = input.time(timestamp("31 Dec 2099 00:00 +0000"), "All tests · to date", group=grpW)
 btSpr   = input.float(0.18, "All tests · spread (ask − bid)", options=[0.0, 0.18, 0.22, 0.30], group=grpW, tooltip="Chart prices are bid. BUY opens on the ask (close + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask (bid + spread). Same as the KTR script.")
 bool btIn = time >= btFrom and time <= btTo
@@ -1849,8 +1849,8 @@ if axBtOn and barstate.isconfirmed and btIn and (drawBull or drawBear) and (not 
 
 // ════════════════════════════════════════════════════════════════════
 // KOB · KTR ❖ + OFX 2.0 COMBO  (double / triple confirmation on 5m)
-//   KOB²: 5m KTR ❖ entry + OFX 2.0 ENTER combo (OrderBlock 1.0), same direction, close together
-//   KOB³: KOB² + a 15m KTR ❖ entry in the same direction shortly before
+//   KOB-15: 15m KTR ❖ + OFX 2.0 ENTER combo (OrderBlock 1.0), same direction — the A+ setup
+//   KOB³:   15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo
 //   Each has its own Win / Loss (entry at the close of the candle that completes the pair).
 // ════════════════════════════════════════════════════════════════════
 grpK   = "⓪ KTR ❖ (for KOB)"
@@ -1870,15 +1870,15 @@ kShowH = input.bool(true, "Show 15m KTR ❖ (small '15' mark)", group=grpK)
 
 grpKB   = "⓪b KOB · Double / triple confirmation"
 kobWin  = input.int(6, "5m ❖ and OFX combo within (bars)", minval=0, maxval=50, group=grpKB, tooltip="The 5m KTR ❖ and the OFX 2.0 ENTER combo must be in the same direction and at most this many 5m candles apart (6 = 30 min). The trade starts at the close of the candle where the second one appears.")
-kobWinH = input.int(4, "15m ❖ no older than (15m bars)", minval=1, maxval=50, group=grpKB, tooltip="KOB³: the last 15m KTR ❖ must be in the same direction and closed at most this many 15m candles before the KOB² signal (4 = 1 hour).")
+kobWinH = input.int(4, "15m ❖ no older than (15m bars)", minval=1, maxval=50, group=grpKB, tooltip="KOB-15 and KOB³: the last 15m KTR ❖ must be in the same direction and closed at most this many 15m candles before the signal (4 = 1 hour).")
 kobSlMd = input.string("OFX rule (combo SL)", "Stop loss", options=["OFX rule (combo SL)", "Fixed distance"], group=grpKB, tooltip="OFX rule: the SL of the ENTER combo (below / above the block or the candle), unchanged. Fixed: entry ± the distance below.")
 kobSl   = input.float(10.0, "Fixed SL distance (price)", minval=0.1, step=0.5, group=grpKB)
 kobTpMd = input.string("Fixed price distance", "Take profit type", options=["Fixed price distance", "R multiple"], group=grpKB)
-kobTp   = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="10.00 = 100 points on XAUUSD.")
+kobTp   = input.float(10.0, "KOB³ TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="10.00 = 100 points on XAUUSD.")
 kobTpR  = input.float(1.0, "Take profit (R)", minval=0.5, step=0.5, group=grpKB)
 kobOne  = input.bool(true, "One trade at a time (per setup)", group=grpKB)
 kobLab  = input.bool(true, "Show KOB entries + W / L on the chart", group=grpKB)
-cK2     = input.color(#AB47BC, "KOB² colour", inline="kc", group=grpKB)
+k15Tp   = input.float(20.0, "KOB-15 TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="KOB-15 is the A+ setup (15m ❖ and OFX combo agree), so it holds for a bigger target: 20.00 = 200 points. With 'R multiple' above, the R multiple is used instead.")
 cK3     = input.color(#FFB300, "KOB³ colour", inline="kc", group=grpKB)
 cK15    = input.color(#26C6DA, "KOB-15 colour", inline="kc", group=grpKB, tooltip="KOB-15 = 15m KTR ❖ + OFX 2.0 combo, without the 5m ❖.")
 
@@ -2015,7 +2015,6 @@ type KobSt
     float  r   = 0.0
     bool   lab = true
 
-var KobSt kS2 = KobSt.new("KOB²", cK2, array.new<Trade>(), lab=kobLab)
 var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>(), lab=kobLab)
 var KobSt kS15 = KobSt.new("KOB-15", cK15, array.new<Trade>(), lab=kobLab)
 
@@ -2044,11 +2043,11 @@ f_kobRun(KobSt s) =>
                     s.open.remove(i)
     s
 
-f_kobOpen(KobSt s, int d, float sl) =>
+f_kobOpen(KobSt s, int d, float sl, float tpD) =>
     float en = d == 1 ? close + btSpr : close
     if btIn and (not kobOne or s.open.size() == 0) and d * (en - sl) > 0
         float rsk = math.abs(en - sl)
-        float tp  = en + d * (kobTpMd == "R multiple" ? kobTpR * rsk : kobTp)
+        float tp  = en + d * (kobTpMd == "R multiple" ? kobTpR * rsk : tpD)
         s.open.push(Trade.new(d, en, sl, tp, bar_index, na, na, time))
         if s.lab
             label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT"), style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : s.nm == "KOB-15" ? ": 15m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(en, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
@@ -2123,15 +2122,12 @@ if barstate.isconfirmed and ktTest
             label.new(bar_index, ktDir == 1 ? low - atr14 * 1.0 : high + atr14 * 1.0, "✗", style=label.style_none, textcolor=color.gray, size=size.tiny, tooltip="KTR ❖ skipped by the order-flow filter:" + ktWhy)
 
 if barstate.isconfirmed
-    f_kobRun(kS2)
     f_kobRun(kS3)
     f_kobRun(kS15)
     if kob15
-        f_kobOpen(kS15, k15Dir, k15SL)
-    if kob2
-        f_kobOpen(kS2, kobDir, kobSL)
+        f_kobOpen(kS15, k15Dir, k15SL, k15Tp)
     if kob3
-        f_kobOpen(kS3, kobDir, kobSL)
+        f_kobOpen(kS3, kobDir, kobSL, kobTp)
 
 f_kobTxt(KobSt s) =>
     int n = s.w + s.l
@@ -2139,7 +2135,6 @@ f_kobTxt(KobSt s) =>
 f_kobTip(KobSt s) =>
     "LONG: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + (s.wB + s.lB > 0 ? " (" + str.tostring(s.wB * 100.0 / (s.wB + s.lB), "#") + "%)" : "") + "\nSHORT: " + str.tostring(s.wS) + "W " + str.tostring(s.lS) + "L" + (s.wS + s.lS > 0 ? " (" + str.tostring(s.wS * 100.0 / (s.wS + s.lS), "#") + "%)" : "")
 
-alertcondition(kob2, "KOB² double confirmation", "KOB²: 5m KTR ❖ + OFX 2.0 combo")
 alertcondition(kob15, "KOB-15 (15m ❖ + combo)", "KOB-15: 15m KTR ❖ + OFX 2.0 combo")
 alertcondition(kob3, "KOB³ triple confirmation", "KOB³: 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo")
 
@@ -2445,8 +2440,8 @@ if showDash and barstate.islast
         if axBtOn
             table.cell(dash, 0, 3, "AX " + axTxt, text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
             table.cell(dash, 1, 3, str.tostring(axPts, "+#.##;-#.##") + " pts", text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
-        table.cell(dash, 0, 4, "KOB²", text_color=cK2, text_size=size.tiny)
-        table.cell(dash, 1, 4, f_kobTxt(kS2), text_color=kS2.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS2))
+        table.cell(dash, 0, 4, "KOB-15 A+", text_color=cK15, text_size=size.tiny)
+        table.cell(dash, 1, 4, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS15))
         table.cell(dash, 0, 5, "KOB³", text_color=cK3, text_size=size.tiny)
         table.cell(dash, 1, 5, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS3))
     else
@@ -2470,8 +2465,8 @@ if showDash and barstate.islast
             table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=size.small, text_halign=text.align_left)
             table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()))
         string kobTpS = kobTpMd == "R multiple" ? str.tostring(kobTpR, "#.#") + "R" : str.tostring(kobTp, "#.##")
-        table.cell(dash, 0, 9, "KOB² 5m ❖ + Combo · TP " + kobTpS, text_color=cK2, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 9, f_kobTxt(kS2), text_color=kS2.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS2))
+        table.cell(dash, 0, 9, "KOB-15 A+ 15m ❖ + Combo · TP " + (kobTpMd == "R multiple" ? kobTpS : str.tostring(k15Tp, "#.##")), text_color=cK15, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 9, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS15))
         table.cell(dash, 0, 10, "KOB³ 15m ❖ + 5m ❖ + Combo", text_color=cK3, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 10, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS3))
         if ktTest
@@ -2485,8 +2480,9 @@ if showDash and barstate.islast
             string ofNow = ofB == "" ? "BUY ✓" : ofS == "" ? "SELL ✓" : "none ✗"
             table.cell(dash, 0, 13, "Order flow now", text_color=txt, text_size=size.small, text_halign=text.align_left)
             table.cell(dash, 1, 13, ofNow + " · day Δ " + f_ks(dayCvd) + " · vol " + str.tostring(ofVolR, "#.##") + "× · ADX " + str.tostring(ofAdx, "#"), text_color=ofNow == "none ✗" ? gold : ok, text_size=size.small, tooltip="BUY side:" + (ofB == "" ? " ✓ all checks pass" : ofB) + "\n\nSELL side:" + (ofS == "" ? " ✓ all checks pass" : ofS))
-        table.cell(dash, 0, 14, "KOB-15 15m ❖ + Combo · TP " + (kobTpMd == "R multiple" ? str.tostring(kobTpR, "#.#") + "R" : str.tostring(kobTp, "#.##")), text_color=cK15, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 14, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS15))
+        float allPts = netPts + kS15.pts
+        table.cell(dash, 0, 14, "OFX + KOB-15 A+ add-on", text_color=gold, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 14, str.tostring(allPts, "+#.##;-#.##") + "  (OFX " + str.tostring(netPts, "+#.##;-#.##") + " + A+ " + str.tostring(kS15.pts, "+#.##;-#.##") + ")", text_color=allPts >= 0 ? ok : bad, text_size=size.small, tooltip="Trade every OFX combo with 1 position (TP above). When the 15m KTR ❖ agrees (KOB-15 A+), add a 2nd position that holds for the KOB-15 TP. Result = OFX row + KOB-15 row, same dates and spread.\nRun KTR 15m in its own script next to this: its result adds on top.")
 
 // ════════════════════════════════════════════════════════════════════
 // EXTRA TOOLS (like reference): POC line · range box · RSI divergence
