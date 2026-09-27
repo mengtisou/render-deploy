@@ -126,6 +126,9 @@ i_pfMinD   = input.int   (3,     "Min trading days per phase",        group=G0c,
 i_pfGuard  = input.bool  (true,  "Block ❖ trades that could break a limit", group=G0c,
      tooltip="Before each ❖: today's loss + the risk of all open / pending trades + this trade's SL must stay inside the daily and max loss (minus the buffer). Otherwise the ❖ is skipped ('blocked'). Off = take every ❖ and see if the account would fail.")
 i_pfBuf    = input.float (0.5,   "Safety buffer before a limit (%)",  group=G0c, minval=0, step=0.1)
+i_pfHedge  = input.string("Allow (hedge)", "Opposite ❖ while a trade is open", group=G0c,
+     options=["Allow (hedge)", "Skip it (no hedging)", "Close open trade, take the new ❖"],
+     tooltip="A BUY is open and a SELL ❖ confirms (or the other way round). Holding a BUY and a SELL on the same symbol at the same time is hedging — some prop firms allow it inside one account, some don't, and the rule can differ between challenge and funded: check your firm's rules.\nAllow = both trades run.\nSkip = the opposite ❖ is not taken, and a pending order that would fill against an open trade is cancelled.\nClose = the open trade is closed at the ❖ candle's close ('closed early', + or − pts, not a WIN / LOSS) and the new ❖ is taken; opposite pending orders are cancelled.")
 i_pfLab    = input.bool  (true,  "Show PASSED / FUNDED / FAILED / STOPPED labels", group=G0c)
 
 // ── INPUTS ──
@@ -539,6 +542,9 @@ type KtrStats
     int    fundFail = 0        // funded accounts lost
     int    blocked  = 0        // ❖ skipped by the prop limits
     int    stopped  = 0        // accounts stopped: not enough max-loss room left for one more trade
+    int    hedgeSkip = 0       // ❖ skipped / pending cancelled by the hedging rule
+    int    early     = 0       // trades closed early by an opposite ❖
+    float  earlyPts  = 0.0
     float  fundPnl  = 0.0      // closed P&L while funded
 
 var array<KtrTrade> kOpen = array.new<KtrTrade>()
@@ -568,6 +574,9 @@ float  kUsdPt   = i_kPtVal * i_pfOz * i_pfLot
 float  kComm    = i_pfComm * i_pfLot
 float  kRisk1   = i_kSlPts * kUsdPt + kComm
 var array<string> kPfLog = array.new<string>()      // pass / fail history of the picked spread
+// hedging rule (prop mode only): BUY and SELL open at the same time
+bool   kNoHedge = i_pfOn and not str.startswith(i_pfHedge, "Allow")
+bool   kRevOn   = i_pfOn and str.startswith(i_pfHedge, "Close")
 var int kDayId  = 0
 array<float> kPfRisk = array.new_float(4, 0.0)       // $ at risk in open + pending trades, per spread
 if barstate.isfirst
@@ -629,6 +638,70 @@ f_pfRoom(KtrStats st, float openRisk) =>
     float need   = openRisk + kRisk1
     (i_pfDay == 0 or (st.dayBal - st.bal) + need <= dayAmt - buf) and (i_pfAcc - st.bal) + need <= maxAmt - buf
 
+// is a trade in the other direction live in this account?
+f_kOpp(int sc, int dir, int acct) =>
+    bool found = false
+    for t in kOpen
+        if t.sc == sc and t.filled and t.dir == -dir and t.acct == acct
+            found := true
+    found
+
+// daily limit (points) reached with this result → stop for the day
+f_kDayCheck(KtrStats st, bool isMain) =>
+    if i_kDayOn and not st.dayStop and (st.dayPts >= i_kDayTp or st.dayPts <= -i_kDaySl)
+        bool kTgt = st.dayPts >= i_kDayTp
+        st.dayStop  := true
+        st.daysTgt  += kTgt ? 1 : 0
+        st.daysLoss += kTgt ? 0 : 1
+        st.dayWhy   := kTgt ? "🎯 target hit" : "⛔ loss limit"
+        if isMain and i_kDayLab
+            label.new(bar_index, kTgt ? high + atr14 * 1.5 : low - atr14 * 1.5,
+                 (kTgt ? "🎯 DAY TARGET " : "⛔ DAY STOP ") + str.tostring(st.dayPts, "+#.##;-#.##") + " pts",
+                 style=kTgt ? label.style_label_down : label.style_label_up,
+                 color=color.new(kTgt ? KWIN : KLOSS, 30), textcolor=color.white, size=size.small,
+                 tooltip="Daily limit: target +" + str.tostring(i_kDayTp, "#.##") + " / loss −" + str.tostring(i_kDaySl, "#.##") +
+                 " pts\nToday " + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L → no new ❖ trades until the next daily candle",
+                 force_overlay=true)
+        if isMain and i_alKtr
+            alert("KTR ❖ DAILY " + (kTgt ? "TARGET HIT" : "LOSS LIMIT HIT") + " — " + syminfo.ticker +
+                 " | Today " + str.tostring(st.dayPts, "+#.##;-#.##") + " pts (" + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L)" +
+                 " | No new ❖ trades until tomorrow",
+                 alert.freq_once_per_bar_close)
+    st
+
+// close a live trade at this candle's close (opposite ❖ with 'Close open trade') — not a WIN / LOSS
+f_kCloseNow(KtrTrade t, KtrStats st) =>
+    float px  = t.dir == 1 ? close : close + st.spr        // BUY exits on the bid, SELL on the ask
+    float pts = t.dir * (px - t.entry) / i_kPtVal
+    st.early    += 1
+    st.earlyPts += pts
+    st.net      += pts
+    st.dayPts   += pts
+    st.nOpen    -= 1
+    if i_pfOn and t.acct == st.acctId
+        float usd = pts * kUsdPt - kComm
+        st.bal     += usd
+        st.fundPnl += st.phase == 3 ? usd : 0.0
+    st.lastTxt := "CLOSED " + str.tostring(pts, "+#;-#") + " · " + t.name
+    st.lastCol := color.gray
+    if t.sc == kSel
+        if not na(t.bxTp)
+            box.set_right(t.bxTp, bar_index)
+        if not na(t.bxSl)
+            box.set_right(t.bxSl, bar_index)
+        if i_kWLlab
+            label.new(bar_index, px, "CLOSED " + str.tostring(pts, "+#;-#"), style=label.style_label_left,
+                 color=color.new(color.gray, 20), textcolor=color.white, size=size.small,
+                 tooltip="KTR ❖ " + t.name + " from " + str.format_time(t.tm, "dd MMM HH:mm") + " closed early by the opposite ❖" +
+                 "\nEntry " + str.tostring(t.entry, format.mintick) + " · exit " + str.tostring(px, format.mintick) + " → " + str.tostring(pts, "+#.#;-#.#") + " pts",
+                 force_overlay=true)
+        if i_alKtr
+            alert("KTR ❖ " + t.name + " CLOSED by opposite ❖ — " + syminfo.ticker +
+                 " | Entry:" + str.tostring(t.entry, format.mintick) + " | Exit:" + str.tostring(px, format.mintick) +
+                 " | " + str.tostring(pts, "+#.#;-#.#") + " pts",
+                 alert.freq_once_per_bar_close)
+    t
+
 // pending order cancelled before it filled (not a win, not a loss) — drawn for the picked spread only
 f_kCancel(KtrTrade t, string why) =>
     if t.sc == kSel
@@ -665,7 +738,13 @@ if kTrack and kOpen.size() > 0
             bool kTouch   = kFillDn ? eLo <= kt.entry : eHi >= kt.entry
             // ran away = moved X pts off the order on the side it was waiting on
             bool kRanAway = not na(kRunDist) and (kFillDn ? eHi >= kt.entry + kRunDist : eLo <= kt.entry - kRunDist)
-            if kTouch
+            if kTouch and kNoHedge and f_kOpp(kt.sc, kt.dir, kt.acct)
+                kDone        := true
+                st.hedgeSkip += 1
+                st.nOpen     -= 1
+                f_kCancel(kt, "no hedge (opposite trade open)")
+                kOpen.remove(i)
+            else if kTouch
                 kt.filled := true
                 kt.bar    := bar_index
                 kt.tm     := time
@@ -746,25 +825,7 @@ if kTrack and kOpen.size() > 0
                              " | Total " + str.tostring(st.wins) + "W " + str.tostring(st.losses) + "L",
                              alert.freq_once_per_bar_close)
                 // this trade reached the daily target / loss limit → stop for the day
-                if i_kDayOn and not st.dayStop and (st.dayPts >= i_kDayTp or st.dayPts <= -i_kDaySl)
-                    bool kTgt = st.dayPts >= i_kDayTp
-                    st.dayStop  := true
-                    st.daysTgt  += kTgt ? 1 : 0
-                    st.daysLoss += kTgt ? 0 : 1
-                    st.dayWhy   := kTgt ? "🎯 target hit" : "⛔ loss limit"
-                    if kMain and i_kDayLab
-                        label.new(bar_index, kTgt ? high + atr14 * 1.5 : low - atr14 * 1.5,
-                             (kTgt ? "🎯 DAY TARGET " : "⛔ DAY STOP ") + str.tostring(st.dayPts, "+#.##;-#.##") + " pts",
-                             style=kTgt ? label.style_label_down : label.style_label_up,
-                             color=color.new(kTgt ? KWIN : KLOSS, 30), textcolor=color.white, size=size.small,
-                             tooltip="Daily limit: target +" + str.tostring(i_kDayTp, "#.##") + " / loss −" + str.tostring(i_kDaySl, "#.##") +
-                             " pts\nToday " + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L → no new ❖ trades until the next daily candle",
-                             force_overlay=true)
-                    if kMain and i_alKtr
-                        alert("KTR ❖ DAILY " + (kTgt ? "TARGET HIT" : "LOSS LIMIT HIT") + " — " + syminfo.ticker +
-                             " | Today " + str.tostring(st.dayPts, "+#.##;-#.##") + " pts (" + str.tostring(st.dayW) + "W " + str.tostring(st.dayL) + "L)" +
-                             " | No new ❖ trades until tomorrow",
-                             alert.freq_once_per_bar_close)
+                f_kDayCheck(st, kMain)
                 kOpen.remove(i)
         if not kDone and kMain
             if not na(kt.bxTp)
@@ -841,9 +902,27 @@ if kTrack and barstate.isconfirmed and kDir != 0
     for sc = 0 to kSt.size() - 1
         if sc == kSel or i_kSprCmp
             KtrStats st = kSt.get(sc)
+            // hedging rule: close the opposite trades first (and cancel opposite pending orders)
+            if kRevOn and kOpen.size() > 0
+                for i = kOpen.size() - 1 to 0
+                    KtrTrade t = kOpen.get(i)
+                    if t.sc == sc and t.dir == -kDir and t.acct == st.acctId
+                        if t.filled
+                            f_kCloseNow(t, st)
+                        else
+                            st.hedgeSkip += 1
+                            st.nOpen     -= 1
+                            f_kCancel(t, "reversed")
+                        if i_pfOn
+                            kPfRisk.set(sc, math.max(kPfRisk.get(sc) - kRisk1, 0.0))
+                        kOpen.remove(i)
+                f_kDayCheck(st, sc == kSel)
+            bool kOpp  = kNoHedge and not kRevOn and f_kOpp(sc, kDir, st.acctId)
             bool kFree = not i_kOne or st.nOpen == 0
             if i_kDayOn and st.dayStop
                 st.skipDay += 1
+            else if kOpp
+                st.hedgeSkip += 1
             else if kFree and i_pfOn and i_pfGuard and not f_pfRoom(st, kPfRisk.get(sc))
                 st.blocked += 1
             else if kFree
@@ -1811,7 +1890,8 @@ float  kNetR   = kNetPts / i_kSlPts          // 1R = the SL size
 string kWLStr  = str.tostring(kWins) + "W " + str.tostring(kLosses) + "L" + f_wr(kWins, kLosses) +
      (kLiveN    > 0 ? " · " + str.tostring(kLiveN)    + " open"    : "") +
      (kPendN    > 0 ? " · " + str.tostring(kPendN)    + " pending" : "") +
-     (kM.missed > 0 ? " · " + str.tostring(kM.missed) + " missed"  : "")
+     (kM.missed > 0 ? " · " + str.tostring(kM.missed) + " missed"  : "") +
+     (kM.early  > 0 ? " · " + str.tostring(kM.early)  + " closed early" : "")
 color  kWLCol  = kN == 0 ? CL : kNetPts >= 0 ? KWIN : KLOSS
 string kNetStr = str.tostring(kNetPts, "+#.##;-#.##") + " pts  (" + str.tostring(kNetR, "+#.#;-#.#") + "R)"
 string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
@@ -1820,9 +1900,13 @@ string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
      "\nOpen now: " + str.tostring(kLiveN) + " · pending: " + str.tostring(kPendN) +
      "\nMissed (pending not reached, not counted): " + str.tostring(kM.missed) +
      "\nSkipped / cancelled by the daily limit: " + str.tostring(kM.skipDay) +
+     (i_pfOn ? "\nHedging rule: " + i_pfHedge + " · skipped / cancelled: " + str.tostring(kM.hedgeSkip) +
+     " · closed early: " + str.tostring(kM.early) + " (" + str.tostring(kM.earlyPts, "+#.#;-#.#") + " pts)" : "") +
      "\nBreak-even win rate: " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
 string kNetTip = "1R = SL = " + kSlTxt + " pts → a WIN is +" + str.tostring(i_kTpPts / i_kSlPts, "#.##") + "R, a LOSS −1R" +
-     "\n" + str.tostring(kWins) + " × " + kTpTxt + " − " + str.tostring(kLosses) + " × " + kSlTxt + " = " + str.tostring(kNetPts, "+#.##;-#.##") + " pts" +
+     "\n" + str.tostring(kWins) + " × " + kTpTxt + " − " + str.tostring(kLosses) + " × " + kSlTxt +
+     (kM.early > 0 ? " " + str.tostring(kM.earlyPts, "+#.#;-#.#") + " (" + str.tostring(kM.early) + " closed early)" : "") +
+     " = " + str.tostring(kNetPts, "+#.##;-#.##") + " pts" +
      "\n= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
      "\nSpread " + str.tostring(kM.spr, "0.00") + " is already inside the W / L (BUY opens on the ask, SELL closes on the ask)"
 
@@ -1842,7 +1926,8 @@ f_sprRow(int r, int sc) =>
          " · skipped: " + str.tostring(st.skipDay) : "") +
          "\nLast: " + st.lastTxt +
          (i_pfOn ? "\nProp: Phase 1 passed " + str.tostring(st.p1Pass) + " · funded " + str.tostring(st.funded) +
-         " · failed " + str.tostring(st.fails + st.fundFail) + " · stopped " + str.tostring(st.stopped) + " · blocked " + str.tostring(st.blocked) : "")
+         " · failed " + str.tostring(st.fails + st.fundFail) + " · stopped " + str.tostring(st.stopped) + " · blocked " + str.tostring(st.blocked) +
+         "\nHedging rule: skipped " + str.tostring(st.hedgeSkip) + " · closed early " + str.tostring(st.early) + " (" + str.tostring(st.earlyPts, "+#.#;-#.#") + " pts)" : "")
     f_dRow(r, k, v, CR, vc, size.tiny, tip)
 
 // prop firm rows (picked spread)
@@ -1874,6 +1959,7 @@ string kPfResTip = "Phase 1 passed: " + str.tostring(kM.p1Pass) + " · reached f
      "\nFailed in Phase 1 / 2: " + str.tostring(kM.fails) + " · funded accounts lost: " + str.tostring(kM.fundFail) +
      "\n⛔ Stopped (max-loss room smaller than one trade, new Phase 1 started): " + str.tostring(kM.stopped) +
      "\n❖ blocked by the limits: " + str.tostring(kM.blocked) +
+     "\nHedging rule (" + i_pfHedge + "): skipped / cancelled " + str.tostring(kM.hedgeSkip) + " · closed early " + str.tostring(kM.early) +
      "\nFunded P&L: $" + str.tostring(kM.fundPnl, "+#,##0;-#,##0") +
      (kPfLog.size() > 0 ? "\n\n" + kPfLog.join("\n") : "")
 
