@@ -7,6 +7,10 @@ indicator("SMC 2026 ICT + KTR v2", overlay=false, max_boxes_count=500, max_lines
 // ⓪ KTR MODULE  — daily OP/MLP + KTR±1/2/3 levels (0.4% steps),
 //                 yellow/red trend candles, blue alert diamonds,
 //                 ❖ entry confirmations. Toggle whole module on/off.
+// ⓪b ❖ TRADES   — every KTR ❖ entry becomes a trade: TP 200 pts /
+//                 SL 100 pts, WIN / LOSS marked on the chart and
+//                 counted in the dashboard.
+// ⚡ MODE        — "KTR only" switches the whole SMC 2026 ICT part off.
 // ★ CLEAN VIEW  — one switch in ⑨ Display hides all boxes and
 //                 secondary labels (OB, FVG, AMD, EQH/EQL, CRT H/L,
 //                 sweep %, watch zones) for a minimal chart.
@@ -18,6 +22,7 @@ indicator("SMC 2026 ICT + KTR v2", overlay=false, max_boxes_count=500, max_lines
 
 // ── GROUPS ──
 var string G0  = "⓪ KTR MODULE  Levels · Diamonds"
+var string G0b = "⓪b KTR ❖ TRADES  TP · SL · Win / Loss"
 var string G1  = "① Structure  BOS · CHoCH"
 var string G2  = "② Order Blocks + Volume"
 var string G3  = "③ FVG + IFVG"
@@ -31,8 +36,10 @@ var string G9  = "⑨ Display"
 var string G10 = "⑩ Alerts"
 
 // ── ⚡ MASTER SWITCHES ──
-i_smcOn   = input.bool(true, "Enable SMC module  (all ICT tools)", group="⚡ MASTER SWITCHES",
-     tooltip="OFF = pure KTR chart: hides structure, OB, FVG, liquidity, CISD, CRT, AMD, cascade, SMT, BTC panel, EMAs, EQH/EQL, PD and mutes SMC alerts. KTR master is in group ⓪.")
+i_mode    = input.string("KTR + SMC 2026 ICT", "Mode", group="⚡ MASTER SWITCHES",
+     options=["KTR + SMC 2026 ICT", "KTR only  (SMC 2026 ICT off)"],
+     tooltip="KTR only = pure KTR chart: hides structure, OB, FVG, liquidity, CISD, CRT, AMD, cascade, ★ entries, SMT, BTC panel, EMAs, EQH/EQL, PD, mutes every SMC alert, stops loading XAG / BTC data and shrinks the dashboard to KTR rows. KTR levels, diamonds, ❖ entries and ❖ Win / Loss stay.")
+bool smcOn = i_mode == "KTR + SMC 2026 ICT"
 i_showDash = input.bool(true, "Show dashboard table", group="⚡ MASTER SWITCHES")
 
 // ── KTR INPUTS ──
@@ -60,6 +67,20 @@ i_ktrVolC  = input.bool (true,  "❖ needs above-average volume (Boys confirm)",
 i_ktrVolM  = input.float(1.0,   "Min relative volume for ❖",      group=G0, step=0.1)
 i_volLen   = input.int  (20,    "Pane: Boys relative volume length", group=G0)
 i_bullLen  = input.int  (14,    "Pane: Bullishness pressure length", group=G0)
+
+// ── KTR ❖ TRADE INPUTS ──
+i_kTrOn    = input.bool  (true,  "Track every ❖ entry as a trade",   group=G0b,
+     tooltip="Each KTR entry ❖ opens a trade at that candle's close. WIN = TP touched first, LOSS = SL touched first. Only the KTR ❖ counts here, SMC signals are not used.")
+i_kTpPts   = input.float (200,   "TP points",                         group=G0b, minval=1, step=10)
+i_kSlPts   = input.float (100,   "SL points",                         group=G0b, minval=1, step=10)
+i_kPtVal   = input.float (0.10,  "1 point = price",                   group=G0b, minval=0.00001, step=0.01,
+     tooltip="XAUUSD: 0.10 → TP 200 pts = $20.00, SL 100 pts = $10.00. Set 0.01 if your broker counts gold points on the 2nd decimal (200 pts = $2.00). Set 1 to use plain price.")
+i_kOne     = input.bool  (false, "One trade at a time",               group=G0b,
+     tooltip="OFF: every ❖ gets its own trade and its own WIN / LOSS, even while an earlier one is still open. ON: a ❖ that prints while a trade is open is skipped.")
+i_kBoth    = input.string("Loss", "TP and SL hit on the same candle", group=G0b, options=["Loss","Win"],
+     tooltip="One candle can touch both levels and the chart can't tell which came first. Loss = conservative.")
+i_kZones   = input.bool  (true,  "Show TP / SL zones",                group=G0b)
+i_kWLlab   = input.bool  (true,  "Show WIN / LOSS labels",            group=G0b)
 
 // ── INPUTS ──
 i_swing    = input.int   (10,    "Swing Length",                  group=G1, minval=2, maxval=50)
@@ -146,6 +167,8 @@ i_alConf   = input.bool  (true,  "Alert ②  Confirm",             group=G10)
 i_alEntry  = input.bool  (true,  "Alert ③  ★ Entry",             group=G10)
 i_alInval  = input.bool  (true,  "Alert     Bias cancelled",      group=G10)
 i_alSMT    = input.bool  (false, "Alert     SMT divergence",      group=G10)
+i_alKtr    = input.bool  (true,  "Alert     KTR ❖ entry + WIN / LOSS", group=G10,
+     tooltip="alert() message with entry / TP / SL prices when a ❖ trade opens, and WIN / LOSS when it closes. Works in both modes.")
 
 // ── ★ CLEAN VIEW — override the noisy toggles in one place ──
 if i_clean
@@ -158,8 +181,8 @@ if i_clean
     i_crtHL    := false
     i_showEZ   := false
 
-// ── ⚡ SMC master switch — one button hides the whole SMC module ──
-if not i_smcOn
+// ── ⚡ MODE: KTR only — one switch hides the whole SMC module ──
+if not smcOn
     i_showBOS  := false
     i_showCHOC := false
     i_showOB   := false
@@ -394,6 +417,129 @@ alertcondition(ktrAlertBuy,  "KTR ① Buy alert",   "KTR blue diamond: possible 
 alertcondition(ktrAlertSell, "KTR ① Sell alert",  "KTR diamond: possible sell setup")
 alertcondition(ktrEntryBuy,  "KTR ② BUY ENTRY ❖", "KTR ❖ confirmed — BUY entry")
 alertcondition(ktrEntrySell, "KTR ② SELL ENTRY ❖","KTR ❖ confirmed — SELL entry")
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 0b — KTR ❖ TRADES  (Win / Loss)
+// Every ❖ entry opens a trade at the ❖ candle's close:
+//   BUY  ❖ → TP = entry + TP pts · SL = entry − SL pts
+//   SELL ❖ → TP = entry − TP pts · SL = entry + SL pts
+// From the next candle on, whichever level is touched first decides
+// WIN or LOSS. Only closed candles count. KTR ❖ only — no SMC input.
+// ══════════════════════════════════════════════════════════════════
+type KtrTrade
+    int   dir
+    float entry
+    float tp
+    float sl
+    int   bar
+    int   tm
+    box   bxTp
+    box   bxSl
+
+var array<KtrTrade> kOpen = array.new<KtrTrade>()
+var int    kWins    = 0
+var int    kLosses  = 0
+var int    kWinB    = 0
+var int    kLossB   = 0
+var int    kWinS    = 0
+var int    kLossS   = 0
+var float  kNetPts  = 0.0
+var string kLastTxt = "—"
+var color  kLastCol = color.new(#8B949E,0)
+
+float  kTpDist  = i_kTpPts * i_kPtVal
+float  kSlDist  = i_kSlPts * i_kPtVal
+string kTpTxt   = str.tostring(i_kTpPts, "#.##")
+string kSlTxt   = str.tostring(i_kSlPts, "#.##")
+color  KWIN     = color.new(#00C853,0)
+color  KLOSS    = color.new(#D50000,0)
+bool   kTrack   = i_ktrOn and i_kTrOn
+bool   kHitWin  = false
+bool   kHitLoss = false
+
+// 1) settle open trades first, so a new ❖ on the same candle can still open
+if kTrack and kOpen.size() > 0
+    for i = kOpen.size() - 1 to 0
+        KtrTrade kt = kOpen.get(i)
+        bool kDone = false
+        if barstate.isconfirmed and bar_index > kt.bar
+            bool hitTP = kt.dir == 1 ? high >= kt.tp : low  <= kt.tp
+            bool hitSL = kt.dir == 1 ? low  <= kt.sl : high >= kt.sl
+            if hitTP or hitSL
+                bool kWin = hitTP and (not hitSL or i_kBoth == "Win")
+                kDone    := true
+                kWins    += kWin ? 1 : 0
+                kLosses  += kWin ? 0 : 1
+                kWinB    += kWin and kt.dir == 1 ? 1 : 0
+                kLossB   += not kWin and kt.dir == 1 ? 1 : 0
+                kWinS    += kWin and kt.dir == -1 ? 1 : 0
+                kLossS   += not kWin and kt.dir == -1 ? 1 : 0
+                kNetPts  += kWin ? i_kTpPts : -i_kSlPts
+                kHitWin  := kHitWin or kWin
+                kHitLoss := kHitLoss or not kWin
+                string kSide = kt.dir == 1 ? "BUY" : "SELL"
+                string kRes  = kWin ? "WIN +" + kTpTxt : "LOSS −" + kSlTxt
+                kLastTxt := kRes + " · " + kSide
+                kLastCol := kWin ? KWIN : KLOSS
+                if not na(kt.bxTp)
+                    box.set_right(kt.bxTp, bar_index)
+                if not na(kt.bxSl)
+                    box.set_right(kt.bxSl, bar_index)
+                if i_kWLlab
+                    bool kAbove = (kt.dir == 1) == kWin
+                    label.new(bar_index, kWin ? kt.tp : kt.sl, kRes,
+                         style=kAbove ? label.style_label_down : label.style_label_up,
+                         color=kWin ? KWIN : KLOSS, textcolor=color.white, size=size.small,
+                         tooltip="KTR ❖ " + kSide + " from " + str.format_time(kt.tm, "dd MMM HH:mm") +
+                         "\nEntry " + str.tostring(kt.entry, format.mintick) +
+                         " · TP " + str.tostring(kt.tp, format.mintick) +
+                         " · SL " + str.tostring(kt.sl, format.mintick) +
+                         "\n" + kRes + " pts after " + str.tostring(bar_index - kt.bar) + " candles",
+                         force_overlay=true)
+                if i_alKtr
+                    alert("KTR ❖ " + kSide + " " + (kWin ? "WIN — TP hit" : "LOSS — SL hit") + " — " + syminfo.ticker +
+                         " | Entry:" + str.tostring(kt.entry, format.mintick) +
+                         " | Exit:" + str.tostring(kWin ? kt.tp : kt.sl, format.mintick) +
+                         " | " + (kWin ? "+" + kTpTxt : "−" + kSlTxt) + " pts" +
+                         " | Total " + str.tostring(kWins) + "W " + str.tostring(kLosses) + "L",
+                         alert.freq_once_per_bar_close)
+                kOpen.remove(i)
+        if not kDone
+            if not na(kt.bxTp)
+                box.set_right(kt.bxTp, bar_index + 1)
+            if not na(kt.bxSl)
+                box.set_right(kt.bxSl, bar_index + 1)
+
+// 2) open a trade on each confirmed ❖
+int  kDir     = ktrEntryBuy and not ktrEntrySell ? 1 : ktrEntrySell and not ktrEntryBuy ? -1 : 0
+bool kOpenNew = kTrack and barstate.isconfirmed and kDir != 0 and (not i_kOne or kOpen.size() == 0)
+if kOpenNew
+    float kEn   = close
+    float kTpPx = kEn + kDir * kTpDist
+    float kSlPx = kEn - kDir * kSlDist
+    box kBxTp = na
+    box kBxSl = na
+    if i_kZones
+        kBxTp := box.new(bar_index, math.max(kEn, kTpPx), bar_index + 1, math.min(kEn, kTpPx),
+             border_color=color.new(KWIN,60), bgcolor=color.new(KWIN,85), border_width=1,
+             text="TP +" + kTpTxt + " pts  " + str.tostring(kTpPx, format.mintick),
+             text_color=KWIN, text_size=size.tiny, text_halign=text.align_right, text_valign=text.align_center,
+             force_overlay=true)
+        kBxSl := box.new(bar_index, math.max(kEn, kSlPx), bar_index + 1, math.min(kEn, kSlPx),
+             border_color=color.new(KLOSS,60), bgcolor=color.new(KLOSS,85), border_width=1,
+             text="SL −" + kSlTxt + " pts  " + str.tostring(kSlPx, format.mintick),
+             text_color=KLOSS, text_size=size.tiny, text_halign=text.align_right, text_valign=text.align_center,
+             force_overlay=true)
+    kOpen.push(KtrTrade.new(kDir, kEn, kTpPx, kSlPx, bar_index, time, kBxTp, kBxSl))
+    if i_alKtr
+        alert("KTR ❖ " + (kDir == 1 ? "BUY" : "SELL") + " ENTRY — " + syminfo.ticker +
+             " | Entry:" + str.tostring(kEn, format.mintick) +
+             " | TP:" + str.tostring(kTpPx, format.mintick) + " (+" + kTpTxt + " pts)" +
+             " | SL:" + str.tostring(kSlPx, format.mintick) + " (−" + kSlTxt + " pts)",
+             alert.freq_once_per_bar_close)
+
+alertcondition(kHitWin,  "KTR ❖ TP hit — WIN",  "KTR ❖ trade closed at TP — WIN")
+alertcondition(kHitLoss, "KTR ❖ SL hit — LOSS", "KTR ❖ trade closed at SL — LOSS")
 
 // ── SECTION 1 — PIVOTS ──
 swingH = ta.pivothigh(high, i_swing,  i_swing)
@@ -1043,14 +1189,14 @@ if i_showLyr
 
 var line  biasLine   = na
 var float prevBiasLv = na
-if (biasBull or biasBear) and biasLvl!=prevBiasLv
+if smcOn and (biasBull or biasBear) and biasLvl!=prevBiasLv
     if not na(biasLine)
         line.delete(biasLine)
     biasLine   := line.new(biasBr, biasLvl, bar_index+100, biasLvl,
          color=biasBull?color.new(#00C853,20):color.new(#D50000,20),
          style=line.style_dotted, width=2, force_overlay=true)
     prevBiasLv := biasLvl
-else if (biasBull or biasBear) and not na(biasLine)
+else if smcOn and (biasBull or biasBear) and not na(biasLine)
     line.set_x2(biasLine, bar_index+100)
 
 if i_showEZ
@@ -1118,7 +1264,10 @@ if i_showStar
              color=color.new(#26a69a,20), textcolor=color.white, size=size.tiny, force_overlay=true)
 
 // ── SECTION 13 — SMT ──
-[xH, xL] = request.security(i_smtSym, timeframe.period, [high,low], lookahead=barmerge.lookahead_off)
+// KTR-only mode: request the chart symbol instead, so XAG / BTC are never loaded
+string smtSymUsed = smcOn ? i_smtSym : syminfo.tickerid
+string btcSymUsed = smcOn ? i_btcSym : syminfo.tickerid
+[xH, xL] = request.security(smtSymUsed, timeframe.period, [high,low], lookahead=barmerge.lookahead_off)
 xpH = ta.pivothigh(xH, i_smtLen, i_smtLen)
 xpL = ta.pivotlow (xL, i_smtLen, i_smtLen)
 gpH = ta.pivothigh(high, i_smtLen, i_smtLen)
@@ -1152,11 +1301,11 @@ if i_showSMT and smtBear
 
 // ── SECTION 13B — BTC CORRELATION PANEL ──
 [btc_close, btc_open, btc_high, btc_low] = request.security(
-     i_btcSym, timeframe.period,
+     btcSymUsed, timeframe.period,
      [close, open, high, low],
      lookahead=barmerge.lookahead_off)
 
-btc_close_D  = request.security(i_btcSym, "D", close[1], lookahead=barmerge.lookahead_off)
+btc_close_D  = request.security(btcSymUsed, "D", close[1], lookahead=barmerge.lookahead_off)
 btc_chg_pct  = not na(btc_close_D) and btc_close_D != 0 ? (btc_close - btc_close_D) / btc_close_D * 100 : 0.0
 
 bool btc_bull = btc_close >= btc_open
@@ -1281,7 +1430,7 @@ color  b3C   = entryLong?i_colBull:entryShort?i_colBear:
                (pdBlockedLong or pdBlockedShort)?color.new(#FF9800,0):color.new(#8B949E,0)
 string crtTfS = crtTfOk?timeframe.period+"m ✓":"OFF — change TF"
 
-var table d = table.new(position.top_right, 2, 21,
+var table d = table.new(position.top_right, 2, 26,
      bgcolor=color.new(#0D1117,60), border_color=color.new(#30363D,40),
      border_width=1, frame_color=color.new(#30363D,40), frame_width=1,
      force_overlay=true)
@@ -1289,81 +1438,82 @@ color CH=color.new(#1C2128,55)
 color CR=color.new(#0D1117,60)
 color CL=color.new(#8B949E,0)
 
+// one dashboard row (key | value) — returns the next row index
+f_dRow(int r, string k, string v, color bg, color vc, string sz, string tip) =>
+    table.cell(d, 0, r, k, bgcolor=bg, text_color=CL, text_size=sz)
+    table.cell(d, 1, r, v, bgcolor=bg, text_color=vc, text_size=sz, tooltip=tip)
+    r + 1
+
+f_wr(int w, int l) =>
+    w + l > 0 ? " (" + str.tostring(w * 100.0 / (w + l), "#") + "%)" : ""
+
+// KTR ❖ trade stats
+int    kN      = kWins + kLosses
+float  kNetR   = kWins * (i_kTpPts / i_kSlPts) - kLosses
+string kWLStr  = str.tostring(kWins) + "W " + str.tostring(kLosses) + "L" + f_wr(kWins, kLosses) +
+     (kOpen.size() > 0 ? " · " + str.tostring(kOpen.size()) + " open" : "")
+color  kWLCol  = kN == 0 ? CL : kNetPts >= 0 ? KWIN : KLOSS
+string kNetStr = str.tostring(kNetPts, "+#.##;-#.##") + " pts  (" + str.tostring(kNetR, "+#.#;-#.#") + "R)"
+string kWLTip  = "BUY ❖:  " + str.tostring(kWinB) + "W " + str.tostring(kLossB) + "L" + f_wr(kWinB, kLossB) +
+     "\nSELL ❖: " + str.tostring(kWinS) + "W " + str.tostring(kLossS) + "L" + f_wr(kWinS, kLossS) +
+     "\nOpen now: " + str.tostring(kOpen.size()) +
+     "\nBreak-even win rate: " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
+string kNetTip = "= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
+string kTpSlTip = "TP " + str.tostring(kTpDist, "#.##") + " · SL " + str.tostring(kSlDist, "#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
+
 if barstate.islast and i_showDash
-    table.cell(d,0,0,  "SMC 2026 + KTR",  bgcolor=CH,text_color=CL,       text_size=size.small)
-    table.cell(d,1,0,  syminfo.ticker,   bgcolor=CH,text_color=color.white, text_size=size.small)
-    table.cell(d,0,1,  "KTR",            bgcolor=CH,text_color=CL,          text_size=size.small)
-    table.cell(d,1,1,  kStr,              bgcolor=CH,text_color=kCol,        text_size=size.small)
-    table.cell(d,0,2,  "EMA Bias",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,2,  eStr,             bgcolor=CR,text_color=eCol,        text_size=size.tiny)
-    table.cell(d,0,3,  "BOS Trend",     bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,3,  tStr,             bgcolor=CR,text_color=tCol,        text_size=size.tiny)
-    table.cell(d,0,4,  "CHoCH",         bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,4,  chochDash,
-         bgcolor=CR,text_color=chochDashCol,text_size=size.tiny)
-    table.cell(d,0,5,  "Order Flow",    bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,5,  oStr,             bgcolor=CR,text_color=oCol,        text_size=size.tiny)
-    table.cell(d,0,6,  "PD Array",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,6,  pdStr+" ("+str.tostring(math.round(pdPos,0))+"%)",
-               bgcolor=CR,text_color=pdTxt,text_size=size.tiny)
-    table.cell(d,0,7,  "BSL lvl",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,7,  not na(bslLvl)?str.tostring(math.round(bslLvl,2)):"—",
-               bgcolor=CR,text_color=color.new(#FF9800,0),text_size=size.tiny)
-    table.cell(d,0,8,  "SSL lvl",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,8,  not na(sslLvl)?str.tostring(math.round(sslLvl,2)):"—",
-               bgcolor=CR,text_color=color.new(#00BCD4,0),text_size=size.tiny)
-    table.cell(d,0,9,  "Bull OB",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,9,  str.tostring(aBullOB)+" act / "+str.tostring(mBullOB)+" mit",
-               bgcolor=CR,text_color=i_colBull,text_size=size.tiny)
-    table.cell(d,0,10, "Bear OB",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,10, str.tostring(aBearOB)+" act / "+str.tostring(mBearOB)+" mit",
-               bgcolor=CR,text_color=i_colBear,text_size=size.tiny)
-    table.cell(d,0,11, "Bull FVG",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,11, str.tostring(aBullFVG)+" / "+str.tostring(fBullFVG)+" filled",
-               bgcolor=CR,text_color=i_colBull,text_size=size.tiny)
-    table.cell(d,0,12, "Bear FVG",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,12, str.tostring(aBearFVG)+" / "+str.tostring(fBearFVG)+" filled",
-               bgcolor=CR,text_color=i_colBear,text_size=size.tiny)
-    table.cell(d,0,13, "CISD",          bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,13, cStr,             bgcolor=CR,text_color=cCol,        text_size=size.tiny)
-    table.cell(d,0,14, "SMT  XAG",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,14, sStr,             bgcolor=CR,text_color=sCol,        text_size=size.tiny)
-    table.cell(d,0,15, "CRT TF",        bgcolor=CR,text_color=CL,          text_size=size.tiny)
-    table.cell(d,1,15, crtTfS,
-               bgcolor=CR,text_color=crtTfOk?i_colBull:color.new(#FFC107,0),text_size=size.tiny)
-    table.cell(d,0,16, "① "+bTF+" Bias",  bgcolor=CH,text_color=CL,       text_size=size.small)
-    table.cell(d,1,16, b1S,                bgcolor=CH,text_color=b1C,      text_size=size.small)
-    table.cell(d,0,17, "② "+mTF+" Confirm",bgcolor=CH,text_color=CL,      text_size=size.small)
-    table.cell(d,1,17, b2S,                bgcolor=CH,text_color=b2C,      text_size=size.small)
-    table.cell(d,0,18, "③ "+eTF+" Entry", bgcolor=CH,text_color=CL,        text_size=size.small)
-    table.cell(d,1,18, b3S,                bgcolor=CH,text_color=b3C,      text_size=size.small)
-    table.cell(d,0,19, "SL / TP pts",       bgcolor=CH,text_color=CL,        text_size=size.tiny)
-    table.cell(d,1,19, "SL:−"+str.tostring(i_slPts,format.mintick)+" TP:+"+str.tostring(i_tpPts,format.mintick),
-               bgcolor=CH,text_color=color.new(#FFC107,0),text_size=size.tiny)
-    table.cell(d,0,20, "Price",            bgcolor=CH,text_color=CL,        text_size=size.small)
-    table.cell(d,1,20, str.tostring(close,"#.00000"),bgcolor=CH,text_color=color.white,text_size=size.small)
+    int r = 0
+    r := f_dRow(r, smcOn ? "SMC 2026 + KTR" : "KTR", syminfo.ticker, CH, color.white, size.small, "")
+    r := f_dRow(r, "KTR", kStr, CH, kCol, size.small, "")
+    if kTrack
+        r := f_dRow(r, "❖ Win / Loss", kWLStr,  CH, kWLCol,   size.small, kWLTip)
+        r := f_dRow(r, "❖ Net",        kNetStr, CH, kWLCol,   size.small, kNetTip)
+        r := f_dRow(r, "❖ TP / SL",    "+" + kTpTxt + " / −" + kSlTxt + " pts", CR, color.new(#FFC107,0), size.tiny, kTpSlTip)
+        r := f_dRow(r, "❖ Last",       kLastTxt, CR, kLastCol, size.tiny, "")
+    if smcOn
+        r := f_dRow(r, "EMA Bias",   eStr,      CR, eCol,         size.tiny, "")
+        r := f_dRow(r, "BOS Trend",  tStr,      CR, tCol,         size.tiny, "")
+        r := f_dRow(r, "CHoCH",      chochDash, CR, chochDashCol, size.tiny, "")
+        r := f_dRow(r, "Order Flow", oStr,      CR, oCol,         size.tiny, "")
+        r := f_dRow(r, "PD Array",   pdStr+" ("+str.tostring(math.round(pdPos,0))+"%)", CR, pdTxt, size.tiny, "")
+        r := f_dRow(r, "BSL lvl",    not na(bslLvl)?str.tostring(math.round(bslLvl,2)):"—", CR, color.new(#FF9800,0), size.tiny, "")
+        r := f_dRow(r, "SSL lvl",    not na(sslLvl)?str.tostring(math.round(sslLvl,2)):"—", CR, color.new(#00BCD4,0), size.tiny, "")
+        r := f_dRow(r, "Bull OB",    str.tostring(aBullOB)+" act / "+str.tostring(mBullOB)+" mit", CR, i_colBull, size.tiny, "")
+        r := f_dRow(r, "Bear OB",    str.tostring(aBearOB)+" act / "+str.tostring(mBearOB)+" mit", CR, i_colBear, size.tiny, "")
+        r := f_dRow(r, "Bull FVG",   str.tostring(aBullFVG)+" / "+str.tostring(fBullFVG)+" filled", CR, i_colBull, size.tiny, "")
+        r := f_dRow(r, "Bear FVG",   str.tostring(aBearFVG)+" / "+str.tostring(fBearFVG)+" filled", CR, i_colBear, size.tiny, "")
+        r := f_dRow(r, "CISD",       cStr,      CR, cCol,         size.tiny, "")
+        r := f_dRow(r, "SMT  XAG",   sStr,      CR, sCol,         size.tiny, "")
+        r := f_dRow(r, "CRT TF",     crtTfS,    CR, crtTfOk?i_colBull:color.new(#FFC107,0), size.tiny, "")
+        r := f_dRow(r, "① "+bTF+" Bias",    b1S, CH, b1C, size.small, "")
+        r := f_dRow(r, "② "+mTF+" Confirm", b2S, CH, b2C, size.small, "")
+        r := f_dRow(r, "③ "+eTF+" Entry",   b3S, CH, b3C, size.small, "")
+        r := f_dRow(r, "★ SL / TP pts", "SL:−"+str.tostring(i_slPts,format.mintick)+" TP:+"+str.tostring(i_tpPts,format.mintick),
+             CH, color.new(#FFC107,0), size.tiny, "")
+    r := f_dRow(r, "Price", str.tostring(close,"#.00000"), CH, color.white, size.small, "")
 
 // ── SECTION 15 — alertcondition MENU ──
-alertcondition(bullBOS,      "BOS ▲",              "BOS bullish break")
-alertcondition(bearBOS,      "BOS ▼",              "BOS bearish break")
-alertcondition(bullCHOCH,    "CHoCH ▲",            "CHoCH bull reversal")
-alertcondition(bearCHOCH,    "CHoCH ▼",            "CHoCH bear reversal")
-alertcondition(bslSwept,     "BSL swept",          "BSL raid detected")
-alertcondition(sslSwept,     "SSL swept",          "SSL raid detected")
-alertcondition(cisdBull,     "CISD  BUY ▲",        "CISD bullish delivery")
-alertcondition(cisdBear,     "CISD  SELL ▼",       "CISD bearish delivery")
-alertcondition(crtBull,      "CRT ▲",              "CRT bull 3-candle")
-alertcondition(crtBear,      "CRT ▼",              "CRT bear 3-candle")
-alertcondition(newBBull,     "① BIAS  BUY ▲",     "CASCADE 1: Bias TF bull signal")
-alertcondition(newBBear,     "① BIAS  SELL ▼",    "CASCADE 1: Bias TF bear signal")
-alertcondition(invalBull,    "① Bias CANCELLED ▲","CASCADE: Bull bias cancelled")
-alertcondition(invalBear,    "① Bias CANCELLED ▼","CASCADE: Bear bias cancelled")
-alertcondition(newMBull,     "② CONFIRM  BUY ▲",  "CASCADE 2: Confirm TF bull")
-alertcondition(newMBear,     "② CONFIRM  SELL ▼", "CASCADE 2: Confirm TF bear")
-alertcondition(entryLong,    "③ ★ LONG",           "CASCADE 3: LONG — execute")
-alertcondition(entryShort,   "③ ★ SHORT",          "CASCADE 3: SHORT — execute")
-alertcondition(smtBull,      "SMT ▲  XAG div",     "SMT bull divergence")
-alertcondition(smtBear,      "SMT ▼  XAG div",     "SMT bear divergence")
+// (all muted in KTR-only mode)
+alertcondition(smcOn and bullBOS,    "BOS ▲",              "BOS bullish break")
+alertcondition(smcOn and bearBOS,    "BOS ▼",              "BOS bearish break")
+alertcondition(smcOn and bullCHOCH,  "CHoCH ▲",            "CHoCH bull reversal")
+alertcondition(smcOn and bearCHOCH,  "CHoCH ▼",            "CHoCH bear reversal")
+alertcondition(smcOn and bslSwept,   "BSL swept",          "BSL raid detected")
+alertcondition(smcOn and sslSwept,   "SSL swept",          "SSL raid detected")
+alertcondition(smcOn and cisdBull,   "CISD  BUY ▲",        "CISD bullish delivery")
+alertcondition(smcOn and cisdBear,   "CISD  SELL ▼",       "CISD bearish delivery")
+alertcondition(smcOn and crtBull,    "CRT ▲",              "CRT bull 3-candle")
+alertcondition(smcOn and crtBear,    "CRT ▼",              "CRT bear 3-candle")
+alertcondition(smcOn and newBBull,   "① BIAS  BUY ▲",     "CASCADE 1: Bias TF bull signal")
+alertcondition(smcOn and newBBear,   "① BIAS  SELL ▼",    "CASCADE 1: Bias TF bear signal")
+alertcondition(smcOn and invalBull,  "① Bias CANCELLED ▲","CASCADE: Bull bias cancelled")
+alertcondition(smcOn and invalBear,  "① Bias CANCELLED ▼","CASCADE: Bear bias cancelled")
+alertcondition(smcOn and newMBull,   "② CONFIRM  BUY ▲",  "CASCADE 2: Confirm TF bull")
+alertcondition(smcOn and newMBear,   "② CONFIRM  SELL ▼", "CASCADE 2: Confirm TF bear")
+alertcondition(smcOn and entryLong,  "③ ★ LONG",           "CASCADE 3: LONG — execute")
+alertcondition(smcOn and entryShort, "③ ★ SHORT",          "CASCADE 3: SHORT — execute")
+alertcondition(smcOn and smtBull,    "SMT ▲  XAG div",     "SMT bull divergence")
+alertcondition(smcOn and smtBear,    "SMT ▼  XAG div",     "SMT bear divergence")
 
 // ── SECTION 16 — alert() DYNAMIC  (one alert in TV catches all) ──
 if i_alBias and newBBull
