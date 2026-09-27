@@ -1722,7 +1722,44 @@ oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new
 btFrom  = input.time(timestamp("01 Jan 2020 00:00 +0000"), "All tests · from date", group=grpW, tooltip="Every Win / Loss test in this script (OFX, Every AX, KOB-15, KOB³, KTR ❖) only opens trades between these dates. Set the same dates in the KTR script to compare over exactly the same days.")
 btTo    = input.time(timestamp("31 Dec 2099 00:00 +0000"), "All tests · to date", group=grpW)
 btSpr   = input.float(0.18, "All tests · spread (ask − bid)", options=[0.0, 0.18, 0.22, 0.30], group=grpW, tooltip="Chart prices are bid. BUY opens on the ask (close + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask (bid + spread). Same as the KTR script.")
+dlOn    = input.bool(true, "All tests · daily limit", group=grpW, tooltip="Like the KTR script: each test stops for the day once its closed trades today reach the profit target or the loss limit. No new trades (pending orders are cancelled) until the next daily candle; trades already open run to their own TP / SL.")
+dlTp    = input.float(400, "Daily profit target (points)", minval=1, step=50, group=grpW, tooltip="400 pts = 40.00 in price.")
+dlSl    = input.float(300, "Daily loss limit (points)", minval=1, step=50, group=grpW, tooltip="300 pts = 30.00 in price.")
 bool btIn = time >= btFrom and time <= btTo
+bool dayNew = timeframe.change("D")
+
+// daily limit state of one test (points kept in price: 1 pt = 0.10)
+type DayLim
+    float pts   = 0.0
+    bool  stop  = false
+    int   tgt   = 0
+    int   loss  = 0
+    int   skip  = 0
+
+f_dlReset(DayLim d) =>
+    d.pts  := 0.0
+    d.stop := false
+    d
+
+f_dlAdd(DayLim d, float res, string nm, bool lab) =>
+    d.pts += res
+    if dlOn and not d.stop and (d.pts >= dlTp * 0.1 or d.pts <= -dlSl * 0.1)
+        bool hit = d.pts > 0
+        d.stop := true
+        d.tgt  += hit ? 1 : 0
+        d.loss += hit ? 0 : 1
+        if lab
+            label.new(bar_index, hit ? high + atr14 * 1.5 : low - atr14 * 1.5, (hit ? "🎯 " : "⛔ ") + nm + (hit ? " DAY TARGET " : " DAY STOP ") + str.tostring(d.pts * 10, "+#;-#") + " pts", style=hit ? label.style_label_down : label.style_label_up, color=color.new(hit ? #00C853 : #D50000, 30), textcolor=color.white, size=size.tiny, tooltip=nm + ": daily limit reached (target +" + str.tostring(dlTp, "#") + " / loss −" + str.tostring(dlSl, "#") + " pts) → no new trades until the next daily candle")
+    d
+
+f_dlTxt(DayLim d) =>
+    dlOn ? "\nDaily limit: 🎯 target days " + str.tostring(d.tgt) + " · ⛔ loss days " + str.tostring(d.loss) + " · skipped " + str.tostring(d.skip) + (d.stop ? " · stopped today" : "") : ""
+
+var DayLim dlOfx = DayLim.new()
+var DayLim dlAx  = DayLim.new()
+if dayNew
+    f_dlReset(dlOfx)
+    f_dlReset(dlAx)
 var int firstBarTime = time
 // test period markers: dashed line where the tests start / end
 var bool btStarted = false
@@ -1772,6 +1809,7 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
         losses += win ? 0 : 1
         netR   += win ? gain / rsk : -1.0
         netPts += win ? gain : -rsk
+        f_dlAdd(dlOfx, win ? gain : -rsk, "OFX", showWL)
         if showWL
             float px = win ? trd.tp : trd.sl
             bool  up = (trd.dir == 1) == win
@@ -1786,7 +1824,9 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
 // 2) open a trade on a confirmed ENTER signal
 bool enterL = drawBull and comboLong
 bool enterS = drawBear and comboShort
-if barstate.isconfirmed and btIn and (enterL or enterS) and (na(trd) or not oneOpen)
+if barstate.isconfirmed and btIn and dlOn and dlOfx.stop and (enterL or enterS)
+    dlOfx.skip += 1
+if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or enterS) and (na(trd) or not oneOpen)
     Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
     bool  near = low <= eb.top and high >= eb.bot
     float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
@@ -1838,13 +1878,16 @@ if axBtOn and barstate.isconfirmed and axOpen.size() > 0
                 axLS  += not win and t.dir == -1 ? 1 : 0
                 axPts += win ? gain : -rsk
                 axR   += win ? gain / rsk : -1.0
+                f_dlAdd(dlAx, win ? gain : -rsk, "AX", axBtWL)
                 if axBtWL
                     float px = win ? t.tp : t.sl
                     bool  up = (t.dir == 1) == win
                     label.new(bar_index, px, win ? "w" : "l", style=up ? label.style_label_down : label.style_label_up, color=color.new(win ? cWin : cLoss, 25), textcolor=color.white, size=size.tiny, tooltip="Every-accelerator test · " + (t.dir == 1 ? "BuAx+ LONG" : "BeAx+ SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
                 axOpen.remove(i)
 
-if axBtOn and barstate.isconfirmed and btIn and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
+if axBtOn and barstate.isconfirmed and btIn and dlOn and dlAx.stop and (drawBull or drawBear)
+    dlAx.skip += 1
+if axBtOn and barstate.isconfirmed and btIn and not (dlOn and dlAx.stop) and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
     int   d  = drawBull ? 1 : -1
     float en = d == 1 ? close + btSpr : close
     float tp = en + d * axTp
@@ -2030,9 +2073,13 @@ type KobSt
     int    l1 = 0
     int    w2 = 0
     int    l2 = 0
+    DayLim dl
 
-var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>(), lab=kobLab)
-var KobSt kS15 = KobSt.new("KOB-15", cK15, array.new<Trade>(), lab=kobLab)
+var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>(), lab=kobLab, dl=DayLim.new())
+var KobSt kS15 = KobSt.new("KOB-15", cK15, array.new<Trade>(), lab=kobLab, dl=DayLim.new())
+if dayNew
+    f_dlReset(kS3.dl)
+    f_dlReset(kS15.dl)
 
 f_kobRun(KobSt s) =>
     if s.open.size() > 0
@@ -2040,7 +2087,17 @@ f_kobRun(KobSt s) =>
             Trade t = s.open.get(i)
             bool fillNow = false
             bool gone    = false
-            if not t.filled and bar_index > t.sigBar
+            if not t.filled and dlOn and s.dl.stop
+                s.dl.skip += 1
+                gone      := true
+                if not na(t.lbP)
+                    label.set_text(t.lbP, label.get_text(t.lbP) + " ✕ day limit")
+                    label.set_color(t.lbP, color.new(color.gray, 20))
+                if not na(t.lnP)
+                    line.set_x2(t.lnP, bar_index)
+                    line.set_color(t.lnP, color.gray)
+                s.open.remove(i)
+            else if not t.filled and bar_index > t.sigBar
                 // BUY LIMIT fills when the ask comes down to it, SELL LIMIT when the bid comes up to it
                 bool  touch = t.dir == 1 ? low + btSpr <= t.entry : high >= t.entry
                 float runD  = kobRun == "100 pts away" ? 10.0 : kobRun == "200 pts away" ? 20.0 : na
@@ -2086,6 +2143,7 @@ f_kobRun(KobSt s) =>
                     s.l1  += not win and t.ord == 1 ? 1 : 0
                     s.w2  += win and t.ord == 2 ? 1 : 0
                     s.l2  += not win and t.ord == 2 ? 1 : 0
+                    f_dlAdd(s.dl, win ? gain : -rsk, s.nm, s.lab)
                     if s.lab
                         bool up = (t.dir == 1) == win
                         label.new(bar_index, win ? t.tp : t.sl, s.nm + (win ? " W" : " L"), style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.tiny, tooltip=s.nm + " " + (t.dir == 1 ? "LONG" : "SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
@@ -2098,7 +2156,9 @@ f_kobOpen(KobSt s, int d, float sl, float tpD, int ord) =>
     // pending LIMIT: BUY below the close (filled on the ask), SELL above the close (filled on the bid)
     float en   = pend ? close - d * off : d == 1 ? close + btSpr : close
     string oTx = ord == 1 ? " (❖ → combo)" : ord == 2 ? " (combo → ❖)" : ""
-    if btIn and (not kobOne or s.open.size() == 0) and d * (en - sl) > 0
+    if btIn and dlOn and s.dl.stop
+        s.dl.skip += 1
+    else if btIn and (not kobOne or s.open.size() == 0) and d * (en - sl) > 0
         float rsk = math.abs(en - sl)
         float tp  = en + d * (kobTpMd == "R multiple" ? kobTpR * rsk : tpD)
         Trade nt  = Trade.new(d, en, sl, tp, bar_index, na, na, time, filled=not pend, sigBar=bar_index, ord=ord)
@@ -2155,8 +2215,11 @@ f_ofWhy(int d) =>
         w += "\n✗ ADX " + str.tostring(ofAdx, "#.#") + " < " + str.tostring(ofAdxMn, "#")
     w
 
-var KobSt kSA = KobSt.new("KTR", cKA, array.new<Trade>(), lab=ktLabA)
-var KobSt kSF = KobSt.new("KTR+OF", cKF, array.new<Trade>(), lab=ktLabF)
+var KobSt kSA = KobSt.new("KTR", cKA, array.new<Trade>(), lab=ktLabA, dl=DayLim.new())
+var KobSt kSF = KobSt.new("KTR+OF", cKF, array.new<Trade>(), lab=ktLabF, dl=DayLim.new())
+if dayNew
+    f_dlReset(kSA.dl)
+    f_dlReset(kSF.dl)
 int    ktDir = k5B and not k5S ? 1 : k5S and not k5B ? -1 : 0
 string ktWhy = ktDir != 0 ? f_ofWhy(ktDir) : ""
 bool   ktOF  = ktDir != 0 and ktWhy == ""
@@ -2164,7 +2227,9 @@ plotchar(kShow5 and ktDir != 0 and ktOF ? (ktDir == 1 ? low - atr14 * 1.0 : high
 
 f_ktOpen(KobSt s, int d) =>
     float en = d == 1 ? close + btSpr : close
-    if btIn and (not ktOne or s.open.size() == 0)
+    if btIn and dlOn and s.dl.stop
+        s.dl.skip += 1
+    else if btIn and (not ktOne or s.open.size() == 0)
         s.open.push(Trade.new(d, en, en - d * ktSl, en + d * ktTp, bar_index, na, na, time))
     s
 
@@ -2190,7 +2255,7 @@ f_kobTxt(KobSt s) =>
     int n = s.w + s.l
     str.tostring(s.w) + "W " + str.tostring(s.l) + "L" + (n > 0 ? " (" + str.tostring(s.w * 100.0 / n, "#") + "%)" : "") + (s.open.size() > 0 ? " · open" : "") + (s.miss > 0 ? " · " + str.tostring(s.miss) + " missed" : "") + " · " + str.tostring(s.pts, "+#.##;-#.##") + " (" + str.tostring(s.r, "+#.#;-#.#") + "R)"
 f_kobTip(KobSt s) =>
-    "LONG: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + (s.wB + s.lB > 0 ? " (" + str.tostring(s.wB * 100.0 / (s.wB + s.lB), "#") + "%)" : "") + "\nSHORT: " + str.tostring(s.wS) + "W " + str.tostring(s.lS) + "L" + (s.wS + s.lS > 0 ? " (" + str.tostring(s.wS * 100.0 / (s.wS + s.lS), "#") + "%)" : "") + (s.w1 + s.l1 + s.w2 + s.l2 > 0 ? "\n15m ❖ first, then combo: " + str.tostring(s.w1) + "W " + str.tostring(s.l1) + "L" + (s.w1 + s.l1 > 0 ? " (" + str.tostring(s.w1 * 100.0 / (s.w1 + s.l1), "#") + "%)" : "") + "\nCombo first, then 15m ❖: " + str.tostring(s.w2) + "W " + str.tostring(s.l2) + "L" + (s.w2 + s.l2 > 0 ? " (" + str.tostring(s.w2 * 100.0 / (s.w2 + s.l2), "#") + "%)" : "") : "") + (s.miss > 0 ? "\nPending missed (not counted): " + str.tostring(s.miss) : "")
+    "LONG: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + (s.wB + s.lB > 0 ? " (" + str.tostring(s.wB * 100.0 / (s.wB + s.lB), "#") + "%)" : "") + "\nSHORT: " + str.tostring(s.wS) + "W " + str.tostring(s.lS) + "L" + (s.wS + s.lS > 0 ? " (" + str.tostring(s.wS * 100.0 / (s.wS + s.lS), "#") + "%)" : "") + (s.w1 + s.l1 + s.w2 + s.l2 > 0 ? "\n15m ❖ first, then combo: " + str.tostring(s.w1) + "W " + str.tostring(s.l1) + "L" + (s.w1 + s.l1 > 0 ? " (" + str.tostring(s.w1 * 100.0 / (s.w1 + s.l1), "#") + "%)" : "") + "\nCombo first, then 15m ❖: " + str.tostring(s.w2) + "W " + str.tostring(s.l2) + "L" + (s.w2 + s.l2 > 0 ? " (" + str.tostring(s.w2 * 100.0 / (s.w2 + s.l2), "#") + "%)" : "") : "") + (s.miss > 0 ? "\nPending missed (not counted): " + str.tostring(s.miss) : "") + f_dlTxt(s.dl)
 
 alertcondition(kob15, "KOB-15 (15m ❖ + combo)", "KOB-15: 15m KTR ❖ + OFX 2.0 combo")
 alertcondition(kob3, "KOB³ triple confirmation", "KOB³: 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo")
@@ -2517,10 +2582,10 @@ if showDash and barstate.islast
         table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
         table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small)
+        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small, tooltip="OFX combo" + f_dlTxt(dlOfx))
         if axBtOn
             table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=size.small, text_halign=text.align_left)
-            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()))
+            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()) + f_dlTxt(dlAx))
         string kobTpS = kobTpMd == "R multiple" ? str.tostring(kobTpR, "#.#") + "R" : str.tostring(kobTp, "#.##")
         table.cell(dash, 0, 9, "KOB-15 A+ 15m ❖ + Combo · TP " + (kobTpMd == "R multiple" ? kobTpS : str.tostring(k15Tp, "#.##")), text_color=cK15, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 9, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS15))
