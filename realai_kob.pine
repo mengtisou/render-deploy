@@ -1982,9 +1982,10 @@ type KobSt
     int    lS = 0
     float  pts = 0.0
     float  r   = 0.0
+    bool   lab = true
 
-var KobSt kS2 = KobSt.new("KOB²", cK2, array.new<Trade>())
-var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>())
+var KobSt kS2 = KobSt.new("KOB²", cK2, array.new<Trade>(), lab=kobLab)
+var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>(), lab=kobLab)
 
 f_kobRun(KobSt s) =>
     if s.open.size() > 0
@@ -2005,7 +2006,7 @@ f_kobRun(KobSt s) =>
                     s.lS  += not win and t.dir == -1 ? 1 : 0
                     s.pts += win ? gain : -rsk
                     s.r   += win ? gain / rsk : -1.0
-                    if kobLab
+                    if s.lab
                         bool up = (t.dir == 1) == win
                         label.new(bar_index, win ? t.tp : t.sl, s.nm + (win ? " W" : " L"), style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.tiny, tooltip=s.nm + " " + (t.dir == 1 ? "LONG" : "SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
                     s.open.remove(i)
@@ -2016,9 +2017,76 @@ f_kobOpen(KobSt s, int d, float sl) =>
         float rsk = math.abs(close - sl)
         float tp  = close + d * (kobTpMd == "R multiple" ? kobTpR * rsk : kobTp)
         s.open.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
-        if kobLab
+        if s.lab
             label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT"), style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(close, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
     s
+
+// ─── ORDER-FLOW FILTER for the KTR ❖ (KTR alone chops on days without order flow) ───
+grpOF   = "⓪c KTR ❖ + Order flow test"
+ktTest  = input.bool(true, "Test KTR ❖ alone vs KTR ❖ + order flow", group=grpOF, tooltip="Two extra Win / Loss rows: every 5m KTR ❖, and only the ❖ that come with order flow (checks below). Compare them to see if the filter removes the choppy days.")
+ktTp    = input.float(20.0, "KTR test TP (price)", minval=0.1, step=0.5, group=grpOF, tooltip="20.00 = 200 points, like the KTR ❖ trades.")
+ktSl    = input.float(10.0, "KTR test SL (price)", minval=0.1, step=0.5, group=grpOF, tooltip="10.00 = 100 points.")
+ktOne   = input.bool(false, "One trade at a time", group=grpOF)
+ktLabA  = input.bool(false, "Show W / L of 'KTR ❖ all' on the chart", group=grpOF)
+ktLabF  = input.bool(true, "Show W / L of 'KTR ❖ + order flow' on the chart", group=grpOF)
+ofAxOn  = input.bool(true, "① Accelerator in the same direction within", inline="of1", group=grpOF, tooltip="Order flow ignition: a BuAx+ (for a BUY ❖) or BeAx+ (for a SELL ❖) printed in the last N candles.")
+ofAxN   = input.int(36, "bars", minval=1, maxval=300, inline="of1", group=grpOF)
+ofCvdOn = input.bool(true, "② Day delta (CVD) in the same direction, at least", inline="of2", group=grpOF, tooltip="Today's cumulative delta (sum of the candle deltas since the daily open) must be positive for BUY / negative for SELL, by at least this amount (0 = only the sign).")
+ofCvdMn = input.float(0, "", minval=0, step=500, inline="of2", group=grpOF)
+ofVolOn = input.bool(true, "③ Participation: last hour volume ≥", inline="of3", group=grpOF, tooltip="Average volume of the last 12 candles ≥ this × the average of the last 288 candles (one day on 5m). Quiet days fail this.")
+ofVolX  = input.float(1.0, "× day average", minval=0.1, step=0.1, inline="of3", group=grpOF)
+ofAdxOn = input.bool(false, "④ Trend strength ADX(14) ≥", inline="of4", group=grpOF, tooltip="Low ADX = sideways / choppy market.")
+ofAdxMn = input.float(20, "", minval=1, step=1, inline="of4", group=grpOF)
+cKA     = input.color(#78909C, "'All' colour", inline="kc2", group=grpOF)
+cKF     = input.color(#29B6F6, "'+ Order flow' colour", inline="kc2", group=grpOF)
+
+var int lastBuAx = na
+var int lastBeAx = na
+if bullAxOK
+    lastBuAx := bar_index
+if bearAxOK
+    lastBeAx := bar_index
+var float dayCvd = 0.0
+if timeframe.change("D")
+    dayCvd := 0.0
+dayCvd += nz(delta)
+float ofVolR = ta.sma(volume, 12) / ta.sma(volume, 288)
+[ofDip, ofDim, ofAdx] = ta.dmi(14, 14)
+
+f_ofWhy(int d) =>
+    string w = ""
+    int    ax = d == 1 ? lastBuAx : lastBeAx
+    if ofAxOn and (na(ax) or bar_index - ax > ofAxN)
+        w += "\n✗ no " + (d == 1 ? "BuAx+" : "BeAx+") + " in the last " + str.tostring(ofAxN) + " bars"
+    if ofCvdOn and not (d * dayCvd > 0 and math.abs(dayCvd) >= ofCvdMn)
+        w += "\n✗ day delta " + f_ks(dayCvd) + " not " + (d == 1 ? "positive" : "negative") + (ofCvdMn > 0 ? " ≥ " + f_k(ofCvdMn) : "")
+    if ofVolOn and not (nz(ofVolR) >= ofVolX)
+        w += "\n✗ participation " + str.tostring(ofVolR, "#.##") + "× < " + str.tostring(ofVolX, "#.##") + "×"
+    if ofAdxOn and not (ofAdx >= ofAdxMn)
+        w += "\n✗ ADX " + str.tostring(ofAdx, "#.#") + " < " + str.tostring(ofAdxMn, "#")
+    w
+
+var KobSt kSA = KobSt.new("KTR", cKA, array.new<Trade>(), lab=ktLabA)
+var KobSt kSF = KobSt.new("KTR+OF", cKF, array.new<Trade>(), lab=ktLabF)
+int    ktDir = k5B and not k5S ? 1 : k5S and not k5B ? -1 : 0
+string ktWhy = ktDir != 0 ? f_ofWhy(ktDir) : ""
+bool   ktOF  = ktDir != 0 and ktWhy == ""
+plotchar(kShow5 and ktDir != 0 and ktOF ? (ktDir == 1 ? low - atr14 * 1.0 : high + atr14 * 1.0) : na, "KTR ❖ with order flow", char="✓", location=location.absolute, color=cKF, size=size.tiny)
+
+f_ktOpen(KobSt s, int d) =>
+    if not ktOne or s.open.size() == 0
+        s.open.push(Trade.new(d, close, close - d * ktSl, close + d * ktTp, bar_index, na, na, time))
+    s
+
+if barstate.isconfirmed and ktTest
+    f_kobRun(kSA)
+    f_kobRun(kSF)
+    if ktDir != 0
+        f_ktOpen(kSA, ktDir)
+        if ktOF
+            f_ktOpen(kSF, ktDir)
+        else if ktLabF
+            label.new(bar_index, ktDir == 1 ? low - atr14 * 1.0 : high + atr14 * 1.0, "✗", style=label.style_none, textcolor=color.gray, size=size.tiny, tooltip="KTR ❖ skipped by the order-flow filter:" + ktWhy)
 
 if barstate.isconfirmed
     f_kobRun(kS2)
@@ -2303,7 +2371,7 @@ if barstate.islast
 var table dash = na
 if showDash and na(dash)
     pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 6 : 11, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 6 : 14, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
 if showDash and barstate.islast
     color gold = #E3B341
@@ -2368,6 +2436,17 @@ if showDash and barstate.islast
         table.cell(dash, 1, 9, f_kobTxt(kS2), text_color=kS2.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS2))
         table.cell(dash, 0, 10, "KOB³ 15m ❖ + 5m ❖ + Combo", text_color=cK3, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 10, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS3))
+        if ktTest
+            string ktS = " · TP " + str.tostring(ktTp, "#.##") + " / SL " + str.tostring(ktSl, "#.##")
+            table.cell(dash, 0, 11, "KTR ❖ all" + ktS, text_color=txt, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 1, 11, f_kobTxt(kSA), text_color=kSA.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kSA))
+            table.cell(dash, 0, 12, "KTR ❖ + Order flow" + ktS, text_color=cKF, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 1, 12, f_kobTxt(kSF), text_color=kSF.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kSF))
+            string ofB = f_ofWhy(1)
+            string ofS = f_ofWhy(-1)
+            string ofNow = ofB == "" ? "BUY ✓" : ofS == "" ? "SELL ✓" : "none ✗"
+            table.cell(dash, 0, 13, "Order flow now", text_color=txt, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 1, 13, ofNow + " · day Δ " + f_ks(dayCvd) + " · vol " + str.tostring(ofVolR, "#.##") + "× · ADX " + str.tostring(ofAdx, "#"), text_color=ofNow == "none ✗" ? gold : ok, text_size=size.small, tooltip="BUY side:" + (ofB == "" ? " ✓ all checks pass" : ofB) + "\n\nSELL side:" + (ofS == "" ? " ✓ all checks pass" : ofS))
 
 // ════════════════════════════════════════════════════════════════════
 // EXTRA TOOLS (like reference): POC line · range box · RSI divergence
