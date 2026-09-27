@@ -90,11 +90,8 @@ i_kOne     = input.bool  (false, "One trade at a time",               group=G0b,
      tooltip="OFF: every ❖ gets its own trade and its own WIN / LOSS, even while an earlier one is still open. ON: a ❖ that prints while a trade is open or a pending order is waiting is skipped.")
 i_kBoth    = input.string("Loss", "TP and SL hit on the same candle", group=G0b, options=["Loss","Win"],
      tooltip="One candle can touch both levels and the chart can't tell which came first. Loss = conservative.")
-i_kSpr     = input.float (0.0,   "Spread",                            group=G0b, options=[0.0, 18.0, 22.0, 30.0], inline="spr",
-     tooltip="Taken off the Net for every closed trade (win or loss); the WIN / LOSS labels still show the plain +TP / −SL. The '❖ Spread test' row shows the Net for 18 / 22 / 30 side by side, whatever you pick here.")
-i_kSprU    = input.string("MT5 points (1 = 0.01)", "",               group=G0b, inline="spr",
-     options=["MT5 points (1 = 0.01)", "TP / SL points"],
-     tooltip="MT5 points: the spread number MT5 shows for 2-decimal gold, 18 = 0.18 USD.\nTP / SL points: same unit as TP / SL here (1 point = price above), 18 = 1.80 USD with 0.10.")
+i_kSpr     = input.float (0.0,   "Spread  (ask − bid price)",         group=G0b, options=[0.0, 0.18, 0.22, 0.30],
+     tooltip="Ask − bid, e.g. bid 4285.17 / ask 4285.35 = 0.18. Taken off the Net for every closed trade (win or loss); the WIN / LOSS labels still show the plain +TP / −SL. The '❖ Spread test' row shows the Net for 0.18 / 0.22 / 0.30 side by side, whatever you pick here.")
 i_kDayOn   = input.bool  (false, "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (4000,  "Daily profit target (points)",      group=G0b, minval=1, step=100)
@@ -494,8 +491,7 @@ bool   kPendOn  = i_kEntry != "At ❖ close"
 bool   kLimOn   = str.startswith(i_kEntry, "Pending LIMIT")
 string kRunTxt  = i_kRun == "100 pts away" ? "100" : i_kRun == "200 pts away" ? "200" : ""
 float  kRunDist = kRunTxt == "" ? na : str.tonumber(kRunTxt) * i_kPtVal
-float  kSprUnit = str.startswith(i_kSprU, "MT5") ? 0.01 : i_kPtVal   // price of 1 spread point
-float  kCost    = i_kSpr * kSprUnit / i_kPtVal                        // spread in TP / SL points
+float  kCost    = i_kSpr / i_kPtVal       // spread (price) in TP / SL points, 0.18 → 1.8
 color  KWIN     = color.new(#00C853,0)
 color  KLOSS    = color.new(#D50000,0)
 bool   kTrack   = i_ktrOn and i_kTrOn
@@ -1637,27 +1633,24 @@ string kNetTip = "1R = SL = " + kSlTxt + " pts → a WIN is +" + str.tostring(i_
      "\n" + str.tostring(kWins) + " × " + kTpTxt + " − " + str.tostring(kLosses) + " × " + kSlTxt +
      (kCostPts > 0 ? " − spread " + str.tostring(kCostPts, "#.##") : "") + " = " + str.tostring(kNetPts, "+#.##;-#.##") + " pts" +
      "\n= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
-     (i_kSpr == 0 ? "\nSpread is 0 here — pick 18 / 22 / 30 in ⓪b, or see the '❖ Spread test' row" : "")
+     (i_kSpr == 0 ? "\nSpread is 0 here — pick 0.18 / 0.22 / 0.30 in ⓪b, or see the '❖ Spread test' row" : "")
 
-// Net if every closed trade had paid 18 / 22 / 30 spread
+// Net if every closed trade had paid a 0.18 / 0.22 / 0.30 spread (price)
 float  kGross   = kNetPts + kCostPts
-f_sprC(float sp) =>
-    sp * kSprUnit / i_kPtVal
 f_sprLine(float sp) =>
-    float c  = f_sprC(sp)
+    float c  = sp / i_kPtVal
     float nt = kGross - kN * c
-    str.tostring(sp, "#") + " (" + str.tostring(sp * kSprUnit, "#.###") + " " + syminfo.currency + ") → " +
+    str.tostring(sp, "0.00") + " (= " + str.tostring(c, "#.#") + " pts a trade) → " +
          str.tostring(nt, "+#.#;-#.#") + " pts (" + str.tostring(nt / i_kSlPts, "+#.#;-#.#") + "R) · break-even win " +
          str.tostring((i_kSlPts + c) * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
-float  kNet30   = kGross - kN * f_sprC(30)
-string kSprStr  = "18: " + str.tostring(kGross - kN * f_sprC(18), "+#;-#") +
-     " · 22: " + str.tostring(kGross - kN * f_sprC(22), "+#;-#") +
-     " · 30: " + str.tostring(kNet30, "+#;-#")
+float  kNet30   = kGross - kN * 0.30 / i_kPtVal
+string kSprStr  = "0.18: " + str.tostring(kGross - kN * 0.18 / i_kPtVal, "+#;-#") +
+     " · 0.22: " + str.tostring(kGross - kN * 0.22 / i_kPtVal, "+#;-#") +
+     " · 0.30: " + str.tostring(kNet30, "+#;-#")
 color  kSprCol  = kN == 0 ? CL : kNet30 >= 0 ? KWIN : KLOSS
 string kSprTip  = "Net in pts if every one of the " + str.tostring(kN) + " closed trades paid this spread (gross " + str.tostring(kGross, "+#.#;-#.#") + " pts):" +
-     "\n" + f_sprLine(18) + "\n" + f_sprLine(22) + "\n" + f_sprLine(30) +
-     "\nYour win rate: " + (kN > 0 ? str.tostring(kWins * 100.0 / kN, "#") + "%" : "—") +
-     "\nSpread unit: " + i_kSprU
+     "\n" + f_sprLine(0.18) + "\n" + f_sprLine(0.22) + "\n" + f_sprLine(0.30) +
+     "\nYour win rate: " + (kN > 0 ? str.tostring(kWins * 100.0 / kN, "#") + "%" : "—")
 int    kDaysN  = math.max(kDaysAll, 1)
 int    kFT     = nz(kFirstTm, kChartTm)
 string kPerStr = na(kFirstTm) ? "—" : str.format_time(kFT, "dd MMM yy") + " → " + str.format_time(time, "dd MMM yy") + " · " + str.tostring(kDaysN) + " days"
@@ -1671,10 +1664,9 @@ string kDayTip = (i_kDayOn ? "Daily limit ON: target +" + str.tostring(i_kDayTp,
      "Daily limit OFF (turn it on in ⓪b to test it)") +
      "\nDays that hit the target: " + str.tostring(kDaysTgt) + " · hit the loss limit: " + str.tostring(kDaysLoss) + " (of " + str.tostring(kDaysN) + " days)" +
      "\n❖ skipped / pending cancelled by the daily limit: " + str.tostring(kSkipDay)
-string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts" + (i_kSpr > 0 ? " · spread " + str.tostring(i_kSpr, "#") : "")
+string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts" + (i_kSpr > 0 ? " · spread " + str.tostring(i_kSpr, "0.00") : "")
 string kTpSlTip = "TP " + str.tostring(kTpDist, "#.##") + " · SL " + str.tostring(kSlDist, "#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
-     (i_kSpr > 0 ? "\nSpread " + str.tostring(i_kSpr, "#") + " = " + str.tostring(i_kSpr * kSprUnit, "#.###") + " " + syminfo.currency +
-     " = " + str.tostring(kCost, "#.##") + " TP / SL pts taken off every closed trade" : "")
+     (i_kSpr > 0 ? "\nSpread " + str.tostring(i_kSpr, "0.00") + " = " + str.tostring(kCost, "#.##") + " TP / SL pts taken off every closed trade" : "")
 string kEntStr = kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " / " + kRunTxt + " pts") : "At ❖ close"
 string kEntTip = kPendOn ? (kLimOn ? "BUY at ❖ close − " + kOffTxt + " pts, SELL at ❖ close + " + kOffTxt + " pts" :
      "BUY at ❖ close + " + kOffTxt + " pts, SELL at ❖ close − " + kOffTxt + " pts") +
