@@ -1,0 +1,1459 @@
+//@version=6
+indicator("SMC 2026 ICT + KTR v2", overlay=false, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ══════════════════════════════════════════════════════════════════
+// SMC 2026 ICT MODEL + KTR MODULE — COMBINED CLEAN EDITION
+//
+// ⓪ KTR MODULE  — daily OP/MLP + KTR±1/2/3 levels (0.4% steps),
+//                 yellow/red trend candles, blue alert diamonds,
+//                 ❖ entry confirmations. Toggle whole module on/off.
+// ★ CLEAN VIEW  — one switch in ⑨ Display hides all boxes and
+//                 secondary labels (OB, FVG, AMD, EQH/EQL, CRT H/L,
+//                 sweep %, watch zones) for a minimal chart.
+//
+// NOTE: Boys Buying / Bullishness histograms live in separate pane
+// scripts (keep them added alongside this one). A single overlay
+// script cannot host its own sub-panes.
+// ══════════════════════════════════════════════════════════════════
+
+// ── GROUPS ──
+var string G0  = "⓪ KTR MODULE  Levels · Diamonds"
+var string G1  = "① Structure  BOS · CHoCH"
+var string G2  = "② Order Blocks + Volume"
+var string G3  = "③ FVG + IFVG"
+var string G4  = "④ BSL · SSL Liquidity"
+var string G5  = "⑤ Order Flow"
+var string G6  = "⑥ ICT 2026  CISD · CRT · AMD"
+var string G7  = "⑦ CASCADE  4H→1H→15m"
+var string G8  = "⑧ SMT vs XAG"
+var string G11 = "⑪ BTC Correlation Panel"
+var string G9  = "⑨ Display"
+var string G10 = "⑩ Alerts"
+
+// ── ⚡ MASTER SWITCHES ──
+i_smcOn   = input.bool(true, "Enable SMC module  (all ICT tools)", group="⚡ MASTER SWITCHES",
+     tooltip="OFF = pure KTR chart: hides structure, OB, FVG, liquidity, CISD, CRT, AMD, cascade, SMT, BTC panel, EMAs, EQH/EQL, PD and mutes SMC alerts. KTR master is in group ⓪.")
+i_showDash = input.bool(true, "Show dashboard table", group="⚡ MASTER SWITCHES")
+
+// ── KTR INPUTS ──
+i_ktrOn    = input.bool (true,  "Enable KTR module",              group=G0)
+i_ktrLvls  = input.bool (true,  "Show levels  OP · MLP · KTR±",   group=G0)
+i_ktrStep  = input.float(0.40,  "Step % of daily open",           group=G0, step=0.05)
+i_ktrBelow = input.bool (true,  "Show KTR-1/-2/-3 below open",    group=G0)
+i_ktrMLP   = input.bool (true,  "Show MLP (prev day close)",      group=G0)
+i_ktrDia   = input.bool (true,  "Show diamonds + entry ❖",        group=G0)
+i_ktrSTf   = input.float(2.0,   "Supertrend factor",              group=G0, step=0.5)
+i_ktrSTa   = input.int  (10,    "Supertrend ATR length",          group=G0)
+i_ktrRsiOn = input.bool (true,  "RSI context filter",             group=G0)
+i_ktrRsiLo = input.float(35,    "Buy zone: RSI was below",        group=G0)
+i_ktrRsiHi = input.float(65,    "Sell zone: RSI was above",       group=G0)
+i_ktrCool  = input.int  (3,     "Min bars between alerts",        group=G0, minval=0)
+i_ktrWin   = input.int  (12,    "Entry ❖ confirm window (bars)",  group=G0, minval=1)
+i_ktrCont  = input.bool (true,  "Continuation signals (trend pullbacks)", group=G0,
+     tooltip="Also fire alerts + ❖ when a pullback against the bigger trend fails — e.g. SELL ❖ at a weak bounce inside a downtrend. Uses a softer RSI gate (45/55) since pullbacks rarely reach 35/65.")
+i_kMA      = input.bool (true,  "Show 30MA line",                 group=G0)
+i_kMALen   = input.int  (30,    "MA length",                      group=G0)
+i_kPiv     = input.bool (true,  "Show Pivot 01 (swing high)",     group=G0)
+i_kPivLen  = input.int  (10,    "Pivot swing length",             group=G0)
+i_ktrVolC  = input.bool (true,  "❖ needs above-average volume (Boys confirm)", group=G0,
+     tooltip="CRAZII philosophy: follow the Big Boys. The entry ❖ only prints when the confirming candle's volume is above its 20-bar average — institutional participation, not a thin drift.")
+i_ktrVolM  = input.float(1.0,   "Min relative volume for ❖",      group=G0, step=0.1)
+i_volLen   = input.int  (20,    "Pane: Boys relative volume length", group=G0)
+i_bullLen  = input.int  (14,    "Pane: Bullishness pressure length", group=G0)
+
+// ── INPUTS ──
+i_swing    = input.int   (10,    "Swing Length",                  group=G1, minval=2, maxval=50)
+i_showBOS  = input.bool  (true,  "Show BOS labels",               group=G1)
+i_showCHOC = input.bool  (true,  "Show CHoCH labels",             group=G1)
+
+i_obMax    = input.int   (3,     "Max OBs visible",               group=G2, minval=1, maxval=10)
+i_obExt    = input.int   (30,    "Extend bars right",             group=G2, minval=5)
+i_showOB   = input.bool  (true,  "Show Order Blocks",             group=G2)
+i_showVol  = input.bool  (true,  "Show Vol% in OB",               group=G2)
+i_oteL     = input.float (0.62,  "OTE Fib low",                   group=G2, step=0.01)
+i_oteH     = input.float (0.79,  "OTE Fib high",                  group=G2, step=0.01)
+
+i_showFVG  = input.bool  (true,  "Show FVG",                      group=G3)
+i_showIFVG = input.bool  (true,  "Show IFVG (flipped FVG)",       group=G3)
+i_fvgExt   = input.int   (40,    "Extend bars right",             group=G3, minval=5)
+i_fvgAtr   = input.float (0.1,   "Min size  ATR ×",              group=G3, step=0.05)
+i_showCE   = input.bool  (true,  "Show CE midline",               group=G3)
+
+i_liqLen   = input.int   (10,    "Swing Length",                  group=G4, minval=2, maxval=50)
+i_showLiq  = input.bool  (true,  "Show BSL / SSL lines",          group=G4)
+i_sweepWk  = input.bool  (true,  "Sweep = wick",                  group=G4)
+i_showBSS  = input.bool  (true,  "Show BS% / SS% on sweep",       group=G4)
+
+i_ofLen    = input.int   (10,    "Delta lookback bars",           group=G5, minval=1)
+
+// CISD
+i_showCISD = input.bool  (true,  "Show CISD  BUY / SELL labels",  group=G6)
+i_cisdRun  = input.int   (2,     "CISD run  (2=normal 3=strict)", group=G6, minval=1, maxval=5,
+     tooltip="4H/1H: use 2.  15m/5m: use 3 to filter noise.")
+
+// CRT — per timeframe toggles
+i_showCRT  = input.bool  (true,  "Show CRT labels",               group=G6)
+i_crtHL    = input.bool  (true,  "Show CRT High / Low lines",     group=G6)
+i_crt4H    = input.bool  (true,  "CRT on 4H",                    group=G6)
+i_crt1H    = input.bool  (true,  "CRT on 1H",                    group=G6)
+i_crt30    = input.bool  (true,  "CRT on 30m",                   group=G6)
+i_crt15    = input.bool  (true,  "CRT on 15m",                   group=G6)
+i_crt5     = input.bool  (false, "CRT on 5m  (noisy)",           group=G6)
+
+i_showAMD  = input.bool  (true,  "Show AMD session boxes",        group=G6)
+
+// CASCADE
+i_biasTF   = input.timeframe("240", "① BIAS TF  (240=4H  60=1H)",  group=G7,
+     tooltip="Your top-down bias timeframe. Set to 240 for 4H or 60 for 1H.")
+i_midTF    = input.timeframe("60",  "② CONFIRM TF  (60=1H  30=30m)",group=G7,
+     tooltip="Middle confirmation layer. Typically 1H when bias is 4H.")
+i_showLyr  = input.bool  (true,  "Show cascade labels on chart",  group=G7)
+i_showEZ   = input.bool  (true,  "Show confirm watch-zone box",   group=G7)
+i_showStar = input.bool  (true,  "Show ★ entry + SL / TP",        group=G7)
+i_slPts    = input.float (10.0,  "SL points  (e.g. 10 = $10)",   group=G7, step=1.0, minval=1.0,
+     tooltip="Fixed stop loss in price points. For Gold: 10 = $10 per oz")
+i_tpPts    = input.float (20.0,  "TP points  (e.g. 20 = $20)",   group=G7, step=1.0, minval=1.0,
+     tooltip="Fixed take profit in price points. For Gold: 20 = $20 per oz. Default 1:2 R:R")
+
+i_showSMT  = input.bool  (true,  "Show SMT Divergence",           group=G8)
+i_smtSym   = input.symbol("XAGUSD","Correlated symbol",           group=G8)
+i_smtLen   = input.int   (10,    "SMT Swing Length",              group=G8, minval=3, maxval=30)
+
+// BTC PANEL
+i_showBTC  = input.bool  (true,  "Show BTC price panel",           group=G11)
+i_btcSym   = input.symbol("BTCUSD", "BTC symbol",                  group=G11,
+     tooltip="Change to BTCUSDT or INDEX:BTCUSD if BTCUSD not available on your broker")
+i_btcPos   = input.string("bottom_right", "Panel position",        group=G11,
+     options=["bottom_right","bottom_left","top_left"])
+
+// DISPLAY — clean view master + candle colour mode
+i_clean    = input.bool  (false, "★ CLEAN VIEW — hide boxes & extra labels", group=G9,
+     tooltip="One switch: hides OB, FVG/IFVG, AMD boxes, EQH/EQL, CRT H/L lines, sweep % labels and watch zones. Keeps KTR levels, diamonds, structure labels, cascade and dashboard.")
+i_candleMode = input.string("KTR trend", "Candle colouring",       group=G9,
+     options=["KTR trend","Order flow","Off"],
+     tooltip="KTR trend = yellow/red CRAZII-style. Order flow = delta-based tint. Off = broker default candles.")
+i_colBull  = input.color (color.new(#26a69a,0), "Bullish colour", group=G9)
+i_colBear  = input.color (color.new(#ef5350,0), "Bearish colour", group=G9)
+i_showEMA  = input.bool  (true,  "Show EMA 20 / 50",              group=G9)
+i_emaF     = input.int   (20,    "EMA Fast",                      group=G9)
+i_emaS     = input.int   (50,    "EMA Slow",                      group=G9)
+i_showEQL  = input.bool  (true,  "Show EQH / EQL",                group=G9)
+i_eqlTol   = input.float (0.05,  "EQH/EQL tolerance %",           group=G9, step=0.01)
+i_showPD   = input.bool  (true,  "Show PD Array  (Premium/Discount)", group=G9)
+
+i_alBias   = input.bool  (true,  "Alert ①  Bias set",            group=G10)
+i_alConf   = input.bool  (true,  "Alert ②  Confirm",             group=G10)
+i_alEntry  = input.bool  (true,  "Alert ③  ★ Entry",             group=G10)
+i_alInval  = input.bool  (true,  "Alert     Bias cancelled",      group=G10)
+i_alSMT    = input.bool  (false, "Alert     SMT divergence",      group=G10)
+
+// ── ★ CLEAN VIEW — override the noisy toggles in one place ──
+if i_clean
+    i_showOB   := false
+    i_showFVG  := false
+    i_showIFVG := false
+    i_showAMD  := false
+    i_showEQL  := false
+    i_showBSS  := false
+    i_crtHL    := false
+    i_showEZ   := false
+
+// ── ⚡ SMC master switch — one button hides the whole SMC module ──
+if not i_smcOn
+    i_showBOS  := false
+    i_showCHOC := false
+    i_showOB   := false
+    i_showFVG  := false
+    i_showIFVG := false
+    i_showLiq  := false
+    i_showBSS  := false
+    i_showCISD := false
+    i_showCRT  := false
+    i_crtHL    := false
+    i_showAMD  := false
+    i_showLyr  := false
+    i_showEZ   := false
+    i_showStar := false
+    i_showSMT  := false
+    i_showBTC  := false
+    i_showEMA  := false
+    i_showEQL  := false
+    i_showPD   := false
+    i_alBias   := false
+    i_alConf   := false
+    i_alEntry  := false
+    i_alInval  := false
+    i_alSMT    := false
+
+// ── HELPERS ──
+atr14    = ta.atr(14)
+volAvg20 = ta.sma(volume, 20)
+tfMins   = timeframe.in_seconds(timeframe.period) / 60
+
+// CRT TF filter — only show on selected timeframes
+crtTfOk = (i_crt4H and tfMins==240) or (i_crt1H and tfMins==60) or
+          (i_crt30  and tfMins==30)  or (i_crt15  and tfMins==15) or
+          (i_crt5   and tfMins==5)
+
+f_pct(float lvl) =>
+    str.tostring(math.round(math.abs((close-lvl)/lvl*100),2)) + "%"
+
+f_vol(float v) =>
+    str.tostring(math.round(v,0)) + "%"
+
+f_obTxt(float t, float b, bool bull, bool mit, float vp) =>
+    string dir  = bull ? "▲ OB " : "▼ OB "
+    string pct  = f_pct((t+b)/2.0)
+    string vt   = i_showVol ? "  Vol:"+f_vol(vp) : ""
+    string vtag = vp>=150 ? " [HIGH VOL]" : vp>=120 ? " [strong]" : ""
+    mit ? dir+pct+vt+vtag+" [mit]" : dir+pct+vt+vtag
+
+f_sig(bool isC, bool isCh, bool isCr) =>
+    isC ? "CISD" : isCh ? "CHoCH" : isCr ? "CRT" : "signal"
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 0 — KTR MODULE  (CRAZII-style)
+// Levels: OP (daily open), MLP (prev close), KTR±n = OP ± n×step%
+// Candles: Supertrend yellow/red (see ⑨ Candle colouring)
+// Diamonds: blue = early alert (can repeat) · ❖ = confirmed ENTRY
+// ══════════════════════════════════════════════════════════════════
+bool ktrNewDay = timeframe.change("D")
+var float ktr_op  = na
+var float ktr_mlp = na
+if ktrNewDay
+    ktr_mlp := close[1]
+    ktr_op  := open
+
+float ktrStep = ktr_op * i_ktrStep / 100.0
+float ktrK1 = ktr_op + ktrStep
+float ktrK2 = ktr_op + 2*ktrStep
+float ktrK3 = ktr_op + 3*ktrStep
+float ktrN1 = ktr_op - ktrStep
+float ktrN2 = ktr_op - 2*ktrStep
+float ktrN3 = ktr_op - 3*ktrStep
+
+// full-width level lines — one set, moved to new prices each day
+var line kOP = na, var line kMLP = na
+var line kL1 = na, var line kL2 = na, var line kL3 = na
+var line kB1 = na, var line kB2 = na, var line kB3 = na
+
+f_kLine(float y, color c, string sty) =>
+    line.new(bar_index, y, bar_index + 1, y, color=c, style=sty, width=1, extend=extend.both, force_overlay=true)
+
+f_kSetY(line ln, float y) =>
+    if not na(ln)
+        line.set_y1(ln, y)
+        line.set_y2(ln, y)
+
+bool ktrDrawLvls = i_ktrOn and i_ktrLvls
+if ktrDrawLvls and ktrNewDay and not na(ktr_op)
+    if na(kOP)
+        kOP := f_kLine(ktr_op, color.white, line.style_dotted)
+        if i_ktrMLP
+            kMLP := f_kLine(ktr_mlp, color.rgb(212,175,55), line.style_dotted)
+        kL1 := f_kLine(ktrK1, color.lime,   line.style_dashed)
+        kL2 := f_kLine(ktrK2, color.yellow, line.style_dashed)
+        kL3 := f_kLine(ktrK3, color.orange, line.style_dashed)
+        if i_ktrBelow
+            kB1 := f_kLine(ktrN1, color.new(color.lime,30),   line.style_dashed)
+            kB2 := f_kLine(ktrN2, color.new(color.yellow,30), line.style_dashed)
+            kB3 := f_kLine(ktrN3, color.new(color.orange,30), line.style_dashed)
+    else
+        f_kSetY(kOP, ktr_op),  f_kSetY(kMLP, ktr_mlp)
+        f_kSetY(kL1, ktrK1),   f_kSetY(kL2, ktrK2),  f_kSetY(kL3, ktrK3)
+        f_kSetY(kB1, ktrN1),   f_kSetY(kB2, ktrN2),  f_kSetY(kB3, ktrN3)
+
+// right-edge price tags
+var label kTgOP = na, var label kTgML = na
+var label kTg1 = na, var label kTg2 = na, var label kTg3 = na
+f_kTag(float y, string txt, color c) =>
+    label.new(bar_index + 3, y, txt + "  " + str.tostring(y, format.mintick),
+         style=label.style_label_left, color=color.new(c,15), textcolor=color.black, size=size.small, force_overlay=true)
+
+if barstate.islast
+    label.delete(kTgOP), label.delete(kTgML)
+    label.delete(kTg1), label.delete(kTg2), label.delete(kTg3)
+    if ktrDrawLvls
+        kTgOP := f_kTag(ktr_op, "OP", color.white)
+        if i_ktrMLP and not na(ktr_mlp)
+            kTgML := f_kTag(ktr_mlp, "MLP", color.rgb(212,175,55))
+        kTg1 := f_kTag(ktrK1, "KTR+1", color.lime)
+        kTg2 := f_kTag(ktrK2, "KTR+2", color.yellow)
+        kTg3 := f_kTag(ktrK3, "KTR+3", color.orange)
+
+// ── 30MA + Pivot 01 (CRAZII extras) ──
+float kMA = ta.sma(close, i_kMALen)
+plot(i_ktrOn and i_kMA ? kMA : na, "30MA", color=color.rgb(0, 230, 118), linewidth=2, force_overlay=true)
+
+float kPivH = ta.pivothigh(high, i_kPivLen, i_kPivLen)
+var float kPivLvl = na
+if not na(kPivH)
+    kPivLvl := kPivH
+var line  kPivLn = na
+var label kPivLb = na
+if i_ktrOn and i_kPiv and not na(kPivLvl)
+    if na(kPivLn)
+        kPivLn := line.new(bar_index, kPivLvl, bar_index + 1, kPivLvl, color=color.aqua, width=1, extend=extend.both, force_overlay=true)
+    else
+        line.set_y1(kPivLn, kPivLvl)
+        line.set_y2(kPivLn, kPivLvl)
+if barstate.islast
+    label.delete(kPivLb)
+    if i_ktrOn and i_kPiv and not na(kPivLvl)
+        kPivLb := f_kTag(kPivLvl, "Pivot 01", color.aqua)
+
+// KTR trend (Supertrend) — also drives candle colouring
+[ktrST, ktrDir] = ta.supertrend(i_ktrSTf, i_ktrSTa)
+bool ktrUp = ktrDir < 0
+
+// slow trend — bigger-picture context for continuation signals
+[ktrSTs, ktrDirS] = ta.supertrend(i_ktrSTf * 2.0, i_ktrSTa)
+bool ktrSlowUp = ktrDirS < 0
+
+// stage 1 — alert diamonds (blue = buy warning, red = sell warning)
+float ktrRsi = ta.rsi(close, 7)
+bool ktrOS  = ta.lowest(ktrRsi, 5)  <= i_ktrRsiLo   // reversal gates
+bool ktrOB  = ta.highest(ktrRsi, 5) >= i_ktrRsiHi
+bool ktrOSc = ta.lowest(ktrRsi, 5)  <= 45           // softer continuation gates
+bool ktrOBc = ta.highest(ktrRsi, 5) >= 55
+bool ktrBullTh = close > open and close > high[1]
+bool ktrBearTh = close < open and close < low[1]
+
+// price at a fresh swing extreme — lets diamonds fire at real lows/highs
+// even when a slow grind never stretches RSI to the strict zone
+bool ktrAtLow  = ta.barssince(low  == ta.lowest(low, 12))  <= 3
+bool ktrAtHigh = ta.barssince(high == ta.highest(high, 12)) <= 3
+
+// REVERSAL — counter-trend exhaustion: stretched RSI OR fresh extreme
+bool ktrRevBuy  = not ktrUp and ktrBullTh and (not i_ktrRsiOn or ktrOS or ktrAtLow)
+bool ktrRevSell = ktrUp     and ktrBearTh and (not i_ktrRsiOn or ktrOB or ktrAtHigh)
+
+// CONTINUATION — pullback against the SLOW trend failing (soft RSI)
+// e.g. slow trend DOWN + brief yellow bounce + bearish thrust = SELL setup
+bool ktrConBuy  = i_ktrCont and ktrSlowUp     and not ktrUp and ktrBullTh and (not i_ktrRsiOn or ktrOSc)
+bool ktrConSell = i_ktrCont and not ktrSlowUp and ktrUp     and ktrBearTh and (not i_ktrRsiOn or ktrOBc)
+
+// MICRO PULLBACK — small bounce too weak to flip the fast trend:
+// 2+ counter-trend closes, then a thrust back with the slow trend
+var int ktrUpRun = 0
+var int ktrDnRun = 0
+ktrUpRun := close > open ? ktrUpRun + 1 : 0
+ktrDnRun := close < open ? ktrDnRun + 1 : 0
+bool ktrMicSell = i_ktrCont and not ktrSlowUp and not ktrUp and ktrUpRun[1] >= 2 and ktrBearTh
+bool ktrMicBuy  = i_ktrCont and ktrSlowUp     and ktrUp     and ktrDnRun[1] >= 2 and ktrBullTh
+
+var int ktrLastSig = -99999
+bool ktrCoolOK = bar_index - ktrLastSig >= i_ktrCool
+bool ktrShow  = i_ktrOn and i_ktrDia
+bool ktrAlertBuy  = ktrShow and (ktrRevBuy  or ktrConBuy  or ktrMicBuy)  and ktrCoolOK
+bool ktrAlertSell = ktrShow and (ktrRevSell or ktrConSell or ktrMicSell) and ktrCoolOK
+if ktrAlertBuy or ktrAlertSell
+    ktrLastSig := bar_index
+
+plotshape(ktrAlertBuy  ? low  - atr14*0.25 : na, "KTR Buy alert",  style=shape.diamond, location=location.absolute, color=color.aqua, size=size.tiny, force_overlay=true)
+plotshape(ktrAlertSell ? high + atr14*0.25 : na, "KTR Sell alert", style=shape.diamond, location=location.absolute, color=color.red,  size=size.tiny, force_overlay=true)
+
+// stage 2 — ❖ entry: trend flip OR break of the alert bar's extreme,
+// whichever comes first inside the confirm window (once per alert)
+var int   ktrBuyBar   = -99999
+var int   ktrSellBar  = -99999
+var float ktrBuyHigh  = na
+var float ktrSellLow  = na
+var bool  ktrBuyDone  = true
+var bool  ktrSellDone = true
+if ktrAlertBuy
+    ktrBuyBar  := bar_index
+    ktrBuyHigh := high
+    ktrBuyDone := false
+if ktrAlertSell
+    ktrSellBar := bar_index
+    ktrSellLow := low
+    ktrSellDone := false
+
+bool ktrFlipUp = ktrUp and not ktrUp[1]
+bool ktrFlipDn = not ktrUp and ktrUp[1]
+
+// Boys confirmation — the entry bar must show real participation
+float ktrRelVol = volume / ta.sma(volume, 20)
+bool  ktrVolOK  = not i_ktrVolC or ktrRelVol >= i_ktrVolM
+
+bool ktrEntryBuy  = ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and
+     (ktrFlipUp or (bar_index > ktrBuyBar  and close > ktrBuyHigh))
+bool ktrEntrySell = ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and
+     (ktrFlipDn or (bar_index > ktrSellBar and close < ktrSellLow))
+if ktrEntryBuy
+    ktrBuyDone := true
+if ktrEntrySell
+    ktrSellDone := true
+
+color KPEACH = color.rgb(255,200,120)
+plotchar(ktrEntryBuy  ? low  - atr14*0.6 : na, "KTR BUY entry ❖",  char="❖", location=location.absolute, color=KPEACH, size=size.tiny, force_overlay=true)
+plotchar(ktrEntrySell ? high + atr14*0.6 : na, "KTR SELL entry ❖", char="❖", location=location.absolute, color=KPEACH, size=size.tiny, force_overlay=true)
+
+alertcondition(ktrAlertBuy,  "KTR ① Buy alert",   "KTR blue diamond: possible buy setup")
+alertcondition(ktrAlertSell, "KTR ① Sell alert",  "KTR diamond: possible sell setup")
+alertcondition(ktrEntryBuy,  "KTR ② BUY ENTRY ❖", "KTR ❖ confirmed — BUY entry")
+alertcondition(ktrEntrySell, "KTR ② SELL ENTRY ❖","KTR ❖ confirmed — SELL entry")
+
+// ── SECTION 1 — PIVOTS ──
+swingH = ta.pivothigh(high, i_swing,  i_swing)
+swingL = ta.pivotlow (low,  i_swing,  i_swing)
+liqH   = ta.pivothigh(high, i_liqLen, i_liqLen)
+liqL   = ta.pivotlow (low,  i_liqLen, i_liqLen)
+
+var float lastH     = na
+var float lastL     = na
+var int   lastH_bar = na
+var int   lastL_bar = na
+if not na(swingH)
+    lastH     := swingH
+    lastH_bar := bar_index - i_swing
+if not na(swingL)
+    lastL     := swingL
+    lastL_bar := bar_index - i_swing
+
+// ── SECTION 2 — BOS / CHoCH ──
+var int mktTrend = 0   // 1=bull trend  -1=bear trend  0=undefined
+
+int chochLen = math.max(i_swing / 2, 2)
+chochH = ta.pivothigh(high, chochLen, chochLen)
+chochL = ta.pivotlow (low,  chochLen, chochLen)
+
+var float lastCHH = na
+var float lastCHL = na
+if not na(chochH)
+    lastCHH := chochH
+if not na(chochL)
+    lastCHL := chochL
+
+bool bullBOS = not na(lastH) and close > lastH and close[1] <= lastH
+bool bearBOS = not na(lastL) and close < lastL and close[1] >= lastL
+
+bool bullCHOCH = not na(lastCHH) and close > lastCHH and close[1] <= lastCHH and mktTrend == -1
+bool bearCHOCH = not na(lastCHL) and close < lastCHL and close[1] >= lastCHL and mktTrend ==  1
+
+bool bullCHOCH2 = bullBOS and mktTrend == -1
+bool bearCHOCH2 = bearBOS and mktTrend ==  1
+bool bullCHOCHfinal = bullCHOCH or bullCHOCH2
+bool bearCHOCHfinal = bearCHOCH or bearCHOCH2
+
+if bullBOS or bullCHOCHfinal
+    mktTrend := 1
+if bearBOS or bearCHOCHfinal
+    mktTrend := -1
+
+var string chochDash = "—"
+var color  chochDashCol = color.new(#8B949E,0)
+if bullCHOCHfinal
+    chochDash    := "▲ Bull reversal"
+    chochDashCol := color.new(#FF6F00,0)
+if bearCHOCHfinal
+    chochDash    := "▼ Bear reversal"
+    chochDashCol := color.new(#FF6F00,0)
+
+if i_showBOS
+    if bullBOS and not bullCHOCHfinal
+        label.new(bar_index, low-atr14*1.2, "BOS ▲",
+             yloc=yloc.price, style=label.style_label_up,
+             color=i_colBull, textcolor=color.white, size=size.small, force_overlay=true)
+    if bearBOS and not bearCHOCHfinal
+        label.new(bar_index, high+atr14*1.2, "BOS ▼",
+             yloc=yloc.price, style=label.style_label_down,
+             color=i_colBear, textcolor=color.white, size=size.small, force_overlay=true)
+if i_showCHOC
+    if bullCHOCHfinal
+        label.new(bar_index, low-atr14*1.5, "CHoCH ▲",
+             yloc=yloc.price, style=label.style_label_up,
+             color=color.new(#FF6F00,0), textcolor=color.white, size=size.normal, force_overlay=true)
+    if bearCHOCHfinal
+        label.new(bar_index, high+atr14*1.5, "CHoCH ▼",
+             yloc=yloc.price, style=label.style_label_down,
+             color=color.new(#FF6F00,0), textcolor=color.white, size=size.normal, force_overlay=true)
+
+// ── SECTION 3 — ORDER BLOCKS + OTE + VOLUME ──
+var box[]   bullOBs    = array.new<box>()
+var box[]   bearOBs    = array.new<box>()
+var bool[]  bullOB_mit = array.new<bool>()
+var bool[]  bearOB_mit = array.new<bool>()
+var float[] bullOB_vol = array.new<float>()
+var float[] bearOB_vol = array.new<float>()
+var float bos_swH = na
+var float bos_swL = na
+if bullBOS
+    bos_swL := lastL
+    bos_swH := lastH
+if bearBOS
+    bos_swH := lastH
+    bos_swL := lastL
+
+if i_showOB and bullBOS
+    for j = 1 to i_swing
+        if close[j] < open[j]
+            float ot  = math.max(open[j],close[j])
+            float ob  = math.min(open[j],close[j])
+            if ot > ob
+                float iR   = not na(bos_swH) and not na(bos_swL) ? bos_swH-bos_swL : ot-ob
+                float iBot = not na(bos_swL) ? bos_swL : ob
+                float vp   = volAvg20>0 ? volume[j]/volAvg20*100 : 100.0
+                bx = box.new(bar_index-j, ot, bar_index+i_obExt, ob,
+                     border_color=i_colBull, bgcolor=color.new(i_colBull,78), border_width=1,
+                     text=f_obTxt(ot,ob,true,false,vp),
+                     text_color=color.white, text_size=size.tiny,
+                     text_halign=text.align_left, text_valign=text.align_center, force_overlay=true)
+                box.new(bar_index-j, iBot+iR*i_oteH, bar_index+i_obExt, iBot+iR*i_oteL,
+                     border_color=color.new(i_colBull,50), bgcolor=color.new(i_colBull,55), border_width=1, force_overlay=true)
+                array.push(bullOBs, bx)
+                array.push(bullOB_mit, false)
+                array.push(bullOB_vol, vp)
+                if array.size(bullOBs) > i_obMax
+                    box.delete(array.shift(bullOBs))
+                    array.shift(bullOB_mit)
+                    array.shift(bullOB_vol)
+                break
+
+if i_showOB and bearBOS
+    for j = 1 to i_swing
+        if close[j] > open[j]
+            float ot  = math.max(open[j],close[j])
+            float ob  = math.min(open[j],close[j])
+            if ot > ob
+                float iR   = not na(bos_swH) and not na(bos_swL) ? bos_swH-bos_swL : ot-ob
+                float iBot = not na(bos_swL) ? bos_swL : ob
+                float vp   = volAvg20>0 ? volume[j]/volAvg20*100 : 100.0
+                bx = box.new(bar_index-j, ot, bar_index+i_obExt, ob,
+                     border_color=i_colBear, bgcolor=color.new(i_colBear,78), border_width=1,
+                     text=f_obTxt(ot,ob,false,false,vp),
+                     text_color=color.white, text_size=size.tiny,
+                     text_halign=text.align_left, text_valign=text.align_center, force_overlay=true)
+                box.new(bar_index-j, iBot+iR*i_oteH, bar_index+i_obExt, iBot+iR*i_oteL,
+                     border_color=color.new(i_colBear,50), bgcolor=color.new(i_colBear,55), border_width=1, force_overlay=true)
+                array.push(bearOBs, bx)
+                array.push(bearOB_mit, false)
+                array.push(bearOB_vol, vp)
+                if array.size(bearOBs) > i_obMax
+                    box.delete(array.shift(bearOBs))
+                    array.shift(bearOB_mit)
+                    array.shift(bearOB_vol)
+                break
+
+var int aBullOB=0
+var int aBearOB=0
+var int mBullOB=0
+var int mBearOB=0
+aBullOB:=0
+aBearOB:=0
+mBullOB:=0
+mBearOB:=0
+
+if array.size(bullOBs)>0
+    for i=0 to array.size(bullOBs)-1
+        bx=array.get(bullOBs,i)
+        t =box.get_top(bx)
+        b =box.get_bottom(bx)
+        al=array.get(bullOB_mit,i)
+        vp=array.get(bullOB_vol,i)
+        box.set_right(bx, bar_index+i_obExt)
+        box.set_text(bx, f_obTxt(t,b,true,al,vp))
+        if close<t and close>b and not al
+            array.set(bullOB_mit,i,true)
+            box.set_bgcolor(bx, color.new(i_colBull,92))
+        if array.get(bullOB_mit,i)
+            mBullOB+=1
+        else
+            aBullOB+=1
+
+if array.size(bearOBs)>0
+    for i=0 to array.size(bearOBs)-1
+        bx=array.get(bearOBs,i)
+        t =box.get_top(bx)
+        b =box.get_bottom(bx)
+        al=array.get(bearOB_mit,i)
+        vp=array.get(bearOB_vol,i)
+        box.set_right(bx, bar_index+i_obExt)
+        box.set_text(bx, f_obTxt(t,b,false,al,vp))
+        if close>b and close<t and not al
+            array.set(bearOB_mit,i,true)
+            box.set_bgcolor(bx, color.new(i_colBear,92))
+        if array.get(bearOB_mit,i)
+            mBearOB+=1
+        else
+            aBearOB+=1
+
+// ── SECTION 4 — FVG + IFVG ──
+var box[]  bullFVG      = array.new<box>()
+var box[]  bearFVG      = array.new<box>()
+var line[] bullFVG_ce   = array.new<line>()
+var line[] bearFVG_ce   = array.new<line>()
+var bool[] bullFVG_fill = array.new<bool>()
+var bool[] bearFVG_fill = array.new<bool>()
+var int aBullFVG=0
+var int aBearFVG=0
+var int fBullFVG=0
+var int fBearFVG=0
+aBullFVG:=0
+aBearFVG:=0
+fBullFVG:=0
+fBearFVG:=0
+
+if i_showFVG
+    if low>high[2] and (low-high[2])>atr14*i_fvgAtr
+        bx=box.new(bar_index-2, low, bar_index+i_fvgExt, high[2],
+             border_color=color.new(i_colBull,50), bgcolor=color.new(i_colBull,85),
+             border_width=1, text="FVG ▲", text_color=color.white, text_size=size.tiny,
+             text_halign=text.align_left, text_valign=text.align_center, force_overlay=true)
+        array.push(bullFVG, bx)
+        array.push(bullFVG_fill, false)
+        if i_showCE
+            array.push(bullFVG_ce, line.new(bar_index-2, math.avg(low,high[2]),
+                 bar_index+i_fvgExt, math.avg(low,high[2]),
+                 color=color.new(i_colBull,30), style=line.style_dotted, width=1, force_overlay=true))
+        else
+            array.push(bullFVG_ce, line(na))
+        if array.size(bullFVG)>10
+            box.delete(array.shift(bullFVG))
+            array.shift(bullFVG_fill)
+            ln=array.shift(bullFVG_ce)
+            if not na(ln)
+                line.delete(ln)
+
+    if high<low[2] and (low[2]-high)>atr14*i_fvgAtr
+        bx=box.new(bar_index-2, low[2], bar_index+i_fvgExt, high,
+             border_color=color.new(i_colBear,50), bgcolor=color.new(i_colBear,85),
+             border_width=1, text="FVG ▼", text_color=color.white, text_size=size.tiny,
+             text_halign=text.align_left, text_valign=text.align_center, force_overlay=true)
+        array.push(bearFVG, bx)
+        array.push(bearFVG_fill, false)
+        if i_showCE
+            array.push(bearFVG_ce, line.new(bar_index-2, math.avg(low[2],high),
+                 bar_index+i_fvgExt, math.avg(low[2],high),
+                 color=color.new(i_colBear,30), style=line.style_dotted, width=1, force_overlay=true))
+        else
+            array.push(bearFVG_ce, line(na))
+        if array.size(bearFVG)>10
+            box.delete(array.shift(bearFVG))
+            array.shift(bearFVG_fill)
+            ln=array.shift(bearFVG_ce)
+            if not na(ln)
+                line.delete(ln)
+
+if array.size(bullFVG)>0
+    for i=0 to array.size(bullFVG)-1
+        bx=array.get(bullFVG,i)
+        t =box.get_top(bx)
+        b =box.get_bottom(bx)
+        al=array.get(bullFVG_fill,i)
+        box.set_right(bx, bar_index+i_fvgExt)
+        if i_showCE
+            ln=array.get(bullFVG_ce,i)
+            if not na(ln)
+                line.set_x2(ln, bar_index+i_fvgExt)
+        if low<t and low>b and not al
+            array.set(bullFVG_fill,i,true)
+            box.set_bgcolor(bx, color.new(i_colBull,95))
+            box.set_text(bx, "FVG ▲ filled")
+            if i_showIFVG and close<b
+                box.new(bar_index, t, bar_index+i_fvgExt, b,
+                     border_color=color.new(#FF6D00,40), bgcolor=color.new(#FF6D00,80),
+                     border_width=1, text="IFVG ▼  resistance",
+                     text_color=color.white, text_size=size.tiny,
+                     text_halign=text.align_left, text_valign=text.align_center, force_overlay=true)
+        if array.get(bullFVG_fill,i)
+            fBullFVG+=1
+        else
+            aBullFVG+=1
+
+if array.size(bearFVG)>0
+    for i=0 to array.size(bearFVG)-1
+        bx=array.get(bearFVG,i)
+        t =box.get_top(bx)
+        b =box.get_bottom(bx)
+        al=array.get(bearFVG_fill,i)
+        box.set_right(bx, bar_index+i_fvgExt)
+        if i_showCE
+            ln=array.get(bearFVG_ce,i)
+            if not na(ln)
+                line.set_x2(ln, bar_index+i_fvgExt)
+        if high>b and high<t and not al
+            array.set(bearFVG_fill,i,true)
+            box.set_bgcolor(bx, color.new(i_colBear,95))
+            box.set_text(bx, "FVG ▼ filled")
+            if i_showIFVG and close>t
+                box.new(bar_index, t, bar_index+i_fvgExt, b,
+                     border_color=color.new(#00E5FF,40), bgcolor=color.new(#00E5FF,80),
+                     border_width=1, text="IFVG ▲  support",
+                     text_color=color.white, text_size=size.tiny,
+                     text_halign=text.align_left, text_valign=text.align_center, force_overlay=true)
+        if array.get(bearFVG_fill,i)
+            fBearFVG+=1
+        else
+            aBearFVG+=1
+
+// ── SECTION 5 — BSL / SSL + BS%/SS% ──
+var float bslLvl=na
+var float sslLvl=na
+var int bslBr=na
+var int sslBr=na
+var line bslLn=na
+var line sslLn=na
+var label bslLb=na
+var label sslLb=na
+var float prevBSL=na
+var float prevSSL=na
+
+if not na(liqH)
+    bslLvl:=liqH
+    bslBr :=bar_index-i_liqLen
+if not na(liqL)
+    sslLvl:=liqL
+    sslBr :=bar_index-i_liqLen
+
+if i_showLiq and not na(bslLvl)
+    if bslLvl!=prevBSL
+        if not na(bslLn)
+            line.delete(bslLn)
+        if not na(bslLb)
+            label.delete(bslLb)
+        bslLn  := line.new(bslBr, bslLvl, bar_index+50, bslLvl,
+             color=color.new(#FF9800,30), style=line.style_dashed, width=1, force_overlay=true)
+        bslLb  := label.new(bslBr, bslLvl, "BSL  "+f_pct(bslLvl),
+             style=label.style_label_right,
+             color=color.new(#FF9800,10), textcolor=color.white, size=size.tiny, force_overlay=true)
+        prevBSL:=bslLvl
+    else
+        if not na(bslLn)
+            line.set_x2(bslLn, bar_index+50)
+
+if i_showLiq and not na(sslLvl)
+    if sslLvl!=prevSSL
+        if not na(sslLn)
+            line.delete(sslLn)
+        if not na(sslLb)
+            label.delete(sslLb)
+        sslLn  := line.new(sslBr, sslLvl, bar_index+50, sslLvl,
+             color=color.new(#00BCD4,30), style=line.style_dashed, width=1, force_overlay=true)
+        sslLb  := label.new(sslBr, sslLvl, "SSL  "+f_pct(sslLvl),
+             style=label.style_label_right,
+             color=color.new(#00BCD4,10), textcolor=color.white, size=size.tiny, force_overlay=true)
+        prevSSL:=sslLvl
+    else
+        if not na(sslLn)
+            line.set_x2(sslLn, bar_index+50)
+
+bool bslSwept = not na(bslLvl) and (i_sweepWk?high>bslLvl:close>bslLvl) and close<bslLvl
+bool sslSwept = not na(sslLvl) and (i_sweepWk?low <sslLvl:close<sslLvl) and close>sslLvl
+
+float swBV  = close>=open ? volume : volume*(close-low) /math.max(high-low,0.0001)
+float swSV  = close< open ? volume : volume*(high-close)/math.max(high-low,0.0001)
+float swTot = math.max(swBV+swSV, 0.0001)
+float swBS  = swBV/swTot*100
+float swSS  = swSV/swTot*100
+float swVol = volAvg20>0 ? volume/volAvg20*100 : 100.0
+
+if i_showBSS and bslSwept
+    label.new(bar_index, high,
+         "SS%:"+f_vol(swSS)+"  Vol:"+f_vol(swVol),
+         style=label.style_label_down,
+         color=color.new(#FF9800,20), textcolor=color.white, size=size.tiny, force_overlay=true)
+if i_showBSS and sslSwept
+    label.new(bar_index, low,
+         "BS%:"+f_vol(swBS)+"  Vol:"+f_vol(swVol),
+         style=label.style_label_up,
+         color=color.new(#00BCD4,20), textcolor=color.white, size=size.tiny, force_overlay=true)
+
+// ── SECTION 6 — ORDER FLOW + CANDLE COLOUR MODE ──
+float bVol  = close>=open ? volume : volume*(close-low) /math.max(high-low,0.0001)
+float sVol  = close< open ? volume : volume*(high-close)/math.max(high-low,0.0001)
+float dRat  = math.sum(bVol-sVol,i_ofLen) / math.max(math.sum(bVol+sVol,i_ofLen),0.0001)*100
+
+// Candle colouring — one place, three modes (⑨ Display)
+color candCol = i_candleMode == "KTR trend" ? (ktrUp ? color.yellow : color.red) :
+     i_candleMode == "Order flow" ? (dRat>0 ? color.new(i_colBull,55) : color.new(i_colBear,55)) : na
+barcolor(candCol, title="Candle colouring")
+
+// ── SECTION 7 — EMA ──
+emaFast = ta.ema(close, i_emaF)
+emaSlow = ta.ema(close, i_emaS)
+plot(i_showEMA ? emaFast : na, "EMA Fast", color=color.new(#2196F3,0), linewidth=1, force_overlay=true)
+plot(i_showEMA ? emaSlow : na, "EMA Slow", color=color.new(#FF9800,0), linewidth=1, force_overlay=true)
+
+// ── SECTION 8 — CRT  3-candle (TF-filtered) ──
+float crtMH = high[2]
+float crtML = low[2]
+bool crtBull = crtTfOk and low[1] <crtML and close>open and close>crtML and close<crtMH and high[1]<crtMH
+bool crtBear = crtTfOk and high[1]>crtMH and close<open and close<crtMH and close>crtML and low[1] >crtML
+
+if i_showCRT and crtTfOk
+    if crtBull
+        label.new(bar_index, low-atr14*0.8, "CRT ▲",
+             style=label.style_label_up,
+             color=color.new(i_colBull,15), textcolor=color.white, size=size.small, force_overlay=true)
+    if crtBear
+        label.new(bar_index, high+atr14*0.8, "CRT ▼",
+             style=label.style_label_down,
+             color=color.new(i_colBear,15), textcolor=color.white, size=size.small, force_overlay=true)
+
+if i_crtHL and crtTfOk and (crtBull or crtBear)
+    color cC = crtBull ? i_colBull : i_colBear
+    line.new(bar_index-2, crtMH, bar_index+25, crtMH, color=cC, style=line.style_dashed, width=1, force_overlay=true)
+    line.new(bar_index-2, crtML, bar_index+25, crtML, color=cC, style=line.style_dashed, width=1, force_overlay=true)
+    label.new(bar_index+1, crtMH, "CRT H",
+         style=label.style_label_left,
+         color=color.new(color.gray,60), textcolor=color.white, size=size.tiny, force_overlay=true)
+    label.new(bar_index+1, crtML, "CRT L",
+         style=label.style_label_left,
+         color=color.new(color.gray,60), textcolor=color.white, size=size.tiny, force_overlay=true)
+
+// ── SECTION 9 — CISD ──
+bool bearRun = i_cisdRun>=2 ? (close[2]<open[2] and close[1]<open[1]) : close[1]<open[1]
+bool bullRun = i_cisdRun>=2 ? (close[2]>open[2] and close[1]>open[1]) : close[1]>open[1]
+if i_cisdRun>=3
+    bearRun := close[3]<open[3] and bearRun
+    bullRun := close[3]>open[3] and bullRun
+
+int  origBar  = i_cisdRun>=2 ? 3 : 2
+bool cisdBull = bearRun and close[origBar]<open[origBar] and close>close[origBar]
+bool cisdBear = bullRun and close[origBar]>open[origBar] and close<close[origBar]
+
+color CBUY  = color.new(#00C853,0)
+color CSELL = color.new(#D50000,0)
+
+if i_showCISD
+    if cisdBull
+        box.new(bar_index, math.max(open,close), bar_index, math.min(open,close),
+             border_color=color.new(#00C853,10), bgcolor=color.new(#00C853,55), border_width=2, force_overlay=true)
+        label.new(bar_index, low-atr14*2.2, "CISD  BUY ▲",
+             style=label.style_label_up, color=CBUY,
+             textcolor=color.white, size=size.normal, force_overlay=true)
+        line.new(bar_index-origBar, close[origBar], bar_index+30, close[origBar],
+             color=CBUY, style=line.style_dotted, width=2, force_overlay=true)
+        label.new(bar_index-origBar, close[origBar], "CISD lvl  support",
+             style=label.style_label_right,
+             color=color.new(#00C853,30), textcolor=color.white, size=size.tiny, force_overlay=true)
+    if cisdBear
+        box.new(bar_index, math.max(open,close), bar_index, math.min(open,close),
+             border_color=color.new(#D50000,10), bgcolor=color.new(#D50000,55), border_width=2, force_overlay=true)
+        label.new(bar_index, high+atr14*2.2, "CISD  SELL ▼",
+             style=label.style_label_down, color=CSELL,
+             textcolor=color.white, size=size.normal, force_overlay=true)
+        line.new(bar_index-origBar, close[origBar], bar_index+30, close[origBar],
+             color=CSELL, style=line.style_dotted, width=2, force_overlay=true)
+        label.new(bar_index-origBar, close[origBar], "CISD lvl  resistance",
+             style=label.style_label_right,
+             color=color.new(#D50000,30), textcolor=color.white, size=size.tiny, force_overlay=true)
+
+// ── SECTION 10 — AMD SESSION BOXES ──
+if i_showAMD
+    int h  = hour(time,"UTC")
+    int mn = minute(time,"UTC")
+    int tf = math.max(timeframe.in_seconds(timeframe.period)/60, 1)
+    if h==0  and mn==0
+        box.new(bar_index, high+atr14*1.5, bar_index+int(8*60/tf),  low-atr14*1.5,
+             bgcolor=color.new(color.gray,90), border_color=color.new(color.gray,55),
+             border_style=line.style_dotted, border_width=1,
+             text="A — Asia", text_color=color.new(color.gray,20),
+             text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top, force_overlay=true)
+    if h==8  and mn==0
+        box.new(bar_index, high+atr14*1.5, bar_index+int(4*60/tf),  low-atr14*1.5,
+             bgcolor=color.new(#FF9800,92), border_color=color.new(#FF9800,45),
+             border_style=line.style_dotted, border_width=1,
+             text="M — London", text_color=color.new(#FF9800,10),
+             text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top, force_overlay=true)
+    if h==12 and mn==0
+        box.new(bar_index, high+atr14*1.5, bar_index+int(5*60/tf),  low-atr14*1.5,
+             bgcolor=color.new(#26a69a,92), border_color=color.new(#26a69a,45),
+             border_style=line.style_dotted, border_width=1,
+             text="D — New York", text_color=color.new(#26a69a,10),
+             text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_top, force_overlay=true)
+
+// ── SECTION 11 — EQH / EQL + PD ARRAY ──
+var float prevPH=na
+var float prevPL=na
+var float pdH=na
+var float pdL=na
+if bullBOS
+    pdH:=lastH
+    pdL:=lastL
+if bearBOS
+    pdH:=lastH
+    pdL:=lastL
+
+if not na(swingH)
+    float tol=swingH*i_eqlTol/100
+    if i_showEQL and not na(prevPH) and math.abs(swingH-prevPH)<=tol
+        line.new(lastH_bar, swingH, bar_index-i_swing+3, swingH,
+             color=color.new(#FF9800,10), style=line.style_solid, width=2, force_overlay=true)
+        label.new(bar_index-i_swing, swingH+atr14*0.5, "EQH  double BSL",
+             style=label.style_label_down,
+             color=color.new(#FF9800,0), textcolor=color.white, size=size.small, force_overlay=true)
+    prevPH:=swingH
+
+if not na(swingL)
+    float tol=swingL*i_eqlTol/100
+    if i_showEQL and not na(prevPL) and math.abs(swingL-prevPL)<=tol
+        line.new(lastL_bar, swingL, bar_index-i_swing+3, swingL,
+             color=color.new(#00BCD4,10), style=line.style_solid, width=2, force_overlay=true)
+        label.new(bar_index-i_swing, swingL-atr14*0.5, "EQL  double SSL",
+             style=label.style_label_up,
+             color=color.new(#00BCD4,0), textcolor=color.white, size=size.small, force_overlay=true)
+    prevPL:=swingL
+
+float pdPos  = not na(pdH) and not na(pdL) ? (close-pdL)/math.max(pdH-pdL,0.0001)*100 : 50.0
+string pdStr = pdPos>=62 ? "Premium  sell zone" : pdPos<=38 ? "Discount  buy zone" : "Equilibrium  wait"
+color  pdCol = pdPos>=62 ? color.new(i_colBear,30) : pdPos<=38 ? color.new(i_colBull,30) : color.new(#FFC107,30)
+color  pdTxt = pdPos>=62 ? i_colBear : pdPos<=38 ? i_colBull : color.new(#FFC107,0)
+if i_showPD and barstate.islast
+    label.new(bar_index+2, close,
+         "PD: "+pdStr+" ("+str.tostring(math.round(pdPos,0))+"%)",
+         style=label.style_label_left, color=pdCol, textcolor=color.white, size=size.small, force_overlay=true)
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 12 — CASCADE
+// ══════════════════════════════════════════════════════════════════
+bool newBiasBar = ta.change(time(i_biasTF)) != 0
+bool newMidBar  = ta.change(time(i_midTF))  != 0
+
+[b_cB, b_cS, b_hB, b_hS, b_crtB, b_crtS, b_lvl] = request.security(
+     syminfo.tickerid, i_biasTF,
+     [cisdBull, cisdBear, bullCHOCHfinal, bearCHOCHfinal, crtBull, crtBear, close[origBar]],
+     lookahead=barmerge.lookahead_off)
+
+[m_cB, m_cS, m_hB, m_hS, m_crtB, m_crtS] = request.security(
+     syminfo.tickerid, i_midTF,
+     [cisdBull, cisdBear, bullCHOCHfinal, bearCHOCHfinal, crtBull, crtBear],
+     lookahead=barmerge.lookahead_off)
+
+bool bSigBull = b_cB or b_hB
+bool bSigBear = b_cS or b_hS
+
+bool mSigBull = m_cB or m_hB or m_crtB
+bool mSigBear = m_cS or m_hS or m_crtS
+
+var bool   biasBull = false
+var bool   biasBear = false
+var float  biasLvl  = na
+var int    biasBr   = na
+var string biasTxt  = ""
+
+bool canSetBull = bSigBull and not biasBull
+bool canSetBear = bSigBear and not biasBear
+bool canFlipBull = bSigBull and biasBear
+bool canFlipBear = bSigBear and biasBull
+
+if canFlipBull or canSetBull
+    biasBull := true
+    biasBear := false
+    biasLvl  := b_lvl
+    biasBr   := bar_index
+    biasTxt  := f_sig(b_cB, b_hB, false)
+
+if canFlipBear or canSetBear
+    biasBear := true
+    biasBull := false
+    biasLvl  := b_lvl
+    biasBr   := bar_index
+    biasTxt  := f_sig(b_cS, b_hS, false)
+
+bool newBBull = (canSetBull or canFlipBull) and not (canSetBull[1] or canFlipBull[1])
+bool newBBear = (canSetBear or canFlipBear) and not (canSetBear[1] or canFlipBear[1])
+
+bool invalBull = biasBull and not na(biasLvl) and close < biasLvl
+bool invalBear = biasBear and not na(biasLvl) and close > biasLvl
+if invalBull
+    biasBull := false
+if invalBear
+    biasBear := false
+
+var bool   midBull = false
+var bool   midBear = false
+var string midTxt  = ""
+
+bool newMBull = newMidBar and biasBull and mSigBull and not midBull
+bool newMBear = newMidBar and biasBear and mSigBear and not midBear
+
+if newMBull
+    midBull := true
+    midBear := false
+    midTxt  := f_sig(m_cB, m_hB, m_crtB)
+if newMBear
+    midBear := true
+    midBull := false
+    midTxt  := f_sig(m_cS, m_hS, m_crtS)
+
+if not biasBull
+    midBull := false
+if not biasBear
+    midBear := false
+
+bool eTrigBull = crtBull or cisdBull or bullCHOCHfinal
+bool eTrigBear = crtBear or cisdBear or bearCHOCHfinal
+
+var bool entFiredBull = false
+var bool entFiredBear = false
+
+if not biasBull
+    midBull      := false
+    entFiredBull := false
+if not biasBear
+    midBear      := false
+    entFiredBear := false
+
+bool pdOkLong  = pdPos <= 62.0
+bool pdOkShort = pdPos >= 38.0
+bool entryLong  = biasBull and midBull and eTrigBull and not entFiredBull and pdOkLong
+bool entryShort = biasBear and midBear and eTrigBear and not entFiredBear and pdOkShort
+
+if entryLong
+    entFiredBull := true
+if entryShort
+    entFiredBear := true
+
+string bTF = i_biasTF + "m"
+string mTF = i_midTF  + "m"
+string eTF = timeframe.period + "m"
+
+if i_showLyr
+    if newBBull
+        label.new(bar_index, high+atr14*3.5,
+             "① "+bTF+" BIAS  BUY ▲\n["+biasTxt+"]  Wait "+mTF+" confirm",
+             style=label.style_label_down,
+             color=CBUY, textcolor=color.white, size=size.normal, force_overlay=true)
+    if newBBear
+        label.new(bar_index, low-atr14*3.5,
+             "① "+bTF+" BIAS  SELL ▼\n["+biasTxt+"]  Wait "+mTF+" confirm",
+             style=label.style_label_up,
+             color=CSELL, textcolor=color.white, size=size.normal, force_overlay=true)
+    if invalBull
+        label.new(bar_index, high+atr14*1.2, "✕ Bias cancelled",
+             style=label.style_label_down,
+             color=color.new(color.gray,20), textcolor=color.white, size=size.small, force_overlay=true)
+    if invalBear
+        label.new(bar_index, low-atr14*1.2, "✕ Bias cancelled",
+             style=label.style_label_up,
+             color=color.new(color.gray,20), textcolor=color.white, size=size.small, force_overlay=true)
+    if newMBull
+        label.new(bar_index, high+atr14*2.2,
+             "② "+mTF+" CONFIRM  BUY ▲\n["+midTxt+"]  Wait "+eTF+" entry",
+             style=label.style_label_down,
+             color=color.new(#1976D2,0), textcolor=color.white, size=size.small, force_overlay=true)
+    if newMBear
+        label.new(bar_index, low-atr14*2.2,
+             "② "+mTF+" CONFIRM  SELL ▼\n["+midTxt+"]  Wait "+eTF+" entry",
+             style=label.style_label_up,
+             color=color.new(#1976D2,0), textcolor=color.white, size=size.small, force_overlay=true)
+
+var line  biasLine   = na
+var float prevBiasLv = na
+if (biasBull or biasBear) and biasLvl!=prevBiasLv
+    if not na(biasLine)
+        line.delete(biasLine)
+    biasLine   := line.new(biasBr, biasLvl, bar_index+100, biasLvl,
+         color=biasBull?color.new(#00C853,20):color.new(#D50000,20),
+         style=line.style_dotted, width=2, force_overlay=true)
+    prevBiasLv := biasLvl
+else if (biasBull or biasBear) and not na(biasLine)
+    line.set_x2(biasLine, bar_index+100)
+
+if i_showEZ
+    if newMBull
+        string pdWarnBull = pdPos > 62.0 ? "  ⚠ Premium — wait pullback" : ""
+        box.new(bar_index, close+atr14*0.5, bar_index+40, close-atr14*1.2,
+             bgcolor=color.new(#1976D2,88), border_color=color.new(#1976D2,40),
+             border_style=line.style_dashed, border_width=1,
+             text="Watch zone ▲\nWait "+eTF+" CRT/CISD/CHoCH"+pdWarnBull,
+             text_color=color.new(#1976D2,0), text_size=size.tiny,
+             text_halign=text.align_left, text_valign=text.align_top, force_overlay=true)
+    if newMBear
+        string pdWarnBear = pdPos < 38.0 ? "  ⚠ Discount — wait bounce" : ""
+        box.new(bar_index, close+atr14*1.2, bar_index+40, close-atr14*0.5,
+             bgcolor=color.new(#1976D2,88), border_color=color.new(#1976D2,40),
+             border_style=line.style_dashed, border_width=1,
+             text="Watch zone ▼\nWait "+eTF+" CRT/CISD/CHoCH"+pdWarnBear,
+             text_color=color.new(#1976D2,0), text_size=size.tiny,
+             text_halign=text.align_left, text_valign=text.align_top, force_overlay=true)
+
+if i_showStar
+    if entryLong
+        float slL = close - i_slPts
+        float tpL = close + i_tpPts
+        string tr = crtBull?"CRT ▲":cisdBull?"CISD BUY ▲":"CHoCH ▲"
+        label.new(bar_index, low-atr14*4.5,
+             "③ ★ LONG  "+tr+
+             "\nEntry:"+str.tostring(math.round(close,2))+
+             "  SL:"+str.tostring(math.round(slL,2))+
+             "  TP:"+str.tostring(math.round(tpL,2))+
+             "  (SL-"+str.tostring(i_slPts)+" TP+"+str.tostring(i_tpPts)+")",
+             style=label.style_label_up, color=i_colBull,
+             textcolor=color.white, size=size.normal, force_overlay=true)
+        line.new(bar_index, slL, bar_index+80, slL,
+             color=color.new(#ef5350,25), style=line.style_dashed, width=1, force_overlay=true)
+        line.new(bar_index, tpL, bar_index+80, tpL,
+             color=color.new(#26a69a,25), style=line.style_dashed, width=1, force_overlay=true)
+        label.new(bar_index+81, slL, "SL -"+str.tostring(i_slPts),
+             style=label.style_label_left,
+             color=color.new(#ef5350,20), textcolor=color.white, size=size.tiny, force_overlay=true)
+        label.new(bar_index+81, tpL, "TP +"+str.tostring(i_tpPts),
+             style=label.style_label_left,
+             color=color.new(#26a69a,20), textcolor=color.white, size=size.tiny, force_overlay=true)
+    if entryShort
+        float slS = close + i_slPts
+        float tpS = close - i_tpPts
+        string tr = crtBear?"CRT ▼":cisdBear?"CISD SELL ▼":"CHoCH ▼"
+        label.new(bar_index, high+atr14*4.5,
+             "③ ★ SHORT  "+tr+
+             "\nEntry:"+str.tostring(math.round(close,2))+
+             "  SL:"+str.tostring(math.round(slS,2))+
+             "  TP:"+str.tostring(math.round(tpS,2))+
+             "  (SL+"+str.tostring(i_slPts)+" TP-"+str.tostring(i_tpPts)+")",
+             style=label.style_label_down, color=i_colBear,
+             textcolor=color.white, size=size.normal, force_overlay=true)
+        line.new(bar_index, slS, bar_index+80, slS,
+             color=color.new(#ef5350,25), style=line.style_dashed, width=1, force_overlay=true)
+        line.new(bar_index, tpS, bar_index+80, tpS,
+             color=color.new(#26a69a,25), style=line.style_dashed, width=1, force_overlay=true)
+        label.new(bar_index+81, slS, "SL +"+str.tostring(i_slPts),
+             style=label.style_label_left,
+             color=color.new(#ef5350,20), textcolor=color.white, size=size.tiny, force_overlay=true)
+        label.new(bar_index+81, tpS, "TP -"+str.tostring(i_tpPts),
+             style=label.style_label_left,
+             color=color.new(#26a69a,20), textcolor=color.white, size=size.tiny, force_overlay=true)
+
+// ── SECTION 13 — SMT ──
+[xH, xL] = request.security(i_smtSym, timeframe.period, [high,low], lookahead=barmerge.lookahead_off)
+xpH = ta.pivothigh(xH, i_smtLen, i_smtLen)
+xpL = ta.pivotlow (xL, i_smtLen, i_smtLen)
+gpH = ta.pivothigh(high, i_smtLen, i_smtLen)
+gpL = ta.pivotlow (low,  i_smtLen, i_smtLen)
+var float pxH=na
+var float pgH=na
+var float pxL=na
+var float pgL=na
+if not na(xpH)
+    pxH:=xpH
+if not na(gpH)
+    pgH:=gpH
+if not na(xpL)
+    pxL:=xpL
+if not na(gpL)
+    pgL:=gpL
+
+bool smtBear = i_showSMT and not na(gpH) and not na(xpH) and gpH>pgH and xpH<pxH
+bool smtBull = i_showSMT and not na(gpL) and not na(xpL) and gpL<pgL and xpL>pxL
+
+if i_showSMT and smtBull
+    label.new(bar_index-i_smtLen, low[i_smtLen]-atr14*1.5,
+         "SMT ▲  Gold LL / XAG HL",
+         style=label.style_label_up,
+         color=color.new(#E91E63,0), textcolor=color.white, size=size.small, force_overlay=true)
+if i_showSMT and smtBear
+    label.new(bar_index-i_smtLen, high[i_smtLen]+atr14*1.5,
+         "SMT ▼  Gold HH / XAG LH",
+         style=label.style_label_down,
+         color=color.new(#E91E63,0), textcolor=color.white, size=size.small, force_overlay=true)
+
+// ── SECTION 13B — BTC CORRELATION PANEL ──
+[btc_close, btc_open, btc_high, btc_low] = request.security(
+     i_btcSym, timeframe.period,
+     [close, open, high, low],
+     lookahead=barmerge.lookahead_off)
+
+btc_close_D  = request.security(i_btcSym, "D", close[1], lookahead=barmerge.lookahead_off)
+btc_chg_pct  = not na(btc_close_D) and btc_close_D != 0 ? (btc_close - btc_close_D) / btc_close_D * 100 : 0.0
+
+bool btc_bull = btc_close >= btc_open
+bool btc_bear = btc_close <  btc_open
+
+btc_ema20 = ta.ema(btc_close, 20)
+btc_ema50 = ta.ema(btc_close, 50)
+bool btc_uptrend   = btc_ema20 > btc_ema50
+bool btc_downtrend = btc_ema20 < btc_ema50
+
+bool btc_bull3 = btc_close > btc_open and btc_close[1] > btc_open[1] and btc_close[2] > btc_open[2]
+bool btc_bear3 = btc_close < btc_open and btc_close[1] < btc_open[1] and btc_close[2] < btc_open[2]
+
+bool aligned    = (btc_bull and close >= open) or (btc_bear and close < open)
+bool diverging  = (btc_bull and close < open)  or (btc_bear and close >= open)
+
+var table btcPanel = table.new(
+     i_btcPos == "bottom_right" ? position.bottom_right :
+     i_btcPos == "bottom_left"  ? position.bottom_left  : position.top_left,
+     2, 9,
+     bgcolor=color.new(#0D1117,60),
+     border_color=color.new(#F7931A,50),
+     border_width=1,
+     frame_color=color.new(#F7931A,40),
+     frame_width=1,
+     force_overlay=true)
+
+color BTC_ORANGE = color.new(#F7931A,0)
+color BTC_DIM    = color.new(#F7931A,40)
+color BP_CH      = color.new(#1C1008,55)
+color BP_CR      = color.new(#0D0803,60)
+color BP_CL      = color.new(#B0B0B0,0)
+
+if i_showBTC and barstate.islast
+    table.cell(btcPanel,0,0, "₿ BTC",           bgcolor=BP_CH, text_color=BTC_ORANGE,    text_size=size.small)
+    table.cell(btcPanel,1,0, i_btcSym,           bgcolor=BP_CH, text_color=color.white,   text_size=size.small)
+    table.cell(btcPanel,0,1, "Price",            bgcolor=BP_CR, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,1,
+         str.tostring(math.round(btc_close,2), "#,###.##"),
+         bgcolor=BP_CR,
+         text_color=btc_bull ? color.new(#00C853,0) : color.new(#D50000,0),
+         text_size=size.small)
+    float absPct = math.abs(btc_chg_pct)
+    string chgStr = (btc_chg_pct>=0?"+":"") + str.tostring(math.round(btc_chg_pct,2)) + "%"
+    table.cell(btcPanel,0,2, "Day chg",         bgcolor=BP_CR, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,2, chgStr,
+         bgcolor=BP_CR,
+         text_color=btc_chg_pct>=0 ? color.new(#00C853,0) : color.new(#D50000,0),
+         text_size=size.tiny)
+    table.cell(btcPanel,0,3, "Candle",          bgcolor=BP_CR, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,3, btc_bull?"▲ Bull":"▼ Bear",
+         bgcolor=BP_CR,
+         text_color=btc_bull?color.new(#00C853,0):color.new(#D50000,0),
+         text_size=size.tiny)
+    table.cell(btcPanel,0,4, "Trend",           bgcolor=BP_CR, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,4, btc_uptrend?"▲ Up":btc_downtrend?"▼ Down":"◆ Flat",
+         bgcolor=BP_CR,
+         text_color=btc_uptrend?color.new(#00C853,0):btc_downtrend?color.new(#D50000,0):color.new(#FFC107,0),
+         text_size=size.tiny)
+    table.cell(btcPanel,0,5, "Momentum",        bgcolor=BP_CR, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,5, btc_bull3?"▲▲▲ Strong bull":btc_bear3?"▼▼▼ Strong bear":"◆ Mixed",
+         bgcolor=BP_CR,
+         text_color=btc_bull3?color.new(#00C853,0):btc_bear3?color.new(#D50000,0):color.new(#FFC107,0),
+         text_size=size.tiny)
+    table.cell(btcPanel,0,6, "XAU align",       bgcolor=BP_CH, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,6, aligned?"✓ Same dir":diverging?"⚠ Diverging":"—",
+         bgcolor=BP_CH,
+         text_color=aligned?color.new(#00C853,0):diverging?color.new(#FF9800,0):BP_CL,
+         text_size=size.tiny)
+    string btcHint = btc_uptrend and btc_bull3 ? "BTC bullish — favor XAU longs" :
+                     btc_downtrend and btc_bear3 ? "BTC bearish — favor XAU shorts" :
+                     aligned ? "BTC + XAU aligned" :
+                     diverging ? "BTC ≠ XAU — wait" : "—"
+    color hintCol  = btc_uptrend and btc_bull3 ? color.new(#00C853,0) :
+                     btc_downtrend and btc_bear3 ? color.new(#D50000,0) :
+                     aligned ? color.new(#26a69a,0) :
+                     diverging ? color.new(#FF9800,0) : BP_CL
+    table.cell(btcPanel,0,7, "Hint",            bgcolor=BP_CH, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,7, btcHint,           bgcolor=BP_CH, text_color=hintCol,        text_size=size.tiny)
+    table.cell(btcPanel,0,8, "H / L",           bgcolor=BP_CR, text_color=BP_CL,         text_size=size.tiny)
+    table.cell(btcPanel,1,8,
+         str.tostring(math.round(btc_high,0)) + " / " + str.tostring(math.round(btc_low,0)),
+         bgcolor=BP_CR, text_color=BTC_DIM,   text_size=size.tiny)
+
+// ── SECTION 14 — DASHBOARD ──
+bool emaBull = emaFast>emaSlow and close>emaFast
+bool emaBear = emaFast<emaSlow and close<emaFast
+
+string eStr  = emaBull?"▲ LONG":emaBear?"▼ SHORT":"◆ WAIT"
+color  eCol  = emaBull?i_colBull:emaBear?i_colBear:color.new(#FFC107,0)
+string tStr  = mktTrend==1?"▲ BULL":mktTrend==-1?"▼ BEAR":"◆ FLAT"
+color  tCol  = mktTrend==1?i_colBull:mktTrend==-1?i_colBear:color.new(#FFC107,0)
+string oStr  = (dRat>=0?"BUY ":"SELL ")+str.tostring(math.round(math.abs(dRat),1))+"%"
+color  oCol  = dRat>=0?i_colBull:i_colBear
+string cStr  = cisdBull?"CISD BUY ▲":cisdBear?"CISD SELL ▼":"—"
+color  cCol  = cisdBull?CBUY:cisdBear?CSELL:color.new(#8B949E,0)
+string sStr  = smtBull?"SMT ▲ (XAG)":smtBear?"SMT ▼ (XAG)":"—"
+color  sCol  = (smtBull or smtBear)?color.new(#E91E63,0):color.new(#8B949E,0)
+
+// KTR row for dashboard
+string kStr = not i_ktrOn ? "OFF" :
+     ktrEntryBuy ? "❖ BUY entry" : ktrEntrySell ? "❖ SELL entry" :
+     ktrAlertBuy ? "◆ Buy alert" : ktrAlertSell ? "◆ Sell alert" :
+     ktrUp ? "▲ Bull trend" : "▼ Bear trend"
+color kCol = not i_ktrOn ? color.new(#8B949E,0) :
+     (ktrEntryBuy or ktrAlertBuy) ? color.new(#00C853,0) :
+     (ktrEntrySell or ktrAlertSell) ? color.new(#D50000,0) :
+     ktrUp ? color.yellow : color.new(#D50000,0)
+
+string b1S   = biasBull?"▲ BUY bias":biasBear?"▼ SELL bias":"◆ FLAT — wait"
+color  b1C   = biasBull?CBUY:biasBear?CSELL:color.new(#8B949E,0)
+string b2S   = midBull?"✓ BUY":midBear?"✓ SELL":(biasBull or biasBear)?"Waiting "+mTF+"...":"—"
+color  b2C   = midBull?CBUY:midBear?CSELL:color.new(#8B949E,0)
+bool pdBlockedLong  = biasBull and midBull and eTrigBull and not entFiredBull and not pdOkLong
+bool pdBlockedShort = biasBear and midBear and eTrigBear and not entFiredBear and not pdOkShort
+string b3S   = entryLong ? "★ LONG — take it" :
+               entryShort ? "★ SHORT — take it" :
+               pdBlockedLong  ? "⚠ Wait — in Premium" :
+               pdBlockedShort ? "⚠ Wait — in Discount" :
+               (midBull or midBear) ? "Watching "+eTF+"..." : "—"
+color  b3C   = entryLong?i_colBull:entryShort?i_colBear:
+               (pdBlockedLong or pdBlockedShort)?color.new(#FF9800,0):color.new(#8B949E,0)
+string crtTfS = crtTfOk?timeframe.period+"m ✓":"OFF — change TF"
+
+var table d = table.new(position.top_right, 2, 21,
+     bgcolor=color.new(#0D1117,60), border_color=color.new(#30363D,40),
+     border_width=1, frame_color=color.new(#30363D,40), frame_width=1,
+     force_overlay=true)
+color CH=color.new(#1C2128,55)
+color CR=color.new(#0D1117,60)
+color CL=color.new(#8B949E,0)
+
+if barstate.islast and i_showDash
+    table.cell(d,0,0,  "SMC 2026 + KTR",  bgcolor=CH,text_color=CL,       text_size=size.small)
+    table.cell(d,1,0,  syminfo.ticker,   bgcolor=CH,text_color=color.white, text_size=size.small)
+    table.cell(d,0,1,  "KTR",            bgcolor=CH,text_color=CL,          text_size=size.small)
+    table.cell(d,1,1,  kStr,              bgcolor=CH,text_color=kCol,        text_size=size.small)
+    table.cell(d,0,2,  "EMA Bias",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,2,  eStr,             bgcolor=CR,text_color=eCol,        text_size=size.tiny)
+    table.cell(d,0,3,  "BOS Trend",     bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,3,  tStr,             bgcolor=CR,text_color=tCol,        text_size=size.tiny)
+    table.cell(d,0,4,  "CHoCH",         bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,4,  chochDash,
+         bgcolor=CR,text_color=chochDashCol,text_size=size.tiny)
+    table.cell(d,0,5,  "Order Flow",    bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,5,  oStr,             bgcolor=CR,text_color=oCol,        text_size=size.tiny)
+    table.cell(d,0,6,  "PD Array",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,6,  pdStr+" ("+str.tostring(math.round(pdPos,0))+"%)",
+               bgcolor=CR,text_color=pdTxt,text_size=size.tiny)
+    table.cell(d,0,7,  "BSL lvl",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,7,  not na(bslLvl)?str.tostring(math.round(bslLvl,2)):"—",
+               bgcolor=CR,text_color=color.new(#FF9800,0),text_size=size.tiny)
+    table.cell(d,0,8,  "SSL lvl",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,8,  not na(sslLvl)?str.tostring(math.round(sslLvl,2)):"—",
+               bgcolor=CR,text_color=color.new(#00BCD4,0),text_size=size.tiny)
+    table.cell(d,0,9,  "Bull OB",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,9,  str.tostring(aBullOB)+" act / "+str.tostring(mBullOB)+" mit",
+               bgcolor=CR,text_color=i_colBull,text_size=size.tiny)
+    table.cell(d,0,10, "Bear OB",       bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,10, str.tostring(aBearOB)+" act / "+str.tostring(mBearOB)+" mit",
+               bgcolor=CR,text_color=i_colBear,text_size=size.tiny)
+    table.cell(d,0,11, "Bull FVG",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,11, str.tostring(aBullFVG)+" / "+str.tostring(fBullFVG)+" filled",
+               bgcolor=CR,text_color=i_colBull,text_size=size.tiny)
+    table.cell(d,0,12, "Bear FVG",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,12, str.tostring(aBearFVG)+" / "+str.tostring(fBearFVG)+" filled",
+               bgcolor=CR,text_color=i_colBear,text_size=size.tiny)
+    table.cell(d,0,13, "CISD",          bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,13, cStr,             bgcolor=CR,text_color=cCol,        text_size=size.tiny)
+    table.cell(d,0,14, "SMT  XAG",      bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,14, sStr,             bgcolor=CR,text_color=sCol,        text_size=size.tiny)
+    table.cell(d,0,15, "CRT TF",        bgcolor=CR,text_color=CL,          text_size=size.tiny)
+    table.cell(d,1,15, crtTfS,
+               bgcolor=CR,text_color=crtTfOk?i_colBull:color.new(#FFC107,0),text_size=size.tiny)
+    table.cell(d,0,16, "① "+bTF+" Bias",  bgcolor=CH,text_color=CL,       text_size=size.small)
+    table.cell(d,1,16, b1S,                bgcolor=CH,text_color=b1C,      text_size=size.small)
+    table.cell(d,0,17, "② "+mTF+" Confirm",bgcolor=CH,text_color=CL,      text_size=size.small)
+    table.cell(d,1,17, b2S,                bgcolor=CH,text_color=b2C,      text_size=size.small)
+    table.cell(d,0,18, "③ "+eTF+" Entry", bgcolor=CH,text_color=CL,        text_size=size.small)
+    table.cell(d,1,18, b3S,                bgcolor=CH,text_color=b3C,      text_size=size.small)
+    table.cell(d,0,19, "SL / TP pts",       bgcolor=CH,text_color=CL,        text_size=size.tiny)
+    table.cell(d,1,19, "SL:−"+str.tostring(i_slPts,format.mintick)+" TP:+"+str.tostring(i_tpPts,format.mintick),
+               bgcolor=CH,text_color=color.new(#FFC107,0),text_size=size.tiny)
+    table.cell(d,0,20, "Price",            bgcolor=CH,text_color=CL,        text_size=size.small)
+    table.cell(d,1,20, str.tostring(close,"#.00000"),bgcolor=CH,text_color=color.white,text_size=size.small)
+
+// ── SECTION 15 — alertcondition MENU ──
+alertcondition(bullBOS,      "BOS ▲",              "BOS bullish break")
+alertcondition(bearBOS,      "BOS ▼",              "BOS bearish break")
+alertcondition(bullCHOCH,    "CHoCH ▲",            "CHoCH bull reversal")
+alertcondition(bearCHOCH,    "CHoCH ▼",            "CHoCH bear reversal")
+alertcondition(bslSwept,     "BSL swept",          "BSL raid detected")
+alertcondition(sslSwept,     "SSL swept",          "SSL raid detected")
+alertcondition(cisdBull,     "CISD  BUY ▲",        "CISD bullish delivery")
+alertcondition(cisdBear,     "CISD  SELL ▼",       "CISD bearish delivery")
+alertcondition(crtBull,      "CRT ▲",              "CRT bull 3-candle")
+alertcondition(crtBear,      "CRT ▼",              "CRT bear 3-candle")
+alertcondition(newBBull,     "① BIAS  BUY ▲",     "CASCADE 1: Bias TF bull signal")
+alertcondition(newBBear,     "① BIAS  SELL ▼",    "CASCADE 1: Bias TF bear signal")
+alertcondition(invalBull,    "① Bias CANCELLED ▲","CASCADE: Bull bias cancelled")
+alertcondition(invalBear,    "① Bias CANCELLED ▼","CASCADE: Bear bias cancelled")
+alertcondition(newMBull,     "② CONFIRM  BUY ▲",  "CASCADE 2: Confirm TF bull")
+alertcondition(newMBear,     "② CONFIRM  SELL ▼", "CASCADE 2: Confirm TF bear")
+alertcondition(entryLong,    "③ ★ LONG",           "CASCADE 3: LONG — execute")
+alertcondition(entryShort,   "③ ★ SHORT",          "CASCADE 3: SHORT — execute")
+alertcondition(smtBull,      "SMT ▲  XAG div",     "SMT bull divergence")
+alertcondition(smtBear,      "SMT ▼  XAG div",     "SMT bear divergence")
+
+// ── SECTION 16 — alert() DYNAMIC  (one alert in TV catches all) ──
+if i_alBias and newBBull
+    alert("① "+bTF+" BIAS  BUY ▲ ["+biasTxt+"] — "+syminfo.ticker+
+         " | Price:"+str.tostring(math.round(close,2))+
+         " | SL ref:"+str.tostring(math.round(biasLvl,2))+
+         " | BSL:"+(not na(bslLvl)?str.tostring(math.round(bslLvl,2)):"—")+
+         " | SSL:"+(not na(sslLvl)?str.tostring(math.round(sslLvl,2)):"—")+
+         " | → Watch "+mTF+" for confirm",
+         alert.freq_once_per_bar_close)
+if i_alBias and newBBear
+    alert("① "+bTF+" BIAS  SELL ▼ ["+biasTxt+"] — "+syminfo.ticker+
+         " | Price:"+str.tostring(math.round(close,2))+
+         " | SL ref:"+str.tostring(math.round(biasLvl,2))+
+         " | BSL:"+(not na(bslLvl)?str.tostring(math.round(bslLvl,2)):"—")+
+         " | SSL:"+(not na(sslLvl)?str.tostring(math.round(sslLvl,2)):"—")+
+         " | → Watch "+mTF+" for confirm",
+         alert.freq_once_per_bar_close)
+if i_alInval and invalBull
+    alert("① BIAS CANCELLED ▲ — "+syminfo.ticker+
+         " | Closed below SL ref "+str.tostring(math.round(biasLvl,2))+
+         " | Cancel any pending long",
+         alert.freq_once_per_bar_close)
+if i_alInval and invalBear
+    alert("① BIAS CANCELLED ▼ — "+syminfo.ticker+
+         " | Closed above SL ref "+str.tostring(math.round(biasLvl,2))+
+         " | Cancel any pending short",
+         alert.freq_once_per_bar_close)
+if i_alConf and newMBull
+    alert("② "+mTF+" CONFIRM  BUY ▲ ["+midTxt+"] — "+syminfo.ticker+
+         " | Price:"+str.tostring(math.round(close,2))+
+         " | SL ref:"+str.tostring(math.round(biasLvl,2))+
+         " | → Watch "+eTF+" for CRT / CISD entry",
+         alert.freq_once_per_bar_close)
+if i_alConf and newMBear
+    alert("② "+mTF+" CONFIRM  SELL ▼ ["+midTxt+"] — "+syminfo.ticker+
+         " | Price:"+str.tostring(math.round(close,2))+
+         " | SL ref:"+str.tostring(math.round(biasLvl,2))+
+         " | → Watch "+eTF+" for CRT / CISD entry",
+         alert.freq_once_per_bar_close)
+if i_alEntry and entryLong
+    float slL = close - i_slPts
+    float tpL = close + i_tpPts
+    string tr = crtBull?"CRT ▲":cisdBull?"CISD BUY ▲":"CHoCH ▲"
+    alert("③ ★ LONG  "+tr+" — "+syminfo.ticker+
+         " | Entry:"+str.tostring(math.round(close,2))+
+         " | SL:"+str.tostring(math.round(slL,2))+" (−"+str.tostring(i_slPts)+" pts)"+
+         " | TP:"+str.tostring(math.round(tpL,2))+" (+"+str.tostring(i_tpPts)+" pts)"+
+         " | "+bTF+" BUY + "+mTF+" confirm + "+eTF+" trigger",
+         alert.freq_once_per_bar_close)
+if i_alEntry and entryShort
+    float slS = close + i_slPts
+    float tpS = close - i_tpPts
+    string tr = crtBear?"CRT ▼":cisdBear?"CISD SELL ▼":"CHoCH ▼"
+    alert("③ ★ SHORT  "+tr+" — "+syminfo.ticker+
+         " | Entry:"+str.tostring(math.round(close,2))+
+         " | SL:"+str.tostring(math.round(slS,2))+" (+"+str.tostring(i_slPts)+" pts)"+
+         " | TP:"+str.tostring(math.round(tpS,2))+" (−"+str.tostring(i_tpPts)+" pts)"+
+         " | "+bTF+" SELL + "+mTF+" confirm + "+eTF+" trigger",
+         alert.freq_once_per_bar_close)
+if i_alSMT and smtBull
+    alert("SMT ▲ — "+syminfo.ticker+" vs "+i_smtSym+" | Gold LL / Silver HL", alert.freq_once_per_bar_close)
+if i_alSMT and smtBear
+    alert("SMT ▼ — "+syminfo.ticker+" vs "+i_smtSym+" | Gold HH / Silver LH", alert.freq_once_per_bar_close)
+
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 17 — PANE: BOYS (above 0) + BULLISHNESS (below 0)
+// This script runs as a pane script; everything above is forced onto
+// the price chart. Tables (dashboard, BTC) render in this pane —
+// drag the pane taller if they look squeezed.
+// ══════════════════════════════════════════════════════════════════
+paneRelVol = volume / ta.sma(volume, i_volLen) * 100
+plot(paneRelVol, "Boys", style=plot.style_columns,
+     color=close >= open ? color.green : color.red)
+
+paneSigned = close > open ? volume : close < open ? -volume : 0.0
+paneNet    = math.sum(paneSigned, i_bullLen)
+panePress  = paneNet / ta.sma(volume, 100) * 50
+paneExt    = panePress < ta.lowest(panePress, 200) * 0.75
+plot(panePress < 0 ? panePress : na, "Bullishness",
+     style=plot.style_columns,
+     color=paneExt ? color.lime : color.blue)
+
+hline(0, "Zero", color=color.gray)
+
+var table tPaneTop = table.new(position.top_left, 1, 1)
+var table tPaneBot = table.new(position.bottom_left, 1, 1)
+if barstate.islast
+    table.cell(tPaneTop, 0, 0, ktrUp ? "BOYS BUYING" : "BOYS SELLING",
+         text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 100))
+    table.cell(tPaneBot, 0, 0, ktrUp ? "BULLISHNESS" : "BEARISHNESS",
+         text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 100))
