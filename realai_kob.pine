@@ -4,6 +4,18 @@ indicator("RealAI KOB · KTR ❖ + OFX 2.0 (OrderBlock 1.0)", shorttitle="RealAI
 // ════════════════════════════════════════════════════════════════════
 // INPUTS
 // ════════════════════════════════════════════════════════════════════
+grpDisp  = "⓪ Display · labels & dashboard"
+showDash = input.bool(true, "Show dashboard", group=grpDisp)
+dashPos  = input.string("Bottom Right", "Dashboard position", options=["Top Right", "Middle Right", "Bottom Right", "Top Center", "Bottom Center", "Top Left", "Middle Left", "Bottom Left"], group=grpDisp)
+dashSize = input.string("Normal", "Dashboard text size", options=["Normal", "Small"], group=grpDisp)
+lbAll    = input.bool(true, "Show trade labels (master switch)", group=grpDisp, tooltip="Off = none of the labels below: a clean chart with only candles, blocks, zones and accelerators. The Win / Loss tests keep counting.")
+lbEnter  = input.bool(true, "ENTER boxes (LONG / SHORT · SL) + SL line", group=grpDisp)
+lbWL     = input.bool(true, "OFX W / L", group=grpDisp)
+lbAx     = input.bool(true, "Every accelerator w / l", group=grpDisp)
+lbKob    = input.bool(true, "KOB-15 / KOB³ orders, fills, W / L", group=grpDisp)
+lbKtr    = input.bool(true, "KTR ❖ + order flow W / L and ✗ marks", group=grpDisp)
+lbKtrDia = input.bool(true, "KTR diamonds, ❖ and 15m marks", group=grpDisp)
+
 const string SRC_FP = "Footprint (Premium/Ultimate)"
 const string SRC_IB = "Intrabar (lower timeframe)"
 const string SRC_SY = "Synthetic (candle anatomy)"
@@ -180,8 +192,6 @@ vpOffset   = input.int(45, "Offset from last bar", minval=0, maxval=200, group=g
 
 grpM = "⑨ Extras"
 mobileView = input.bool(false, "Mobile view (clean & compact)", group=grpM, tooltip="For phones: small 3-line dashboard, no volume profile, smaller ENTER boxes.")
-showDash = input.bool(true, "Show 5-gate dashboard", group=grpM)
-dashPos  = input.string("Bottom Right", "Dashboard position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grpM)
 
 grpL = "⑩ Key Levels"
 showMid  = input.bool(true, "Midnight (00:00 New York)", group=grpL)
@@ -1671,8 +1681,9 @@ if drawBull
         Block b = gArr.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
-        sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)") + "\n" + tt))
-        if showSL
+        if lbAll and lbEnter
+            sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)") + "\n" + tt))
+        if showSL and lbAll and lbEnter
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBear
@@ -1702,8 +1713,9 @@ if drawBear
         Block b = gArr.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
         float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
-        sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)") + "\n" + tt))
-        if showSL
+        if lbAll and lbEnter
+            sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)") + "\n" + tt))
+        if showSL and lbAll and lbEnter
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBull or drawBear
@@ -1714,9 +1726,9 @@ if drawBull or drawBear
 // at the signal close, SL = the rule's stop, TP = entry ± R multiple)
 // ════════════════════════════════════════════════════════════════════
 grpW    = "⑮ Backtest · Win / Loss"
-showWL  = input.bool(true, "Show W / L on the chart", group=grpW)
+showWL  = lbAll and lbWL   // ⓪ Display
 tpMode  = input.string("Fixed price distance", "Take profit type", options=["Fixed price distance", "R multiple"], group=grpW, tooltip="Fixed: TP = entry ± the price distance below (20.00 = 200 points on XAUUSD). R multiple: TP = entry ± R × (entry → SL distance).")
-tpPts   = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
+tpPts   = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
 tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="Only for 'R multiple': 2 = TP at twice the risk.")
 oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
 btFrom  = input.time(timestamp("01 Jan 2020 00:00 +0000"), "All tests · from date", group=grpW, tooltip="Every Win / Loss test in this script (OFX, Every AX, KOB-15, KOB³, KTR ❖) only opens trades between these dates. Set the same dates in the KTR script to compare over exactly the same days.")
@@ -1845,7 +1857,7 @@ if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or en
 // ════════════════════════════════════════════════════════════════════
 grpW2   = "⑮b Backtest · Every accelerator"
 axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
-axBtWL  = input.bool(true, "Show its W / L on the chart", group=grpW2, tooltip="Small 'w' / 'l' marks (lower case, so they are not mixed up with the 5-gate W / L).")
+axBtWL  = lbAll and lbAx   // ⓪ Display: small 'w' / 'l' marks
 axTp    = input.float(10.0, "TP distance (price) = 1R", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points on XAUUSD.")
 axSlMd  = input.string("Same as TP (1R)", "Stop loss", options=["Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
 axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
@@ -1913,8 +1925,8 @@ kCont  = input.bool(true, "Continuation signals (trend pullbacks)", group=grpK)
 kVolC  = input.bool(true, "❖ needs above-average volume (Boys confirm)", group=grpK)
 kVolM  = input.float(1.0, "Min relative volume for ❖", step=0.1, group=grpK)
 kHtf   = input.timeframe("15", "Higher KTR timeframe", group=grpK)
-kShow5 = input.bool(true, "Show 5m KTR diamonds + ❖", group=grpK)
-kShowH = input.bool(true, "Show 15m KTR ❖ (small '15' mark)", group=grpK)
+kShow5 = lbAll and lbKtrDia   // ⓪ Display
+kShowH = lbAll and lbKtrDia
 
 grpKB   = "⓪b KOB · Double / triple confirmation"
 kobWin  = input.int(6, "5m ❖ and OFX combo within (bars)", minval=0, maxval=50, group=grpKB, tooltip="The 5m KTR ❖ and the OFX 2.0 ENTER combo must be in the same direction and at most this many 5m candles apart (6 = 30 min). The trade starts at the close of the candle where the second one appears.")
@@ -1925,7 +1937,7 @@ kobTpMd = input.string("Fixed price distance", "Take profit type", options=["Fix
 kobTp   = input.float(10.0, "KOB³ TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="10.00 = 100 points on XAUUSD.")
 kobTpR  = input.float(1.0, "Take profit (R)", minval=0.5, step=0.5, group=grpKB)
 kobOne  = input.bool(true, "One trade at a time (per setup)", group=grpKB)
-kobLab  = input.bool(true, "Show KOB entries + W / L on the chart", group=grpKB)
+kobLab  = lbAll and lbKob   // ⓪ Display
 kobEnt  = input.string("Pending LIMIT (BUY −pts · SELL +pts)", "KOB-15 / KOB³ entry", options=["At signal close", "Pending LIMIT (BUY −pts · SELL +pts)"], group=grpKB, tooltip="Like the KTR ❖ trades: once the confirmation is complete (at the candle close), a BUY LIMIT is placed below / SELL LIMIT above the close. It only counts as a trade once price reaches it; if not reached in time, or price runs away first, it is 'missed' (not a win, not a loss). TP is measured from the fill price; the SL stays the OFX rule level.")
 kobOff  = input.float(20, "Pending offset (points)", minval=0, step=5, group=grpKB, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
 kobExp  = input.int(10, "Pending expires after (candles)", minval=1, group=grpKB)
@@ -2176,8 +2188,8 @@ ktTest  = input.bool(true, "Test KTR ❖ alone vs KTR ❖ + order flow", group=g
 ktTp    = input.float(20.0, "KTR test TP (price)", minval=0.1, step=0.5, group=grpOF, tooltip="20.00 = 200 points, like the KTR ❖ trades.")
 ktSl    = input.float(10.0, "KTR test SL (price)", minval=0.1, step=0.5, group=grpOF, tooltip="10.00 = 100 points.")
 ktOne   = input.bool(false, "One trade at a time", group=grpOF)
-ktLabA  = input.bool(false, "Show W / L of 'KTR ❖ all' on the chart", group=grpOF)
-ktLabF  = input.bool(true, "Show W / L of 'KTR ❖ + order flow' on the chart", group=grpOF)
+ktLabA  = false                    // 'KTR ❖ all' test: counted only, never drawn
+ktLabF  = lbAll and lbKtr           // ⓪ Display
 ofAxOn  = input.bool(true, "① Accelerator in the same direction within", inline="of1", group=grpOF, tooltip="Order flow ignition: a BuAx+ (for a BUY ❖) or BeAx+ (for a SELL ❖) printed in the last N candles.")
 ofAxN   = input.int(36, "bars", minval=1, maxval=300, inline="of1", group=grpOF)
 ofCvdOn = input.bool(true, "② Day delta (CVD) in the same direction, at least", inline="of2", group=grpOF, tooltip="Today's cumulative delta (sum of the candle deltas since the daily open) must be positive for BUY / negative for SELL, by at least this amount (0 = only the sign).")
@@ -2525,9 +2537,10 @@ if barstate.islast
 // dashboard
 var table dash = na
 if showDash and na(dash)
-    pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 6 : 15, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    pos = dashPos == "Top Right" ? position.top_right : dashPos == "Middle Right" ? position.middle_right : dashPos == "Top Center" ? position.top_center : dashPos == "Bottom Center" ? position.bottom_center : dashPos == "Top Left" ? position.top_left : dashPos == "Middle Left" ? position.middle_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
+    dash := table.new(pos, 2, mobileView ? 6 : 15, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
+string dSz = dashSize == "Small" ? size.tiny : size.small
 if showDash and barstate.islast
     color gold = #E3B341
     color ok   = #26A69A
@@ -2567,44 +2580,44 @@ if showDash and barstate.islast
         table.cell(dash, 0, 5, "KOB³", text_color=cK3, text_size=size.tiny)
         table.cell(dash, 1, 5, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS3))
     else
-        table.cell(dash, 0, 0, "RealAI KOB", text_color=gold, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=size.small, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
-        table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=size.small)
-        table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=size.small)
-        table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 3, sig, text_color=txt, text_size=size.small)
-        table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=size.small)
-        table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 0, "RealAI KOB", text_color=gold, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=dSz, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
+        table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=dSz)
+        table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=dSz)
+        table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 3, sig, text_color=txt, text_size=dSz)
+        table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=dSz)
+        table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=dSz)
         table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
-        table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small, tooltip="OFX combo" + f_dlTxt(dlOfx))
+        table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=dSz, tooltip="OFX combo" + f_dlTxt(dlOfx))
         if axBtOn
-            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=size.small, text_halign=text.align_left)
-            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()) + f_dlTxt(dlAx))
+            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=dSz, text_halign=text.align_left)
+            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=dSz, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()) + f_dlTxt(dlAx))
         string kobTpS = kobTpMd == "R multiple" ? str.tostring(kobTpR, "#.#") + "R" : str.tostring(kobTp, "#.##")
-        table.cell(dash, 0, 9, "KOB-15 A+ 15m ❖ + Combo · TP " + (kobTpMd == "R multiple" ? kobTpS : str.tostring(k15Tp, "#.##")), text_color=cK15, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 9, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS15))
-        table.cell(dash, 0, 10, "KOB³ 15m ❖ + 5m ❖ + Combo", text_color=cK3, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 10, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kS3))
+        table.cell(dash, 0, 9, "KOB-15 A+ 15m ❖ + Combo · TP " + (kobTpMd == "R multiple" ? kobTpS : str.tostring(k15Tp, "#.##")), text_color=cK15, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 9, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=dSz, tooltip=f_kobTip(kS15))
+        table.cell(dash, 0, 10, "KOB³ 15m ❖ + 5m ❖ + Combo", text_color=cK3, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 10, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=dSz, tooltip=f_kobTip(kS3))
         if ktTest
             string ktS = " · TP " + str.tostring(ktTp, "#.##") + " / SL " + str.tostring(ktSl, "#.##")
-            table.cell(dash, 0, 11, "KTR ❖ all" + ktS, text_color=txt, text_size=size.small, text_halign=text.align_left)
-            table.cell(dash, 1, 11, f_kobTxt(kSA), text_color=kSA.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kSA))
-            table.cell(dash, 0, 12, "KTR ❖ + Order flow" + ktS, text_color=cKF, text_size=size.small, text_halign=text.align_left)
-            table.cell(dash, 1, 12, f_kobTxt(kSF), text_color=kSF.pts >= 0 ? ok : bad, text_size=size.small, tooltip=f_kobTip(kSF))
+            table.cell(dash, 0, 11, "KTR ❖ all" + ktS, text_color=txt, text_size=dSz, text_halign=text.align_left)
+            table.cell(dash, 1, 11, f_kobTxt(kSA), text_color=kSA.pts >= 0 ? ok : bad, text_size=dSz, tooltip=f_kobTip(kSA))
+            table.cell(dash, 0, 12, "KTR ❖ + Order flow" + ktS, text_color=cKF, text_size=dSz, text_halign=text.align_left)
+            table.cell(dash, 1, 12, f_kobTxt(kSF), text_color=kSF.pts >= 0 ? ok : bad, text_size=dSz, tooltip=f_kobTip(kSF))
             string ofB = f_ofWhy(1)
             string ofS = f_ofWhy(-1)
             string ofNow = ofB == "" ? "BUY ✓" : ofS == "" ? "SELL ✓" : "none ✗"
-            table.cell(dash, 0, 13, "Order flow now", text_color=txt, text_size=size.small, text_halign=text.align_left)
-            table.cell(dash, 1, 13, ofNow + " · day Δ " + f_ks(dayCvd) + " · vol " + str.tostring(ofVolR, "#.##") + "× · ADX " + str.tostring(ofAdx, "#"), text_color=ofNow == "none ✗" ? gold : ok, text_size=size.small, tooltip="BUY side:" + (ofB == "" ? " ✓ all checks pass" : ofB) + "\n\nSELL side:" + (ofS == "" ? " ✓ all checks pass" : ofS))
+            table.cell(dash, 0, 13, "Order flow now", text_color=txt, text_size=dSz, text_halign=text.align_left)
+            table.cell(dash, 1, 13, ofNow + " · day Δ " + f_ks(dayCvd) + " · vol " + str.tostring(ofVolR, "#.##") + "× · ADX " + str.tostring(ofAdx, "#"), text_color=ofNow == "none ✗" ? gold : ok, text_size=dSz, tooltip="BUY side:" + (ofB == "" ? " ✓ all checks pass" : ofB) + "\n\nSELL side:" + (ofS == "" ? " ✓ all checks pass" : ofS))
         float allPts = netPts + kS15.pts
-        table.cell(dash, 0, 14, "OFX + KOB-15 A+ add-on", text_color=gold, text_size=size.small, text_halign=text.align_left)
-        table.cell(dash, 1, 14, str.tostring(allPts, "+#.##;-#.##") + "  (OFX " + str.tostring(netPts, "+#.##;-#.##") + " + A+ " + str.tostring(kS15.pts, "+#.##;-#.##") + ")", text_color=allPts >= 0 ? ok : bad, text_size=size.small, tooltip="Trade every OFX combo with 1 position (TP above). When the 15m KTR ❖ agrees (KOB-15 A+), add a 2nd position that holds for the KOB-15 TP. Result = OFX row + KOB-15 row, same dates and spread.\nRun KTR 15m in its own script next to this: its result adds on top.")
+        table.cell(dash, 0, 14, "OFX + KOB-15 A+ add-on", text_color=gold, text_size=dSz, text_halign=text.align_left)
+        table.cell(dash, 1, 14, str.tostring(allPts, "+#.##;-#.##") + "  (OFX " + str.tostring(netPts, "+#.##;-#.##") + " + A+ " + str.tostring(kS15.pts, "+#.##;-#.##") + ")", text_color=allPts >= 0 ? ok : bad, text_size=dSz, tooltip="Trade every OFX combo with 1 position (TP above). When the 15m KTR ❖ agrees (KOB-15 A+), add a 2nd position that holds for the KOB-15 TP. Result = OFX row + KOB-15 row, same dates and spread.\nRun KTR 15m in its own script next to this: its result adds on top.")
 
 // ════════════════════════════════════════════════════════════════════
 // EXTRA TOOLS (like reference): POC line · range box · RSI divergence
