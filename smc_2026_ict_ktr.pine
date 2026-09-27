@@ -78,13 +78,13 @@ i_bullLen  = input.int  (14,    "Pane: Bullishness pressure length", group=G0)
 // ── KTR ❖ TRADE INPUTS ──
 i_kTrOn    = input.bool  (true,  "Track every ❖ entry as a trade",   group=G0b,
      tooltip="Each KTR entry ❖ becomes a trade (see Entry below). WIN = TP touched first, LOSS = SL touched first. Only the KTR ❖ counts here, SMC signals are not used.")
-i_kEntry   = input.string("At ❖ close", "Entry",                    group=G0b,
+i_kEntry   = input.string("Pending LIMIT  (BUY −pts · SELL +pts)", "Entry",                    group=G0b,
      options=["At ❖ close", "Pending LIMIT  (BUY −pts · SELL +pts)", "Pending STOP  (BUY +pts · SELL −pts)"],
      tooltip="At ❖ close = trade starts at the ❖ candle's close.\nPending LIMIT = wait for a better price: BUY at ❖ close − offset, SELL at ❖ close + offset.\nPending STOP = wait for a breakout: BUY at ❖ close + offset, SELL at ❖ close − offset.\nA pending order only counts as a WIN / LOSS signal once price reaches it. If it is not reached in time it is 'missed' and not counted.")
-i_kOffPts  = input.float (40,    "Pending offset (points)",           group=G0b, minval=0, step=5)
-i_kExp     = input.int   (12,    "Pending expires after (candles)",   group=G0b, minval=1,
+i_kOffPts  = input.float (20,    "Pending offset (points)",           group=G0b, minval=0, step=5)
+i_kExp     = input.int   (10,    "Pending expires after (candles)",   group=G0b, minval=1,
      tooltip="If price does not reach the pending entry within this many candles after the ❖, the order is cancelled and counted as 'missed' (not a win, not a loss).")
-i_kRun     = input.string("Candles only", "Pending also cancelled when price runs", group=G0b,
+i_kRun     = input.string("200 pts away", "Pending also cancelled when price runs", group=G0b,
      options=["Candles only", "100 pts away", "200 pts away"],
      tooltip="Cancel the pending order ('missed') as soon as price moves this far away from the pending price without filling it — e.g. BUY LIMIT and price rallies 100 / 200 pts above it. The candle limit above still applies too, whichever comes first. If one candle both fills the order and runs away, it counts as filled.")
 i_kTpPts   = input.float (200.0, "TP points",                         group=G0b, options=[200.0, 100.0])
@@ -99,26 +99,26 @@ i_kSpr     = input.float (0.0,   "Spread  (ask − bid price)",         group=G0
      tooltip="Ask − bid, e.g. bid 4285.17 / ask 4285.35 = 0.18. Chart prices are bid: BUY opens on the ask (bid + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask. So the spread changes which trades win or lose. This spread is the one drawn on the chart and shown in the main Win / Loss rows.")
 i_kSprCmp  = input.bool  (true,  "Dashboard: Win / Loss for every spread", group=G0b,
      tooltip="Runs every ❖ also with spread 0 / 0.18 / 0.22 / 0.30 in the background (nothing extra drawn) and shows each result in its own dashboard row, so you don't have to switch. ● marks the spread picked above.")
-i_kDayOn   = input.bool  (false, "Daily limit",                       group=G0b,
+i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
-i_kDayTp   = input.float (4000,  "Daily profit target (points)",      group=G0b, minval=1, step=100)
+i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
 i_kZones   = input.bool  (true,  "Show TP / SL zones",                group=G0b)
 i_kWLlab   = input.bool  (true,  "Show WIN / LOSS labels",            group=G0b)
 
 // ── PROP FIRM MODE (runs on the ❖ trades above) ──
 i_pfOn     = input.bool  (false, "Prop firm mode",                    group=G0c,
-     tooltip="Runs the ❖ trades on a prop firm account: balance in $, daily loss, max loss, profit target and minimum trading days, Phase 1 → Phase 2 → Funded. With 'Block' on, any ❖ that could break a limit is not taken. Defaults = FundingPips 2-Step 10K as far as I know (8% / 5% target, 5% daily, 10% max, 3 days) — check your own account's rules, firms change them.")
+     tooltip="Runs the ❖ trades on a prop firm account: balance in $, daily loss, max loss, profit target and minimum trading days, Phase 1 → Phase 2 → Funded. With 'Block' on, any ❖ that could break a limit is not taken. Defaults = 2-Step Flexi 10K: target 10% (Step 1) / 5% (Step 2), max total loss 12%, daily loss 5% (set 0 if your account has no daily loss limit), 3 trading days — check your own account's rules, firms change them.")
 i_pfAcc    = input.float (10000, "Account size ($)",                  group=G0c, minval=100, step=1000)
 i_pfLot    = input.float (0.10,  "Lot size per trade",                group=G0c, minval=0.01, step=0.01,
      tooltip="XAUUSD 1 lot = 100 oz. 0.10 lot: SL 100 pts (10.00 price) = −$100 = 1% of 10K, TP 200 pts = +$200.")
 i_pfOz     = input.float (100,   "Contract size (oz per lot)",        group=G0c, minval=1)
 i_pfComm   = input.float (0,     "Commission $ per lot (round turn)", group=G0c, minval=0, step=1)
-i_pfT1     = input.float (8,     "Phase 1 profit target %",           group=G0c, minval=0.1, step=0.5)
+i_pfT1     = input.float (10,    "Phase 1 profit target %",           group=G0c, minval=0.1, step=0.5)
 i_pfT2     = input.float (5,     "Phase 2 profit target %  (0 = 1-step)", group=G0c, minval=0, step=0.5)
-i_pfDay    = input.float (5,     "Max daily loss %",                  group=G0c, minval=0.1, step=0.5,
-     tooltip="Counted from the smaller of the account size and the balance at the start of the day, with open trades at their worst price of the candle (equity) — safe for both ways firms count it.")
-i_pfMax    = input.float (10,    "Max overall loss %",                group=G0c, minval=0.1, step=0.5,
+i_pfDay    = input.float (5,     "Max daily loss %  (0 = none)",      group=G0c, minval=0, step=0.5,
+     tooltip="0 = the account has no daily loss limit. Counted from the smaller of the account size and the balance at the start of the day, with open trades at their worst price of the candle (equity) — safe for both ways firms count it.")
+i_pfMax    = input.float (12,    "Max overall loss %",                group=G0c, minval=0.1, step=0.5,
      tooltip="Static: equity may never go below account size − this %.")
 i_pfMinD   = input.int   (3,     "Min trading days per phase",        group=G0c, minval=0)
 i_pfGuard  = input.bool  (true,  "Block ❖ trades that could break a limit", group=G0c,
@@ -623,7 +623,7 @@ f_pfRoom(KtrStats st, float openRisk) =>
     float dayAmt = i_pfDay / 100 * math.min(st.dayBal, i_pfAcc)
     float maxAmt = i_pfMax / 100 * i_pfAcc
     float need   = openRisk + kRisk1
-    (st.dayBal - st.bal) + need <= dayAmt - buf and (i_pfAcc - st.bal) + need <= maxAmt - buf
+    (i_pfDay == 0 or (st.dayBal - st.bal) + need <= dayAmt - buf) and (i_pfAcc - st.bal) + need <= maxAmt - buf
 
 // pending order cancelled before it filled (not a win, not a loss) — drawn for the picked spread only
 f_kCancel(KtrTrade t, string why) =>
@@ -781,7 +781,7 @@ if kTrack and i_pfOn and barstate.isconfirmed
         float eqLo   = st.bal + kFlt.get(sc)
         float dayAmt = i_pfDay / 100 * math.min(st.dayBal, i_pfAcc)
         float tgtPct = st.phase == 1 ? i_pfT1 : i_pfT2
-        bool  bDay   = st.dayBal - eqLo >= dayAmt
+        bool  bDay   = i_pfDay > 0 and st.dayBal - eqLo >= dayAmt
         bool  bMax   = i_pfAcc - eqLo >= i_pfMax / 100 * i_pfAcc
         bool  bPass  = not (bDay or bMax) and st.phase < 3 and st.bal >= i_pfAcc * (1 + tgtPct / 100) and st.phDays >= i_pfMinD
         if bDay or bMax or bPass
@@ -1843,10 +1843,11 @@ string kPfTip    = "Account $" + str.tostring(i_pfAcc, "#,##0") + " · " + str.t
      " · LOSS −$" + str.tostring(kRisk1, "#,##0.##") + " (" + str.tostring(kRisk1 / i_pfAcc * 100, "0.0#") + "% risk)" +
      (kM.phase < 3 ? "\nTarget: $" + str.tostring(kPfTgt, "#,##0") + " (" + str.tostring(math.max(kPfTgt - kM.bal, 0), "#,##0") + " to go) and " + str.tostring(i_pfMinD) + " trading days" :
      "\nFunded P&L so far (all funded accounts): $" + str.tostring(kM.fundPnl, "+#,##0;-#,##0"))
-string kPfLimStr = "day −$" + str.tostring(kPfDayUse, "#,##0") + " / " + str.tostring(kPfDayAmt, "#,##0") +
+string kPfLimStr = "day −$" + str.tostring(kPfDayUse, "#,##0") + " / " + (i_pfDay > 0 ? str.tostring(kPfDayAmt, "#,##0") : "no limit") +
      " · max −$" + str.tostring(kPfMaxUse, "#,##0") + " / " + str.tostring(kPfMaxAmt, "#,##0")
-color  kPfLimCol = kPfDayUse >= 0.6 * kPfDayAmt or kPfMaxUse >= 0.6 * kPfMaxAmt ? color.orange : color.white
-string kPfLimTip = "Daily loss: from $" + str.tostring(kM.dayBal, "#,##0") + " at the start of today, limit $" + str.tostring(kPfDayAmt, "#,##0") +
+color  kPfLimCol = (i_pfDay > 0 and kPfDayUse >= 0.6 * kPfDayAmt) or kPfMaxUse >= 0.6 * kPfMaxAmt ? color.orange : color.white
+string kPfLimTip = (i_pfDay > 0 ? "Daily loss: from $" + str.tostring(kM.dayBal, "#,##0") + " at the start of today, limit $" + str.tostring(kPfDayAmt, "#,##0") :
+     "Daily loss: no limit (Max daily loss % = 0)") +
      "\nMax loss: equity may not go below $" + str.tostring(i_pfAcc - kPfMaxAmt, "#,##0") +
      "\nBlock ❖ trades that could break a limit: " + (i_pfGuard ? "ON (buffer " + str.tostring(i_pfBuf) + "%)" : "OFF") +
      "\nClosed balance shown; open trades are checked at their worst price each candle"
