@@ -1748,6 +1748,11 @@ type Trade
     line  lTp
     line  lSl
     int   tm = na
+    bool  filled = true
+    int   sigBar = na
+    line  lnP    = na
+    label lbP    = na
+    int   ord    = 0
 
 var Trade trd    = na
 var int   wins   = 0
@@ -1878,6 +1883,10 @@ kobTp   = input.float(10.0, "KOB³ TP distance (price)", minval=0.1, step=0.5, g
 kobTpR  = input.float(1.0, "Take profit (R)", minval=0.5, step=0.5, group=grpKB)
 kobOne  = input.bool(true, "One trade at a time (per setup)", group=grpKB)
 kobLab  = input.bool(true, "Show KOB entries + W / L on the chart", group=grpKB)
+kobEnt  = input.string("Pending LIMIT (BUY −pts · SELL +pts)", "KOB-15 / KOB³ entry", options=["At signal close", "Pending LIMIT (BUY −pts · SELL +pts)"], group=grpKB, tooltip="Like the KTR ❖ trades: once the confirmation is complete (at the candle close), a BUY LIMIT is placed below / SELL LIMIT above the close. It only counts as a trade once price reaches it; if not reached in time, or price runs away first, it is 'missed' (not a win, not a loss). TP is measured from the fill price; the SL stays the OFX rule level.")
+kobOff  = input.float(20, "Pending offset (points)", minval=0, step=5, group=grpKB, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
+kobExp  = input.int(10, "Pending expires after (candles)", minval=1, group=grpKB)
+kobRun  = input.string("200 pts away", "Pending also cancelled when price runs", options=["Candles only", "100 pts away", "200 pts away"], group=grpKB)
 k15Tp   = input.float(20.0, "KOB-15 TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="KOB-15 is the A+ setup (15m ❖ and OFX combo agree), so it holds for a bigger target: 20.00 = 200 points. With 'R multiple' above, the R multiple is used instead.")
 cK3     = input.color(#FFB300, "KOB³ colour", inline="kc", group=grpKB)
 cK15    = input.color(#26C6DA, "KOB-15 colour", inline="kc", group=grpKB, tooltip="KOB-15 = 15m KTR ❖ + OFX 2.0 combo, without the 5m ❖.")
@@ -1992,6 +2001,8 @@ int   tfHms  = timeframe.in_seconds(kHtf) * 1000
 bool  hRecent = lastHDir != 0 and not na(lastHT) and time - (lastHT + tfHms) <= kobWinH * tfHms
 bool  k15Pair = barstate.isconfirmed and not cUsed15 and lastCDir != 0 and lastCDir == lastHDir and hRecent and bar_index - lastCBar <= kobWin and ((enterL or enterS) or newH)
 int   k15Dir  = k15Pair ? lastCDir : 0
+// which came first: 1 = the 15m ❖ was already there when the combo printed · 2 = the combo came first, the 15m ❖ completed it
+int   k15Ord  = k15Dir == 0 ? 0 : (enterL or enterS) ? 1 : 2
 float k15SL   = k15Dir == 0 ? na : kobSlMd == "OFX rule (combo SL)" ? lastCSL : close - k15Dir * kobSl
 bool  kob15   = k15Dir != 0 and (k15Dir == 1 ? k15SL < close : k15SL > close)
 if k15Pair
@@ -2014,6 +2025,11 @@ type KobSt
     float  pts = 0.0
     float  r   = 0.0
     bool   lab = true
+    int    miss = 0
+    int    w1 = 0
+    int    l1 = 0
+    int    w2 = 0
+    int    l2 = 0
 
 var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>(), lab=kobLab)
 var KobSt kS15 = KobSt.new("KOB-15", cK15, array.new<Trade>(), lab=kobLab)
@@ -2022,9 +2038,38 @@ f_kobRun(KobSt s) =>
     if s.open.size() > 0
         for i = s.open.size() - 1 to 0
             Trade t = s.open.get(i)
-            if bar_index > t.bar
+            bool fillNow = false
+            bool gone    = false
+            if not t.filled and bar_index > t.sigBar
+                // BUY LIMIT fills when the ask comes down to it, SELL LIMIT when the bid comes up to it
+                bool  touch = t.dir == 1 ? low + btSpr <= t.entry : high >= t.entry
+                float runD  = kobRun == "100 pts away" ? 10.0 : kobRun == "200 pts away" ? 20.0 : na
+                bool  ran   = not na(runD) and (t.dir == 1 ? high + btSpr >= t.entry + runD : low <= t.entry - runD)
+                if touch
+                    t.filled := true
+                    t.bar    := bar_index
+                    t.tm     := time
+                    fillNow  := true
+                    if not na(t.lbP)
+                        label.set_text(t.lbP, label.get_text(t.lbP) + " ✓ filled")
+                    if not na(t.lnP)
+                        line.set_x2(t.lnP, bar_index)
+                else if ran or bar_index - t.sigBar >= kobExp
+                    s.miss += 1
+                    gone   := true
+                    if not na(t.lbP)
+                        label.set_text(t.lbP, label.get_text(t.lbP) + " ✕ missed")
+                        label.set_color(t.lbP, color.new(color.gray, 20))
+                    if not na(t.lnP)
+                        line.set_x2(t.lnP, bar_index)
+                        line.set_color(t.lnP, color.gray)
+                    s.open.remove(i)
+                else if not na(t.lnP)
+                    line.set_x2(t.lnP, bar_index + 1)
+            if t.filled and not gone and (bar_index > t.bar or fillNow)
+                // on the fill candle: SL counts on the whole candle (conservative), TP only if the close is past it
                 bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
-                bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
+                bool hitTP = fillNow ? (t.dir == 1 ? close >= t.tp : close + btSpr <= t.tp) : (t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp)
                 if hitSL or hitTP
                     bool  win  = hitTP and (not hitSL or bothBar == "Win")
                     float rsk  = math.abs(t.entry - t.sl)
@@ -2037,20 +2082,32 @@ f_kobRun(KobSt s) =>
                     s.lS  += not win and t.dir == -1 ? 1 : 0
                     s.pts += win ? gain : -rsk
                     s.r   += win ? gain / rsk : -1.0
+                    s.w1  += win and t.ord == 1 ? 1 : 0
+                    s.l1  += not win and t.ord == 1 ? 1 : 0
+                    s.w2  += win and t.ord == 2 ? 1 : 0
+                    s.l2  += not win and t.ord == 2 ? 1 : 0
                     if s.lab
                         bool up = (t.dir == 1) == win
                         label.new(bar_index, win ? t.tp : t.sl, s.nm + (win ? " W" : " L"), style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.tiny, tooltip=s.nm + " " + (t.dir == 1 ? "LONG" : "SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
                     s.open.remove(i)
     s
 
-f_kobOpen(KobSt s, int d, float sl, float tpD) =>
-    float en = d == 1 ? close + btSpr : close
+f_kobOpen(KobSt s, int d, float sl, float tpD, int ord) =>
+    bool  pend = kobEnt != "At signal close"
+    float off  = kobOff * 0.10
+    // pending LIMIT: BUY below the close (filled on the ask), SELL above the close (filled on the bid)
+    float en   = pend ? close - d * off : d == 1 ? close + btSpr : close
+    string oTx = ord == 1 ? " (❖ → combo)" : ord == 2 ? " (combo → ❖)" : ""
     if btIn and (not kobOne or s.open.size() == 0) and d * (en - sl) > 0
         float rsk = math.abs(en - sl)
         float tp  = en + d * (kobTpMd == "R multiple" ? kobTpR * rsk : tpD)
-        s.open.push(Trade.new(d, en, sl, tp, bar_index, na, na, time))
-        if s.lab
-            label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT"), style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : s.nm == "KOB-15" ? ": 15m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(en, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
+        Trade nt  = Trade.new(d, en, sl, tp, bar_index, na, na, time, filled=not pend, sigBar=bar_index, ord=ord)
+        if s.lab and pend
+            nt.lnP := line.new(bar_index, en, bar_index + 1, en, color=s.col, style=line.style_dashed, width=1)
+            nt.lbP := label.new(bar_index, en, s.nm + (d == 1 ? " BUY LIMIT −" : " SELL LIMIT +") + str.tostring(kobOff, "#") + oTx, style=label.style_label_right, color=color.new(s.col, 15), textcolor=color.white, size=size.tiny, tooltip="Confirmation close " + str.tostring(close, format.mintick) + " → " + (d == 1 ? "BUY" : "SELL") + " LIMIT " + str.tostring(en, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick) + "\nCancelled after " + str.tostring(kobExp) + " candles" + (kobRun == "Candles only" ? "" : " or if price runs " + (kobRun == "100 pts away" ? "100" : "200") + " pts away first"))
+        s.open.push(nt)
+        if s.lab and not pend
+            label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT") + oTx, style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : s.nm == "KOB-15" ? ": 15m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(en, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
     s
 
 // ─── ORDER-FLOW FILTER for the KTR ❖ (KTR alone chops on days without order flow) ───
@@ -2125,15 +2182,15 @@ if barstate.isconfirmed
     f_kobRun(kS3)
     f_kobRun(kS15)
     if kob15
-        f_kobOpen(kS15, k15Dir, k15SL, k15Tp)
+        f_kobOpen(kS15, k15Dir, k15SL, k15Tp, k15Ord)
     if kob3
-        f_kobOpen(kS3, kobDir, kobSL, kobTp)
+        f_kobOpen(kS3, kobDir, kobSL, kobTp, 0)
 
 f_kobTxt(KobSt s) =>
     int n = s.w + s.l
-    str.tostring(s.w) + "W " + str.tostring(s.l) + "L" + (n > 0 ? " (" + str.tostring(s.w * 100.0 / n, "#") + "%)" : "") + (s.open.size() > 0 ? " · open" : "") + " · " + str.tostring(s.pts, "+#.##;-#.##") + " (" + str.tostring(s.r, "+#.#;-#.#") + "R)"
+    str.tostring(s.w) + "W " + str.tostring(s.l) + "L" + (n > 0 ? " (" + str.tostring(s.w * 100.0 / n, "#") + "%)" : "") + (s.open.size() > 0 ? " · open" : "") + (s.miss > 0 ? " · " + str.tostring(s.miss) + " missed" : "") + " · " + str.tostring(s.pts, "+#.##;-#.##") + " (" + str.tostring(s.r, "+#.#;-#.#") + "R)"
 f_kobTip(KobSt s) =>
-    "LONG: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + (s.wB + s.lB > 0 ? " (" + str.tostring(s.wB * 100.0 / (s.wB + s.lB), "#") + "%)" : "") + "\nSHORT: " + str.tostring(s.wS) + "W " + str.tostring(s.lS) + "L" + (s.wS + s.lS > 0 ? " (" + str.tostring(s.wS * 100.0 / (s.wS + s.lS), "#") + "%)" : "")
+    "LONG: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + (s.wB + s.lB > 0 ? " (" + str.tostring(s.wB * 100.0 / (s.wB + s.lB), "#") + "%)" : "") + "\nSHORT: " + str.tostring(s.wS) + "W " + str.tostring(s.lS) + "L" + (s.wS + s.lS > 0 ? " (" + str.tostring(s.wS * 100.0 / (s.wS + s.lS), "#") + "%)" : "") + (s.w1 + s.l1 + s.w2 + s.l2 > 0 ? "\n15m ❖ first, then combo: " + str.tostring(s.w1) + "W " + str.tostring(s.l1) + "L" + (s.w1 + s.l1 > 0 ? " (" + str.tostring(s.w1 * 100.0 / (s.w1 + s.l1), "#") + "%)" : "") + "\nCombo first, then 15m ❖: " + str.tostring(s.w2) + "W " + str.tostring(s.l2) + "L" + (s.w2 + s.l2 > 0 ? " (" + str.tostring(s.w2 * 100.0 / (s.w2 + s.l2), "#") + "%)" : "") : "") + (s.miss > 0 ? "\nPending missed (not counted): " + str.tostring(s.miss) : "")
 
 alertcondition(kob15, "KOB-15 (15m ❖ + combo)", "KOB-15: 15m KTR ❖ + OFX 2.0 combo")
 alertcondition(kob3, "KOB³ triple confirmation", "KOB³: 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo")
