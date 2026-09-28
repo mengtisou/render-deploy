@@ -99,6 +99,14 @@ i_kSpr     = input.float (0.0,   "Spread  (ask − bid price)",         group=G0
      tooltip="Ask − bid, e.g. bid 4285.17 / ask 4285.35 = 0.18. Chart prices are bid: BUY opens on the ask (bid + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask. So the spread changes which trades win or lose. This spread is the one drawn on the chart and shown in the main Win / Loss rows.")
 i_kSprCmp  = input.bool  (true,  "Dashboard: Win / Loss for every spread", group=G0b,
      tooltip="Runs every ❖ also with spread 0 / 0.18 / 0.22 / 0.30 in the background (nothing extra drawn) and shows each result in its own dashboard row, so you don't have to switch. ● marks the spread picked above.")
+i_sesOn    = input.bool  (true,  "Dashboard: Win / Loss per session", group=G0b,
+     tooltip="Each ❖ trade counts in the session where it went live (filled). Where sessions overlap, New York wins over London and London over Asia; trades outside all three count as 'Other'. Uses the spread picked above (●).")
+i_sesAsia  = input.session("0000-0700", "Asia session",               group=G0b)
+i_sesLon   = input.session("0700-1200", "London session",             group=G0b)
+i_sesNy    = input.session("1200-2100", "New York session",           group=G0b)
+i_sesTz    = input.string("UTC", "Session times are in",              group=G0b,
+     options=["UTC", "GMT+7", "GMT+8", "Europe/London", "America/New_York"],
+     tooltip="Defaults in UTC: Asia 00:00–07:00, London 07:00–12:00, New York 12:00–21:00 (= 07:00–14:00, 14:00–19:00, 19:00–04:00 in UTC+7). London and New York open 1 hour later in winter (daylight saving) — change the hours then if you want.")
 i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
@@ -506,6 +514,7 @@ type KtrTrade
     string name   = ""         // BUY / SELL / BUY LIMIT / SELL STOP …
     int    sc     = 0          // spread scenario (index in kSt)
     int    acct   = 0          // prop account it belongs to (KtrStats.acctId)
+    int    ses    = 3          // session it went live in: 0 Asia · 1 London · 2 New York · 3 other
 
 // results for one spread
 type KtrStats
@@ -583,6 +592,18 @@ if barstate.isfirst
     for st in kSt
         st.bal    := i_pfAcc
         st.dayBal := i_pfAcc
+
+// session of this candle (per-session Win / Loss): New York wins over London, London over Asia
+bool   kInAsia  = not na(time(timeframe.period, i_sesAsia, i_sesTz))
+bool   kInLon   = not na(time(timeframe.period, i_sesLon,  i_sesTz))
+bool   kInNy    = not na(time(timeframe.period, i_sesNy,   i_sesTz))
+int    kSesNow  = kInNy ? 2 : kInLon ? 1 : kInAsia ? 0 : 3
+var array<string> kSesNm  = array.from("Asia", "London", "New York", "Other")
+var array<int>    kSesW   = array.new_int(4, 0)
+var array<int>    kSesL   = array.new_int(4, 0)
+var array<int>    kSesWB  = array.new_int(4, 0)     // BUY wins
+var array<int>    kSesLB  = array.new_int(4, 0)     // BUY losses
+var array<float>  kSesPts = array.new_float(4, 0.0)
 
 // test period (a "day" = the chart's daily candle, same as the KTR OP)
 var int kDaysAll = 0            // daily candles since the first ❖ trade
@@ -675,6 +696,8 @@ f_kCloseNow(KtrTrade t, KtrStats st) =>
     float pts = t.dir * (px - t.entry) / i_kPtVal
     st.early    += 1
     st.earlyPts += pts
+    if t.sc == kSel
+        kSesPts.set(t.ses, kSesPts.get(t.ses) + pts)
     st.net      += pts
     st.dayPts   += pts
     st.nOpen    -= 1
@@ -746,6 +769,7 @@ if kTrack and kOpen.size() > 0
                 kOpen.remove(i)
             else if kTouch
                 kt.filled := true
+                kt.ses    := kSesNow
                 kt.bar    := bar_index
                 kt.tm     := time
                 kFillNow  := true
@@ -802,6 +826,11 @@ if kTrack and kOpen.size() > 0
                 if kMain
                     kHitWin  := kHitWin or kWin
                     kHitLoss := kHitLoss or not kWin
+                    kSesW.set(kt.ses,   kSesW.get(kt.ses)   + (kWin ? 1 : 0))
+                    kSesL.set(kt.ses,   kSesL.get(kt.ses)   + (kWin ? 0 : 1))
+                    kSesWB.set(kt.ses,  kSesWB.get(kt.ses)  + (kWin and kt.dir == 1 ? 1 : 0))
+                    kSesLB.set(kt.ses,  kSesLB.get(kt.ses)  + (not kWin and kt.dir == 1 ? 1 : 0))
+                    kSesPts.set(kt.ses, kSesPts.get(kt.ses) + kGain)
                     if not na(kt.bxTp)
                         box.set_right(kt.bxTp, bar_index)
                     if not na(kt.bxSl)
@@ -815,7 +844,7 @@ if kTrack and kOpen.size() > 0
                              "\nEntry " + str.tostring(kt.entry, format.mintick) +
                              " · TP " + str.tostring(kt.tp, format.mintick) +
                              " · SL " + str.tostring(kt.sl, format.mintick) +
-                             "\n" + kRes + " pts after " + str.tostring(bar_index - kt.bar) + " candles",
+                             "\n" + kRes + " pts after " + str.tostring(bar_index - kt.bar) + " candles · " + kSesNm.get(kt.ses) + " session",
                              force_overlay=true)
                     if i_alKtr
                         alert("KTR ❖ " + kt.name + " " + (kWin ? "WIN — TP hit" : "LOSS — SL hit") + " — " + syminfo.ticker +
@@ -935,7 +964,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 float kTpPx = kEn + kDir * kTpDist
                 float kSlPx = kEn - kDir * kSlDist
                 KtrTrade kNew = KtrTrade.new(dir=kDir, entry=kEn, tp=kTpPx, sl=kSlPx, bar=bar_index, tm=time,
-                     filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId)
+                     filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId, ses=kSesNow)
                 if sc == kSel
                     string kOffS = (kEn >= close ? "+" : "−") + kOffTxt
                     if kPendOn and i_kPendLab
@@ -1855,7 +1884,7 @@ color  b3C   = entryLong?i_colBull:entryShort?i_colBear:
                (pdBlockedLong or pdBlockedShort)?color.new(#FF9800,0):color.new(#8B949E,0)
 string crtTfS = crtTfOk?timeframe.period+"m ✓":"OFF — change TF"
 
-var table d = table.new(position.top_right, 2, 42,
+var table d = table.new(position.top_right, 2, 46,
      bgcolor=color.new(#0D1117,60), border_color=color.new(#30363D,40),
      border_width=1, frame_color=color.new(#30363D,40), frame_width=1,
      force_overlay=true)
@@ -1930,6 +1959,24 @@ f_sprRow(int r, int sc) =>
          "\nHedging rule: skipped " + str.tostring(st.hedgeSkip) + " · closed early " + str.tostring(st.early) + " (" + str.tostring(st.earlyPts, "+#.#;-#.#") + " pts)" : "")
     f_dRow(r, k, v, CR, vc, size.tiny, tip)
 
+// one dashboard row per session (picked spread)
+f_sesHrs(string sess) =>
+    str.substring(sess, 0, 2) + ":" + str.substring(sess, 2, 4) + "–" + str.substring(sess, 5, 7) + ":" + str.substring(sess, 7, 9)
+f_sesRow(int r, int i, string hrs) =>
+    int    w   = kSesW.get(i)
+    int    l   = kSesL.get(i)
+    int    wb  = kSesWB.get(i)
+    int    lb  = kSesLB.get(i)
+    float  pt  = kSesPts.get(i)
+    string v   = str.tostring(w) + "W " + str.tostring(l) + "L" + f_wr(w, l) + " · " + str.tostring(pt, "+#;-#") +
+         " pts (" + str.tostring(pt / i_kSlPts, "+#.#;-#.#") + "R)"
+    color  vc  = w + l == 0 ? CL : pt >= 0 ? KWIN : KLOSS
+    string tip = kSesNm.get(i) + " " + hrs + (i < 3 ? " (" + i_sesTz + ")" : "") +
+         "\nBUY ❖:  " + str.tostring(wb) + "W " + str.tostring(lb) + "L" + f_wr(wb, lb) +
+         "\nSELL ❖: " + str.tostring(w - wb) + "W " + str.tostring(l - lb) + "L" + f_wr(w - wb, l - lb) +
+         "\nSpread " + str.tostring(kM.spr, "0.00") + " · counted where the trade went live"
+    f_dRow(r, "🕐 " + kSesNm.get(i), v, CR, vc, size.tiny, tip)
+
 // prop firm rows (picked spread)
 float  kPfTgt    = i_pfAcc * (1 + (kM.phase == 1 ? i_pfT1 : i_pfT2) / 100)
 float  kPfDayAmt = i_pfDay / 100 * math.min(kM.dayBal, i_pfAcc)
@@ -1994,6 +2041,12 @@ if barstate.islast and i_showDash
         if i_kSprCmp
             for sc = 0 to kSt.size() - 1
                 r := f_sprRow(r, sc)
+        if i_sesOn
+            r := f_sesRow(r, 0, f_sesHrs(i_sesAsia))
+            r := f_sesRow(r, 1, f_sesHrs(i_sesLon))
+            r := f_sesRow(r, 2, f_sesHrs(i_sesNy))
+            if kSesW.get(3) + kSesL.get(3) > 0
+                r := f_sesRow(r, 3, "outside the 3 sessions")
         if i_pfOn
             r := f_dRow(r, "🏦 Account", kPfStr,    CH, kPfCol,    size.tiny, kPfTip)
             r := f_dRow(r, "🏦 Limits",  kPfLimStr, CH, kPfLimCol, size.tiny, kPfLimTip)
