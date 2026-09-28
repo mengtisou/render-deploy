@@ -100,10 +100,15 @@ i_kSpr     = input.float (0.0,   "Spread  (ask − bid price)",         group=G0
 i_kSprCmp  = input.bool  (true,  "Dashboard: Win / Loss for every spread", group=G0b,
      tooltip="Runs every ❖ also with spread 0 / 0.18 / 0.22 / 0.30 in the background (nothing extra drawn) and shows each result in its own dashboard row, so you don't have to switch. ● marks the spread picked above.")
 i_sesOn    = input.bool  (true,  "Dashboard: Win / Loss per session", group=G0b,
-     tooltip="Each ❖ trade counts in the session where it went live (filled). Where sessions overlap, New York wins over London and London over Asia; trades outside all three count as 'Other'. Uses the spread picked above (●).")
-i_sesAsia  = input.session("0000-0700", "Asia session",               group=G0b)
-i_sesLon   = input.session("0700-1200", "London session",             group=G0b)
-i_sesNy    = input.session("1200-2100", "New York session",           group=G0b)
+     tooltip="Each ❖ trade counts in the session where it went live (filled). Where sessions overlap, New York wins over London and London over Asia; trades outside all three count as 'Other'. Uses the spread picked above (●). Turn single sessions ON / OFF with the tick boxes below.")
+i_sesAOn   = input.bool  (true,  "Asia",                              group=G0b, inline="sesA")
+i_sesAsia  = input.session("0000-0700", "",                           group=G0b, inline="sesA",
+     tooltip="Untick a session = OFF: no ❖ trades in it. A ❖ that prints in an OFF session is skipped, and a pending order that would fill in an OFF session is cancelled. The dashboard still shows every session and marks the OFF ones. Tick it again to turn it back ON.")
+i_sesLOn   = input.bool  (true,  "London",                            group=G0b, inline="sesL")
+i_sesLon   = input.session("0700-1200", "",                           group=G0b, inline="sesL")
+i_sesNOn   = input.bool  (true,  "New York",                          group=G0b, inline="sesN")
+i_sesNy    = input.session("1200-2100", "",                           group=G0b, inline="sesN")
+i_sesOOn   = input.bool  (true,  "Other hours (outside the 3 sessions)", group=G0b)
 i_sesTz    = input.string("UTC", "Session times are in",              group=G0b,
      options=["UTC", "GMT+7", "GMT+8", "Europe/London", "America/New_York"],
      tooltip="Defaults in UTC: Asia 00:00–07:00, London 07:00–12:00, New York 12:00–21:00 (= 07:00–14:00, 14:00–19:00, 19:00–04:00 in UTC+7). London and New York open 1 hour later in winter (daylight saving) — change the hours then if you want.")
@@ -552,6 +557,7 @@ type KtrStats
     int    blocked  = 0        // ❖ skipped by the prop limits
     int    stopped  = 0        // accounts stopped: not enough max-loss room left for one more trade
     int    hedgeSkip = 0       // ❖ skipped / pending cancelled by the hedging rule
+    int    sesSkip   = 0       // ❖ skipped / pending cancelled because the session is OFF
     int    early     = 0       // trades closed early by an opposite ❖
     float  earlyPts  = 0.0
     float  fundPnl  = 0.0      // closed P&L while funded
@@ -604,6 +610,10 @@ var array<int>    kSesL   = array.new_int(4, 0)
 var array<int>    kSesWB  = array.new_int(4, 0)     // BUY wins
 var array<int>    kSesLB  = array.new_int(4, 0)     // BUY losses
 var array<float>  kSesPts = array.new_float(4, 0.0)
+var array<int>    kSesSkip = array.new_int(4, 0)    // ❖ skipped because the session is OFF (picked spread)
+f_sesOk(int i) =>
+    i == 0 ? i_sesAOn : i == 1 ? i_sesLOn : i == 2 ? i_sesNOn : i_sesOOn
+bool   kSesOkNow = f_sesOk(kSesNow)
 
 // test period (a "day" = the chart's daily candle, same as the KTR OP)
 var int kDaysAll = 0            // daily candles since the first ❖ trade
@@ -761,7 +771,15 @@ if kTrack and kOpen.size() > 0
             bool kTouch   = kFillDn ? eLo <= kt.entry : eHi >= kt.entry
             // ran away = moved X pts off the order on the side it was waiting on
             bool kRanAway = not na(kRunDist) and (kFillDn ? eHi >= kt.entry + kRunDist : eLo <= kt.entry - kRunDist)
-            if kTouch and kNoHedge and f_kOpp(kt.sc, kt.dir, kt.acct)
+            if kTouch and not kSesOkNow
+                kDone      := true
+                st.sesSkip += 1
+                st.nOpen   -= 1
+                if kMain
+                    kSesSkip.set(kSesNow, kSesSkip.get(kSesNow) + 1)
+                f_kCancel(kt, kSesNm.get(kSesNow) + " session OFF")
+                kOpen.remove(i)
+            else if kTouch and kNoHedge and f_kOpp(kt.sc, kt.dir, kt.acct)
                 kDone        := true
                 st.hedgeSkip += 1
                 st.nOpen     -= 1
@@ -932,7 +950,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
         if sc == kSel or i_kSprCmp
             KtrStats st = kSt.get(sc)
             // hedging rule: close the opposite trades first (and cancel opposite pending orders)
-            if kRevOn and kOpen.size() > 0
+            if kRevOn and kSesOkNow and kOpen.size() > 0
                 for i = kOpen.size() - 1 to 0
                     KtrTrade t = kOpen.get(i)
                     if t.sc == sc and t.dir == -kDir and t.acct == st.acctId
@@ -950,6 +968,10 @@ if kTrack and barstate.isconfirmed and kDir != 0
             bool kFree = not i_kOne or st.nOpen == 0
             if i_kDayOn and st.dayStop
                 st.skipDay += 1
+            else if not kSesOkNow
+                st.sesSkip += 1
+                if sc == kSel
+                    kSesSkip.set(kSesNow, kSesSkip.get(kSesNow) + 1)
             else if kOpp
                 st.hedgeSkip += 1
             else if kFree and i_pfOn and i_pfGuard and not f_pfRoom(st, kPfRisk.get(sc))
@@ -1929,6 +1951,7 @@ string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
      "\nOpen now: " + str.tostring(kLiveN) + " · pending: " + str.tostring(kPendN) +
      "\nMissed (pending not reached, not counted): " + str.tostring(kM.missed) +
      "\nSkipped / cancelled by the daily limit: " + str.tostring(kM.skipDay) +
+     "\nSkipped / cancelled because the session is OFF: " + str.tostring(kM.sesSkip) +
      (i_pfOn ? "\nHedging rule: " + i_pfHedge + " · skipped / cancelled: " + str.tostring(kM.hedgeSkip) +
      " · closed early: " + str.tostring(kM.early) + " (" + str.tostring(kM.earlyPts, "+#.#;-#.#") + " pts)" : "") +
      "\nBreak-even win rate: " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
@@ -1956,6 +1979,7 @@ f_sprRow(int r, int sc) =>
          "\nLast: " + st.lastTxt +
          (i_pfOn ? "\nProp: Phase 1 passed " + str.tostring(st.p1Pass) + " · funded " + str.tostring(st.funded) +
          " · failed " + str.tostring(st.fails + st.fundFail) + " · stopped " + str.tostring(st.stopped) + " · blocked " + str.tostring(st.blocked) +
+         "\nSession OFF skipped: " + str.tostring(st.sesSkip) +
          "\nHedging rule: skipped " + str.tostring(st.hedgeSkip) + " · closed early " + str.tostring(st.early) + " (" + str.tostring(st.earlyPts, "+#.#;-#.#") + " pts)" : "")
     f_dRow(r, k, v, CR, vc, size.tiny, tip)
 
@@ -1970,12 +1994,17 @@ f_sesRow(int r, int i, string hrs) =>
     float  pt  = kSesPts.get(i)
     string v   = str.tostring(w) + "W " + str.tostring(l) + "L" + f_wr(w, l) + " · " + str.tostring(pt, "+#;-#") +
          " pts (" + str.tostring(pt / i_kSlPts, "+#.#;-#.#") + "R)"
-    color  vc  = w + l == 0 ? CL : pt >= 0 ? KWIN : KLOSS
-    string tip = kSesNm.get(i) + " " + hrs + (i < 3 ? " (" + i_sesTz + ")" : "") +
+    bool   on  = f_sesOk(i)
+    int    sk  = kSesSkip.get(i)
+    if not on
+        v := "OFF · " + str.tostring(sk) + " ❖ skipped" + (w + l > 0 ? " · " + str.tostring(w) + "W " + str.tostring(l) + "L" : "")
+    color  vc  = not on ? color.gray : w + l == 0 ? CL : pt >= 0 ? KWIN : KLOSS
+    string tip = kSesNm.get(i) + " " + hrs + (i < 3 ? " (" + i_sesTz + ")" : "") + (on ? " · ON" : " · OFF — no ❖ trades here") +
+         (sk > 0 ? "\n❖ skipped / pending cancelled here: " + str.tostring(sk) : "") +
          "\nBUY ❖:  " + str.tostring(wb) + "W " + str.tostring(lb) + "L" + f_wr(wb, lb) +
          "\nSELL ❖: " + str.tostring(w - wb) + "W " + str.tostring(l - lb) + "L" + f_wr(w - wb, l - lb) +
          "\nSpread " + str.tostring(kM.spr, "0.00") + " · counted where the trade went live"
-    f_dRow(r, "🕐 " + kSesNm.get(i), v, CR, vc, size.tiny, tip)
+    f_dRow(r, "🕐 " + kSesNm.get(i) + (on ? "" : " ✕"), v, CR, vc, size.tiny, tip)
 
 // prop firm rows (picked spread)
 float  kPfTgt    = i_pfAcc * (1 + (kM.phase == 1 ? i_pfT1 : i_pfT2) / 100)
@@ -2045,7 +2074,7 @@ if barstate.islast and i_showDash
             r := f_sesRow(r, 0, f_sesHrs(i_sesAsia))
             r := f_sesRow(r, 1, f_sesHrs(i_sesLon))
             r := f_sesRow(r, 2, f_sesHrs(i_sesNy))
-            if kSesW.get(3) + kSesL.get(3) > 0
+            if kSesW.get(3) + kSesL.get(3) + kSesSkip.get(3) > 0 or not i_sesOOn
                 r := f_sesRow(r, 3, "outside the 3 sessions")
         if i_pfOn
             r := f_dRow(r, "🏦 Account", kPfStr,    CH, kPfCol,    size.tiny, kPfTip)
