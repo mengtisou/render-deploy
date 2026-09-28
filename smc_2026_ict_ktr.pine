@@ -1906,7 +1906,7 @@ color  b3C   = entryLong?i_colBull:entryShort?i_colBear:
                (pdBlockedLong or pdBlockedShort)?color.new(#FF9800,0):color.new(#8B949E,0)
 string crtTfS = crtTfOk?timeframe.period+"m ✓":"OFF — change TF"
 
-var table d = table.new(position.top_right, 2, 46,
+var table d = table.new(position.top_right, 2, 47,
      bgcolor=color.new(#0D1117,60), border_color=color.new(#30363D,40),
      border_width=1, frame_color=color.new(#30363D,40), frame_width=1,
      force_overlay=true)
@@ -2046,6 +2046,17 @@ string kPerTip = (na(kFirstTm) ? "No ❖ trade yet." :
      "From the first ❖ trade (" + str.format_time(kFT, "dd MMM yyyy HH:mm") + ") to now = " + str.tostring(kDaysN) + " trading days (daily candles)." +
      "\nAverage per day: " + str.tostring(kNetPts / kDaysN, "+#.#;-#.#") + " pts · " + str.tostring(kN * 1.0 / kDaysN, "#.#") + " trades") +
      "\nChart history starts " + str.format_time(kChartTm, "dd MMM yyyy") + ". TradingView only loads a limited number of candles, so a lower timeframe tests a shorter period."
+// average per trading day / week (week = 5 trading days)
+float  kAvgPt  = kNetPts / kDaysN
+float  kUsd001 = i_kPtVal * 100 * 0.01          // $ per pt at 0.01 lot (100 oz per lot)
+string kAvgStr = str.tostring(kAvgPt, "+#;-#") + " pts · " + str.tostring(kWins * 1.0 / kDaysN, "0.0") + "W " +
+     str.tostring(kLosses * 1.0 / kDaysN, "0.0") + "L · $" + str.tostring(kAvgPt * kUsd001, "+0.0;-0.0") + " /0.01 lot"
+string kAvgTip = "Average over " + str.tostring(kDaysN) + " trading days (spread " + str.tostring(kM.spr, "0.00") + ")" +
+     "\nPer day:  " + str.tostring(kAvgPt, "+#.#;-#.#") + " pts · " + str.tostring(kWins * 1.0 / kDaysN, "0.0") + " wins · " +
+     str.tostring(kLosses * 1.0 / kDaysN, "0.0") + " losses · $" + str.tostring(kAvgPt * kUsd001, "+0.0#;-0.0#") + " per 0.01 lot" +
+     "\nPer week: " + str.tostring(kAvgPt * 5, "+#;-#") + " pts · " + str.tostring(kWins * 5.0 / kDaysN, "0.0") + " wins · " +
+     str.tostring(kLosses * 5.0 / kDaysN, "0.0") + " losses · $" + str.tostring(kAvgPt * 5 * kUsd001, "+0.0;-0.0") + " per 0.01 lot" +
+     "\n$ scales with lot: 0.10 lot = ×10"
 string kDayStr = str.tostring(kM.dayPts, "+#.##;-#.##") + " pts · " + str.tostring(kM.dayW) + "W " + str.tostring(kM.dayL) + "L" + (kDayBlock ? " · " + kM.dayWhy : "")
 color  kDayCol = kM.dayPts > 0 ? KWIN : kM.dayPts < 0 ? KLOSS : CL
 string kDayTip = (i_kDayOn ? "Daily limit ON: target +" + str.tostring(i_kDayTp, "#.##") + " · loss −" + str.tostring(i_kDaySl, "#.##") + " pts" :
@@ -2081,6 +2092,7 @@ if barstate.islast and i_showDash
             r := f_dRow(r, "🏦 Limits",  kPfLimStr, CH, kPfLimCol, size.tiny, kPfLimTip)
             r := f_dRow(r, "🏦 Results", kPfResStr, CH, kPfResCol, size.tiny, kPfResTip)
         r := f_dRow(r, "❖ Period",     kPerStr, CH, color.white, size.tiny, kPerTip)
+        r := f_dRow(r, "❖ Avg / day",  kAvgStr, CH, kNetPts >= 0 ? KWIN : KLOSS, size.tiny, kAvgTip)
         r := f_dRow(r, "❖ Entry",      kEntStr, CR, color.new(#FFC107,0), size.tiny, kEntTip)
         r := f_dRow(r, "❖ TP / SL",    kTpSlStr, CR, color.new(#FFC107,0), size.tiny, kTpSlTip)
         r := f_dRow(r, "❖ Today",      kDayStr, CR, kDayCol, size.tiny, kDayTip)
