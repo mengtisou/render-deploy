@@ -15,6 +15,7 @@ lbAx     = input.bool(true, "Every accelerator w / l", group=grpDisp)
 lbKob    = input.bool(true, "KOB-15 / KOB³ orders, fills, W / L", group=grpDisp)
 lbKtr    = input.bool(true, "KTR ❖ + order flow W / L and ✗ marks", group=grpDisp)
 lbKtrDia = input.bool(true, "KTR diamonds, ❖ and 15m marks", group=grpDisp)
+ssOn     = input.bool(true, "Dashboard: sessions (TP compare) + avg / day", group=grpDisp, tooltip="Adds 5 rows for OFX and KOB-15 A+: W / L and points per session (Asia 00-07, London 07-12, New York 12-21, Other 21-24 UTC, by the entry / fill time) for the TP in use and, in brackets, the other TP on the same trades (OFX 10 ↔ 20, KOB-15 20 ↔ 10); plus the average per day. Off = smaller dashboard.")
 
 const string SRC_FP = "Footprint (Premium/Ultimate)"
 const string SRC_IB = "Intrabar (lower timeframe)"
@@ -1804,6 +1805,52 @@ type Trade
     int   ord    = 0
 
 var Trade trd    = na
+
+// ── session survey: W / L / points per session for the TP in use, and the other TP on the same trades ──
+f_sess(int t) =>
+    int h = hour(t, "UTC")
+    h < 7 ? 0 : h < 12 ? 1 : h < 21 ? 2 : 3
+type SessSt
+    array<int>   w
+    array<int>   l
+    array<float> p
+    array<int>   aw
+    array<int>   al
+    array<float> ap
+    array<Trade> sh
+    float        alt
+f_ssNew(float alt) =>
+    SessSt.new(array.new_int(4, 0), array.new_int(4, 0), array.new_float(4, 0.0), array.new_int(4, 0), array.new_int(4, 0), array.new_float(4, 0.0), array.new<Trade>(), alt)
+f_ssMain(SessSt z, int t, bool win, float res) =>
+    int q = f_sess(t)
+    z.w.set(q, z.w.get(q) + (win ? 1 : 0))
+    z.l.set(q, z.l.get(q) + (win ? 0 : 1))
+    z.p.set(q, z.p.get(q) + res)
+    z
+f_ssShadow(SessSt z, int d, float en, float sl) =>
+    z.sh.push(Trade.new(d, en, sl, en + d * z.alt, bar_index, na, na, time))
+    z
+f_ssRun(SessSt z) =>
+    if z.sh.size() > 0
+        for i = z.sh.size() - 1 to 0
+            Trade t = z.sh.get(i)
+            if bar_index > t.bar
+                bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
+                bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
+                if hitSL or hitTP
+                    bool win = hitTP and (not hitSL or bothBar == "Win")
+                    int  q   = f_sess(t.tm)
+                    z.aw.set(q, z.aw.get(q) + (win ? 1 : 0))
+                    z.al.set(q, z.al.get(q) + (win ? 0 : 1))
+                    z.ap.set(q, z.ap.get(q) + (win ? math.abs(t.tp - t.entry) : -math.abs(t.entry - t.sl)))
+                    z.sh.remove(i)
+    z
+var SessSt ssO = f_ssNew(tpPts == 10.0 ? 20.0 : 10.0)
+var int    tDays = 0
+if dayNew and btIn
+    tDays += 1
+if barstate.isconfirmed
+    f_ssRun(ssO)
 var int   wins   = 0
 var int   losses = 0
 var float netR   = 0.0
@@ -1822,6 +1869,7 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
         netR   += win ? gain / rsk : -1.0
         netPts += win ? gain : -rsk
         f_dlAdd(dlOfx, win ? gain : -rsk, "OFX", showWL)
+        f_ssMain(ssO, trd.tm, win, win ? gain : -rsk)
         if showWL
             float px = win ? trd.tp : trd.sl
             bool  up = (trd.dir == 1) == win
@@ -1849,7 +1897,8 @@ if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or en
         float tp = en + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
         line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
         line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
-        trd := Trade.new(d, en, sl, tp, bar_index, l1, l2)
+        trd := Trade.new(d, en, sl, tp, bar_index, l1, l2, time)
+        f_ssShadow(ssO, d, en, sl)
 
 // ════════════════════════════════════════════════════════════════════
 // BACKTEST · EVERY ACCELERATOR  (each BuAx+ / BeAx+ is a trade on its own,
@@ -2086,9 +2135,10 @@ type KobSt
     int    w2 = 0
     int    l2 = 0
     DayLim dl
+    SessSt ss
 
 var KobSt kS3 = KobSt.new("KOB³", cK3, array.new<Trade>(), lab=kobLab, dl=DayLim.new())
-var KobSt kS15 = KobSt.new("KOB-15", cK15, array.new<Trade>(), lab=kobLab, dl=DayLim.new())
+var KobSt kS15 = KobSt.new("KOB-15", cK15, array.new<Trade>(), lab=kobLab, dl=DayLim.new(), ss=f_ssNew(k15Tp == 20.0 ? 10.0 : 20.0))
 if dayNew
     f_dlReset(kS3.dl)
     f_dlReset(kS15.dl)
@@ -2119,6 +2169,8 @@ f_kobRun(KobSt s) =>
                     t.bar    := bar_index
                     t.tm     := time
                     fillNow  := true
+                    if not na(s.ss)
+                        f_ssShadow(s.ss, t.dir, t.entry, t.sl)
                     if not na(t.lbP)
                         label.set_text(t.lbP, label.get_text(t.lbP) + " ✓ filled")
                     if not na(t.lnP)
@@ -2156,6 +2208,8 @@ f_kobRun(KobSt s) =>
                     s.w2  += win and t.ord == 2 ? 1 : 0
                     s.l2  += not win and t.ord == 2 ? 1 : 0
                     f_dlAdd(s.dl, win ? gain : -rsk, s.nm, s.lab)
+                    if not na(s.ss)
+                        f_ssMain(s.ss, t.tm, win, win ? gain : -rsk)
                     if s.lab
                         bool up = (t.dir == 1) == win
                         label.new(bar_index, win ? t.tp : t.sl, s.nm + (win ? " W" : " L"), style=up ? label.style_label_down : label.style_label_up, color=win ? cWin : cLoss, textcolor=color.white, size=size.tiny, tooltip=s.nm + " " + (t.dir == 1 ? "LONG" : "SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
@@ -2178,6 +2232,8 @@ f_kobOpen(KobSt s, int d, float sl, float tpD, int ord) =>
             nt.lnP := line.new(bar_index, en, bar_index + 1, en, color=s.col, style=line.style_dashed, width=1)
             nt.lbP := label.new(bar_index, en, s.nm + (d == 1 ? " BUY LIMIT −" : " SELL LIMIT +") + str.tostring(kobOff, "#") + oTx, style=label.style_label_right, color=color.new(s.col, 15), textcolor=color.white, size=size.tiny, tooltip="Confirmation close " + str.tostring(close, format.mintick) + " → " + (d == 1 ? "BUY" : "SELL") + " LIMIT " + str.tostring(en, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick) + "\nCancelled after " + str.tostring(kobExp) + " candles" + (kobRun == "Candles only" ? "" : " or if price runs " + (kobRun == "100 pts away" ? "100" : "200") + " pts away first"))
         s.open.push(nt)
+        if not pend and not na(s.ss)
+            f_ssShadow(s.ss, d, en, sl)
         if s.lab and not pend
             label.new(bar_index, d == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, s.nm + (d == 1 ? " LONG" : " SHORT") + oTx, style=d == 1 ? label.style_label_up : label.style_label_down, color=s.col, textcolor=color.white, size=size.tiny, tooltip=s.nm + (s.nm == "KOB³" ? ": 15m KTR ❖ + 5m KTR ❖ + OFX 2.0 combo" : s.nm == "KOB-15" ? ": 15m KTR ❖ + OFX 2.0 combo" : ": 5m KTR ❖ + OFX 2.0 combo") + "\nEntry " + str.tostring(en, format.mintick) + " · SL " + str.tostring(sl, format.mintick) + " · TP " + str.tostring(tp, format.mintick))
     s
@@ -2258,6 +2314,7 @@ if barstate.isconfirmed and ktTest
 if barstate.isconfirmed
     f_kobRun(kS3)
     f_kobRun(kS15)
+    f_ssRun(kS15.ss)
     if kob15
         f_kobOpen(kS15, k15Dir, k15SL, k15Tp, k15Ord)
     if kob3
@@ -2538,7 +2595,7 @@ if barstate.islast
 var table dash = na
 if showDash and na(dash)
     pos = dashPos == "Top Right" ? position.top_right : dashPos == "Middle Right" ? position.middle_right : dashPos == "Top Center" ? position.top_center : dashPos == "Bottom Center" ? position.bottom_center : dashPos == "Top Left" ? position.top_left : dashPos == "Middle Left" ? position.middle_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(pos, 2, mobileView ? 6 : 15, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    dash := table.new(pos, 2, mobileView ? 6 : 21, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
 string dSz = dashSize == "Small" ? size.tiny : size.small
 if showDash and barstate.islast
@@ -2618,6 +2675,22 @@ if showDash and barstate.islast
         float allPts = netPts + kS15.pts
         table.cell(dash, 0, 14, "OFX + KOB-15 A+ add-on", text_color=gold, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 14, str.tostring(allPts, "+#.##;-#.##") + "  (OFX " + str.tostring(netPts, "+#.##;-#.##") + " + A+ " + str.tostring(kS15.pts, "+#.##;-#.##") + ")", text_color=allPts >= 0 ? ok : bad, text_size=dSz, tooltip="Trade every OFX combo with 1 position (TP above). When the 15m KTR ❖ agrees (KOB-15 A+), add a 2nd position that holds for the KOB-15 TP. Result = OFX row + KOB-15 row, same dates and spread.\nRun KTR 15m in its own script next to this: its result adds on top.")
+        if ssOn
+            SessSt zo = ssO
+            SessSt zk = kS15.ss
+            array<string> sNm = array.from("Asia", "London", "New York", "Other")
+            for q = 0 to 3
+                string sv = "OFX " + str.tostring(zo.w.get(q)) + "W " + str.tostring(zo.l.get(q)) + "L " + str.tostring(zo.p.get(q) * 10, "+#;-#") + " (TP " + str.tostring(zo.alt, "#") + ": " + str.tostring(zo.ap.get(q) * 10, "+#;-#") + ")" +
+                     "  ·  A+ " + str.tostring(zk.w.get(q)) + "W " + str.tostring(zk.l.get(q)) + "L " + str.tostring(zk.p.get(q) * 10, "+#;-#") + " (TP " + str.tostring(zk.alt, "#") + ": " + str.tostring(zk.ap.get(q) * 10, "+#;-#") + ")"
+                float sp = zo.p.get(q) + zk.p.get(q)
+                table.cell(dash, 0, 15 + q, "Session · " + sNm.get(q), text_color=txt, text_size=size.tiny, text_halign=text.align_left)
+                table.cell(dash, 1, 15 + q, sv, text_color=sp >= 0 ? ok : bad, text_size=size.tiny, tooltip="Points (1 pt = 0.10). Session by entry / fill time, UTC: Asia 00-07 · London 07-12 · New York 12-21 · Other 21-24.\nOFX uses TP " + str.tostring(tpPts, "#") + " (bracket = TP " + str.tostring(zo.alt, "#") + "), KOB-15 A+ uses TP " + str.tostring(k15Tp, "#") + " (bracket = TP " + str.tostring(zk.alt, "#") + ").\nThe bracket runs the other TP on the same trades (same entry / SL, no daily limit), for comparison only.")
+            int   nD   = math.max(tDays, 1)
+            float dP   = (netPts + kS15.pts) * 10 / nD
+            float dW   = (wins + kS15.w) * 1.0 / nD
+            float dL   = (losses + kS15.l) * 1.0 / nD
+            table.cell(dash, 0, 19, "Avg / day (OFX + A+)", text_color=gold, text_size=size.tiny, text_halign=text.align_left)
+            table.cell(dash, 1, 19, str.tostring(dP, "+#;-#") + " pts · " + str.tostring(dW, "#.#") + "W " + str.tostring(dL, "#.#") + "L · $" + str.tostring(dP * 0.10, "+#.0;-#.0") + " /0.01 lot", text_color=dP >= 0 ? ok : bad, text_size=size.tiny, tooltip="Over " + str.tostring(nD) + " test days (daily candles inside the test dates).\n0.01 lot = 1 oz → 1 pt (0.10) = $0.10 per 0.01 lot.")
 
 // ════════════════════════════════════════════════════════════════════
 // EXTRA TOOLS (like reference): POC line · range box · RSI divergence
