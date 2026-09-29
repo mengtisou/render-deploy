@@ -1793,8 +1793,9 @@ if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
 grpW2   = "⑮b Backtest · Every accelerator"
 axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
 axBtWL  = input.bool(true, "Show its W / L on the chart", group=grpW2, tooltip="Small 'w' / 'l' marks (lower case, so they are not mixed up with the 5-gate W / L).")
-axTp    = input.float(10.0, "TP distance (price) = 1R", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points on XAUUSD.")
-axSlMd  = input.string("Same as TP (1R)", "Stop loss", options=["Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
+axTp    = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="20.00 = 200 points.")
+axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 200 / SL 100 = 2R.")
+axSlMd  = input.string("Fixed distance", "Stop loss", options=["Fixed distance", "Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
 axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
 
 var array<Trade> axOpen = array.new<Trade>()
@@ -1834,7 +1835,7 @@ if axBtOn and barstate.isconfirmed and axOpen.size() > 0
 if axBtOn and barstate.isconfirmed and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
     int   d  = drawBull ? 1 : -1
     float tp = close + d * axTp
-    float sl = axSlMd == "Same as TP (1R)" ? close - d * axTp : (d == 1 ? low - slBuf : high + slBuf)
+    float sl = axSlMd == "Same as TP (1R)" ? close - d * axTp : axSlMd == "Fixed distance" ? close - d * axSlP : (d == 1 ? low - slBuf : high + slBuf)
     if math.abs(close - sl) > 0
         axOpen.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
 
@@ -2158,7 +2159,7 @@ if showDash and barstate.islast
         table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small)
         if axBtOn
-            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP, "#.##") : axSlMd == "Same as TP (1R)" ? " = 1R" : " / SL candle"), text_color=txt, text_size=size.small, text_halign=text.align_left)
             table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()))
 
 // ════════════════════════════════════════════════════════════════════
