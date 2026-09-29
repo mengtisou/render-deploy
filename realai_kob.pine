@@ -15,8 +15,8 @@ lbAx     = input.bool(true, "Every accelerator w / l", group=grpDisp)
 lbKob    = input.bool(true, "KOB-15 / KOB³ orders, fills, W / L", group=grpDisp)
 lbKtr    = input.bool(true, "KTR ❖ + order flow W / L and ✗ marks", group=grpDisp)
 lbKtrDia = input.bool(true, "KTR diamonds, ❖ and 15m marks", group=grpDisp)
-ssOn     = input.bool(true, "Dashboard: sessions (TP compare) + avg / day", group=grpDisp, tooltip="Adds 5 rows for OFX and KOB-15 A+: W / L and points per session (Asia 00-07, London 07-12, New York 12-21, Other 21-24 UTC, by the entry / fill time) for the TP in use and, in brackets, the other TP on the same trades (OFX 10 ↔ 20, KOB-15 20 ↔ 10); plus the average per day. Off = smaller dashboard.")
-dbKob    = input.bool(true, "Dashboard: KOB-15 / KOB³ / KTR test rows", group=grpDisp, tooltip="Off = hide the rows KOB-15 A+, KOB³, KTR ❖ all, KTR ❖ + Order flow, Order flow now and OFX + KOB-15 A+ add-on (combo tests whose W / L depends on several signals lining up and on pending fills). The tests keep running in the background.")
+ssOn     = input.bool(false, "Dashboard: sessions (TP compare) + avg / day", group=grpDisp, tooltip="Adds 5 rows for OFX and KOB-15 A+: W / L and points per session (Asia 00-07, London 07-12, New York 12-21, Other 21-24 UTC, by the entry / fill time) for the TP in use and, in brackets, the other TP on the same trades (OFX 10 ↔ 20, KOB-15 20 ↔ 10); plus the average per day. Off = smaller dashboard.")
+dbKob    = input.bool(false, "Dashboard: KOB-15 / KOB³ / KTR test rows", group=grpDisp, tooltip="Off = hide the rows KOB-15 A+, KOB³, KTR ❖ all, KTR ❖ + Order flow, Order flow now and OFX + KOB-15 A+ add-on (combo tests whose W / L depends on several signals lining up and on pending fills). The tests keep running in the background.")
 
 const string SRC_FP = "Footprint (Premium/Ultimate)"
 const string SRC_IB = "Intrabar (lower timeframe)"
@@ -162,9 +162,8 @@ ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
 ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (reference): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
 ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (reference): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (reference): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
-ob2Vol  = input.string("Orderblock candle → break", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
+ob2Vol  = input.string("Auto (5m whole leg, others candle → break)", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
-ob2Max  = input.int(0, "Max candles after the OB candle (0 = until the break)", minval=0, maxval=100, group=grpO2, tooltip="With 'Orderblock candle → break': stop counting volume this many candles after the orderblock candle, even if structure has not broken yet. Useful when price stays inside the block for a long time before the break (the volume then comes out too high). 0 = count until the break.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 
@@ -570,11 +569,6 @@ type Block
     bool  isOb  = false
     int   ver   = 1
     line  mid
-    float x1 = na
-    float x2 = na
-    float x3 = na
-    float x4 = na
-    int   xb = na
 
 var array<Block> blocks = array.new<Block>()   // FVG zones (display)
 var array<Block> obs    = array.new<Block>()   // OrderBlock 1.0
@@ -675,7 +669,6 @@ f_refreshBlock(Block b, float totalAll) =>
         string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
         t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
         label.set_text(b.info, t2)
-        label.set_tooltip(b.info, "Volume check (compare with the reference):\nA · in-zone volume, OB candle → break (shown): " + f_k(b.vol) + "\nB · break candle + 2 before (full candles): " + f_k(b.x1) + "\nC · OB candle only (full candle): " + f_k(b.x2) + "\nD · OB candle → break (full candles, " + str.tostring(nz(b.xb) + 1) + " candles): " + f_k(b.x3) + "\nE · in-zone volume, OB candle + next 2: " + f_k(b.x4))
         label.set_x(b.info, bar_index + blockExt)
         if not na(b.mid)
             line.set_x2(b.mid, bar_index + blockExt)
@@ -1068,27 +1061,12 @@ f_ob2(int dir, int fromBar, int id) =>
         float sv = 0.0
         string vMode = ob2Vol == "Auto (5m whole leg, others candle → break)" ? (timeframe.in_seconds() <= 300 ? "Whole leg (swing → break)" : "Orderblock candle → break") : ob2Vol
         int kFrom = vMode == "Whole leg (swing → break)" ? span : best
-        int kTo   = vMode == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : vMode == "Orderblock candle → break" and ob2Max > 0 ? math.max(best - ob2Max, 0) : 0
+        int kTo   = vMode == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : 0
         for k = kFrom to kTo
             [zb, zs] = f_ibInside(k, zTop, zBot)
             bv += zb
             sv += zs
         Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
-        // candidate volumes for matching the reference (shown in the block's tooltip)
-        float vLeg = 0.0
-        for k = best to 0
-            vLeg += nz(volume[k])
-        float vOb = 0.0
-        float vOb3 = 0.0
-        for k = best to math.max(best - 2, 0)
-            [zb1, zs1] = f_ibInside(k, zTop, zBot)
-            vOb  += k == best ? nz(volume[k]) : 0.0
-            vOb3 += zb1 + zs1
-        nb2.x1 := volume + nz(volume[1]) + nz(volume[2])
-        nb2.x2 := vOb
-        nb2.x3 := vLeg
-        nb2.x4 := vOb3
-        nb2.xb := best
         nb2.isOb := true
         nb2.ver  := 2
         obs2.unshift(nb2)
@@ -1521,7 +1499,7 @@ if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or en
 grpW2   = "⑮b Backtest · Every accelerator"
 axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
 axBtWL  = lbAll and lbAx   // ⓪ Display: small 'w' / 'l' marks
-axTp    = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points.")
+axTp    = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="20.00 = 200 points.")
 axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 200 / SL 100 = 2R.")
 axSlMd  = input.string("Fixed distance", "Stop loss", options=["Fixed distance", "Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
 axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
