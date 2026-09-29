@@ -4,16 +4,6 @@ indicator("BTrader OFX 2.0 · Accelerator × Volumetrix Blocks", shorttitle="BTr
 // ════════════════════════════════════════════════════════════════════
 // INPUTS
 // ════════════════════════════════════════════════════════════════════
-grpDisp  = "⓪ Display · labels & dashboard"
-showDash = input.bool(true, "Show dashboard", group=grpDisp)
-dashPos  = input.string("Bottom Right", "Dashboard position", options=["Top Right", "Middle Right", "Bottom Right", "Top Center", "Bottom Center", "Top Left", "Middle Left", "Bottom Left"], group=grpDisp)
-dashSize = input.string("Normal", "Dashboard text size", options=["Normal", "Small"], group=grpDisp)
-lbAll    = input.bool(true, "Show trade labels (master switch)", group=grpDisp, tooltip="Off = none of the labels below: a clean chart with only candles, blocks, zones and accelerators. The Win / Loss tests keep counting.")
-lbEnter  = input.bool(true, "ENTER boxes (LONG / SHORT · SL) + SL line", group=grpDisp)
-lbWL     = input.bool(true, "OFX W / L", group=grpDisp)
-lbAx     = input.bool(true, "Every accelerator w / l", group=grpDisp)
-ssOn     = input.bool(false, "Dashboard: sessions (TP compare) + avg / day", group=grpDisp, tooltip="Adds 5 rows for the OFX combo: W / L and points per session (Asia 00-07, London 07-12, New York 12-21, Other 21-24 UTC, by the entry time) for the TP in use and, in brackets, the other TP on the same trades (10 ↔ 20); plus the average per day. Off = smaller dashboard.")
-
 const string SRC_FP = "Footprint (Premium/Ultimate)"
 const string SRC_IB = "Intrabar (lower timeframe)"
 const string SRC_SY = "Synthetic (candle anatomy)"
@@ -46,7 +36,7 @@ const string DA_SIDE_PRE = "Same-side |delta| (previous bars)"
 const string DA_EMA_INC  = "EMA |delta| (incl. current)"
 const string DA_EMA_PRE  = "EMA |delta| (previous bars)"
 const string DA_RMA      = "RMA |delta| (incl. current)"
-const string ZT_FVG   = "FVG zones"
+const string ZT_FVG   = "FVG zones (Sn1P3r)"
 const string ZT_OB    = "Orderblocks (swing break)"
 const string SENT_FORM   = "Formation candle only"
 const string SENT_RETEST = "Formation + every candle that trades inside"
@@ -114,9 +104,9 @@ refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, t
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
 showBlocks = input.bool(true, "Show FVG zones", group=grpB, tooltip="Off = only orderblocks on the chart. FVG zones are only drawn; the 60% gate uses the orderblocks, so ENTER and W / L do not change.")
-showObs    = input.bool(false, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
-gateOb     = input.string("OrderBlock 2.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
-zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (reference) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
+showObs    = input.bool(true, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
+gateOb     = input.string("OrderBlock 1.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
+zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (Sn1P3r Order Flow) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
 fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
 fvgHideOvl = input.bool(true, "FVG · Hide overlapping zones", group=grpB, tooltip="Clean view (like the reference): when zones overlap, only the one nearest to price is drawn. Stacks of small zones in a range become one.")
 fvgMax     = input.int(150, "FVG · Max stored", minval=5, maxval=300, group=grpB, tooltip="Zones stay until a candle closes through them, so more are kept in memory; the chart only shows the top ones near price.")
@@ -133,7 +123,7 @@ swingLen   = input.int(5, "Swing length", minval=2, group=grpB)
 blockVolMode = input.string(BV_CANDLE, "Block volume mode", options=[BV_CANDLE, BV_ZONE, BV_BARS], group=grpB, tooltip="Zone mode splits each 1-minute candle and keeps only the part that traded inside the block price range (closest to the reference).")
 volBars    = input.int(1, "Bars counted into block volume", minval=1, maxval=10, group=grpB, tooltip="OB candle + the displacement candles after it.")
 ownerPct   = input.float(60, "Owner threshold %", minval=50, maxval=95, group=grpB)
-obText     = input.string("Volume + Buyers / Sellers", "OrderBlock 1.0 · Text on the block", options=["Volume + Buyers / Sellers", "Buyers / Sellers", "Full (volume + owner + buyers / sellers)", "Off"], group=grpB, tooltip="Volume + Buyers / Sellers (reference style): '2.139K (48%)' and 'Buyers: 48.59% | Sellers: 51.41%'. The % after the volume is the block's share of the volume of the blocks shown on the same side. Buyers / Sellers: only the second line. Full: '1.2K (40%) · Strong Bear' + buyers / sellers. Off: only the small OB tag.")
+obText     = input.string("Volume + Buyers / Sellers", "OrderBlock 1.0 · Text on the block", options=["Volume + Buyers / Sellers", "Buyers / Sellers", "Full (volume + owner + buyers / sellers)", "Off"], group=grpB, tooltip="Volume + Buyers / Sellers (BTrader Concept 2.0 style): '2.139K (48%)' and 'Buyers: 48.59% | Sellers: 51.41%'. The % after the volume is the block's share of the volume of the blocks shown on the same side. Buyers / Sellers: only the second line. Full: '1.2K (40%) · Strong Bear' + buyers / sellers. Off: only the small OB tag.")
 maxPerSide = input.int(2, "Blocks shown per side (nearest to price)", minval=1, maxval=15, group=grpB, tooltip="Reference shows the 2 nearest unbroken supply + 2 nearest unbroken demand blocks, even if they are days old.")
 maxStore   = input.int(30, "Unbroken blocks kept in memory per side", minval=2, maxval=60, group=grpB)
 obPick     = input.string(PICK_OPP, "OB candle", options=[PICK_EXT, PICK_OPP], group=grpB, tooltip="Extreme = the candle with the highest high (supply) / lowest low (demand) of the leg, whatever its color.")
@@ -150,15 +140,15 @@ blkColorBy = input.string("Type (supply / demand)", "Color blocks by", options=[
 barTransp  = input.int(60, "Buyer/Seller bar transparency", minval=0, maxval=95, group=grpB, tooltip="Higher = lighter bars, so signals drawn over a block stay visible.")
 
 grpO2   = "⑤b OrderBlock 2.0 (Volumetric)"
-showOb2 = input.bool(true, "Show OrderBlock 2.0", group=grpO2)
-ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], group=grpO2, tooltip="Internal = small swings (length below, 5 like reference). Swing = big swings (50).")
+showOb2 = input.bool(false, "Show OrderBlock 2.0", group=grpO2)
+ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], group=grpO2, tooltip="Internal = small swings (length below, 5 like BTrader Concept 2.0). Swing = big swings (50).")
 ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
 ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
 ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
-ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (reference): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
-ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (reference): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
-ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (reference): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
-ob2Vol  = input.string("Auto (5m whole leg, others candle → break)", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
+ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (BTrader Concept 2.0): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
+ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (BTrader Concept 2.0): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
+ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (BTrader Concept 2.0): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
+ob2Vol  = input.string("Auto (5m whole leg, others candle → break)", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches BTrader Concept 2.0 on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
@@ -166,8 +156,6 @@ ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
 slBufTicks = input.int(5, "SL buffer (ticks)", minval=0, group=grpX)
-slMode     = input.string("Near block: OrderBlock ± buffer · far: candle", "Stop loss", options=["Near block: OrderBlock ± buffer · far: candle", "Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer", "Below / above the entry candle only"], group=grpX, tooltip="Entry candle only: SL always below the low (BUY) / above the high (SELL) of the entry candle ± SL buffer (ticks), whether it is near the block or not.\nNear block (OB 2.0 default): entry candle touches the 60% block → SL = block bottom − buffer (BUY) / top + buffer (SELL); far from it → SL beyond the entry candle.\nRule: entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER and W / L.")
-slObPts    = input.float(20, "OrderBlock SL buffer (points)", minval=0, step=5, group=grpX, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
 showSL     = input.bool(true, "Draw SL line", group=grpX)
 entrySize  = input.string("Tiny", "ENTER box size", options=["Tiny", "Small", "Normal"], group=grpX)
 entryShort = input.bool(true, "ENTER box · short text", group=grpX, tooltip="On: 'SHORT · SL 4299.40'. Off: 'ENTER SHORT / SL 4299.400 (above block)'. The full text is always in the tooltip.")
@@ -192,6 +180,8 @@ vpOffset   = input.int(45, "Offset from last bar", minval=0, maxval=200, group=g
 
 grpM = "⑨ Extras"
 mobileView = input.bool(false, "Mobile view (clean & compact)", group=grpM, tooltip="For phones: small 3-line dashboard, no volume profile, smaller ENTER boxes.")
+showDash = input.bool(true, "Show 5-gate dashboard", group=grpM)
+dashPos  = input.string("Bottom Right", "Dashboard position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grpM)
 
 grpL = "⑩ Key Levels"
 showMid  = input.bool(true, "Midnight (00:00 New York)", group=grpL)
@@ -215,7 +205,7 @@ inspectT2 = input.time(timestamp("25 Sep 2026 14:35 +0000"), "Candle time 2", gr
 inspectT3 = input.time(timestamp("25 Sep 2026 15:55 +0000"), "Candle time 3", group=grpI, tooltip="Default = their BuAx+ 25 Sep 22:55 (UTC+7).")
 
 grpT = "⑪ Structure"
-cdStyle   = input.bool(true, "Reference style: CDL / CDS breaks with ★ grade", group=grpT, tooltip="Like the reference: a bullish change of direction prints 'CDL 1-3★', a bearish one 'CDS 1-3★'. ★ grade: +1 if the break candle is a strong body (≥ 60% of its range), +1 if its volume is above its 20-bar average.")
+cdStyle   = input.bool(true, "Reference style: CDL / CDS breaks with ★ grade", group=grpT, tooltip="Like Sn1P3r: a bullish change of direction prints 'CDL 1-3★', a bearish one 'CDS 1-3★'. ★ grade: +1 if the break candle is a strong body (≥ 60% of its range), +1 if its volume is above its 20-bar average.")
 showProt  = input.bool(true, "Show protected levels (CDL SL / CDS SH)", group=grpT, tooltip="After a CDL, the low that started the move is protected (CDL SL). After a CDS, the high is protected (CDS SH). Each one stays until price closes through it.")
 protMax   = input.int(5, "Protected levels kept (per side)", minval=1, maxval=20, group=grpT)
 showChoch = input.bool(true, "Show CHoCH", group=grpT)
@@ -441,8 +431,426 @@ f_deltaCand(int f, int t, int n) =>
         v := f_step(stRmaD.get(k), math.abs(d0), 1.0 / m)
     v
 
-float avgRangeRaw = f_rangeCand(f_raType(rangeAvgMode), rangeLen)
-float avgDeltaRaw = f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
+// ---- deep formula families (searched by the auto-calibration, lengths up to 200) ----
+const int LMAX = 200
+const int DN   = 100   // max length for recursive (EMA / RMA) families
+const int NRF  = 19
+const int NDF  = 11
+const string RF0  = "SMA high-low (incl.)"
+const string RF1  = "SMA high-low (prev.)"
+const string RF2  = "SMA true range (incl.)"
+const string RF3  = "SMA true range (prev.)"
+const string RF4  = "SMA body (incl.)"
+const string RF5  = "SMA body (prev.)"
+const string RF6  = "WMA high-low (incl.)"
+const string RF7  = "WMA high-low (prev.)"
+const string RF8  = "EMA high-low (incl.)"
+const string RF9  = "EMA high-low (prev.)"
+const string RF10 = "RMA high-low (incl.)"
+const string RF11 = "RMA high-low (prev.)"
+const string RF12 = "ATR · RMA true range (incl.)"
+const string RF13 = "RMA true range (prev.)"
+const string RF14 = "EMA true range (incl.)"
+const string RF15 = "EMA true range (prev.)"
+const string RF16 = "Same-direction SMA high-low (incl.)"
+const string RF17 = "Same-direction SMA high-low (prev.)"
+const string RF18 = "Median high-low (prev.)"
+const string DF0 = "SMA |delta| (incl.)"
+const string DF1 = "SMA |delta| (prev.)"
+const string DF2 = "Same-side SMA |delta| (incl.)"
+const string DF3 = "Same-side SMA |delta| (prev.)"
+const string DF4 = "WMA |delta| (incl.)"
+const string DF5 = "WMA |delta| (prev.)"
+const string DF6 = "EMA |delta| (incl.)"
+const string DF7 = "EMA |delta| (prev.)"
+const string DF8 = "RMA |delta| (incl.)"
+const string DF9 = "RMA |delta| (prev.)"
+const string DF10 = "Median |delta| (prev.)"
+
+f_rfName(int f) =>
+    f == 0 ? RF0 : f == 1 ? RF1 : f == 2 ? RF2 : f == 3 ? RF3 : f == 4 ? RF4 : f == 5 ? RF5 : f == 6 ? RF6 : f == 7 ? RF7 : f == 8 ? RF8 : f == 9 ? RF9 : f == 10 ? RF10 : f == 11 ? RF11 : f == 12 ? RF12 : f == 13 ? RF13 : f == 14 ? RF14 : f == 15 ? RF15 : f == 16 ? RF16 : f == 17 ? RF17 : RF18
+f_rfIdx(string m) =>
+    m == RF0 ? 0 : m == RF1 ? 1 : m == RF2 ? 2 : m == RF3 ? 3 : m == RF4 ? 4 : m == RF5 ? 5 : m == RF6 ? 6 : m == RF7 ? 7 : m == RF8 ? 8 : m == RF9 ? 9 : m == RF10 ? 10 : m == RF11 ? 11 : m == RF12 ? 12 : m == RF13 ? 13 : m == RF14 ? 14 : m == RF15 ? 15 : m == RF16 ? 16 : m == RF17 ? 17 : 18
+f_dfName(int f) =>
+    f == 0 ? DF0 : f == 1 ? DF1 : f == 2 ? DF2 : f == 3 ? DF3 : f == 4 ? DF4 : f == 5 ? DF5 : f == 6 ? DF6 : f == 7 ? DF7 : f == 8 ? DF8 : f == 9 ? DF9 : DF10
+f_dfIdx(string m) =>
+    m == DF0 ? 0 : m == DF1 ? 1 : m == DF2 ? 2 : m == DF3 ? 3 : m == DF4 ? 4 : m == DF5 ? 5 : m == DF6 ? 6 : m == DF7 ? 7 : m == DF8 ? 8 : m == DF9 ? 9 : 10
+
+float absBody = math.abs(close - open)
+float absDS   = math.abs(deltaSrc)
+float sgnDS   = math.sign(deltaSrc)
+float cdir    = math.sign(close - open)   // candle direction, for same-direction averages
+
+// recursive states for lengths 2..DN, value up to the previous confirmed bar
+var array<float> dsHLE = array.new<float>(DN + 1, na)
+var array<float> dsHLR = array.new<float>(DN + 1, na)
+var array<float> dsTRR = array.new<float>(DN + 1, na)
+var array<float> dsTRE = array.new<float>(DN + 1, na)
+var array<float> dsDE  = array.new<float>(DN + 1, na)
+var array<float> dsDR  = array.new<float>(DN + 1, na)
+
+// range average of family fam, length n, on the current bar
+f_rDeep(int fam, int n) =>
+    float v = na
+    if fam <= 7
+        int   off = fam % 2
+        float s   = 0.0
+        float w   = 0.0
+        for i = 0 to n - 1
+            float x  = fam <= 1 or fam >= 6 ? nz(barRange[i + off]) : fam <= 3 ? nz(trS[i + off]) : nz(absBody[i + off])
+            float wt = fam >= 6 ? n - i : 1
+            s += x * wt
+            w += wt
+        v := s / w
+    else if fam == 16 or fam == 17
+        // only candles of the same direction as this one (up candles for an up candle)
+        int   off = fam == 17 ? 1 : 0
+        float s   = 0.0
+        int   c   = 0
+        for i = off to off + n - 1
+            if nz(cdir[i]) == cdir
+                s += nz(barRange[i])
+                c += 1
+        v := c > 0 ? s / c : na
+    else if fam == 18
+        v := f_medPrev(n)
+    else if n <= DN
+        bool  inc = fam % 2 == 0
+        int   g   = int(math.floor((fam - 8) / 2))
+        float a   = g == 0 or g == 3 ? 2.0 / (n + 1) : 1.0 / n
+        float x   = g <= 1 ? barRange : trS
+        float st  = g == 0 ? dsHLE.get(n) : g == 1 ? dsHLR.get(n) : g == 2 ? dsTRR.get(n) : dsTRE.get(n)
+        v := inc ? f_step(st, x, a) : st
+    v
+
+// |delta| average of family fam, length n, on the current bar (delta = the delta source above)
+f_dDeep(int fam, int n) =>
+    float v = na
+    if fam <= 5
+        int   off = fam % 2
+        float s   = 0.0
+        float w   = 0.0
+        for i = 0 to n - 1
+            bool  use = fam == 2 or fam == 3 ? math.sign(nz(deltaSrc[i + off])) == sgnDS : true
+            float wt  = fam >= 4 ? n - i : 1
+            if use
+                s += nz(absDS[i + off]) * wt
+                w += wt
+        v := w > 0 ? s / w : na
+    else if fam == 10
+        array<float> arr = array.new<float>()
+        for i = 1 to n
+            arr.push(nz(absDS[i]))
+        v := arr.median()
+    else if n <= DN
+        bool  inc = fam % 2 == 0
+        float a   = fam <= 7 ? 2.0 / (n + 1) : 1.0 / n
+        float st  = fam <= 7 ? dsDE.get(n) : dsDR.get(n)
+        v := inc ? f_step(st, absDS, a) : st
+    v
+
+// ════ reference search runs BEFORE the averages, so a matching formula is used on the reference candle itself ════
+var bool calRFound = false
+var bool calDFound = false
+var int  cRF = 1
+var int  cRN = 20
+var int  cDF = 1
+var int  cDN = 20
+grpC  = "⑬ Auto-calibrate"
+calOn = input.bool(false, "Show calculation panels (calibration table + REF CHECK)", group="⑨ Extras", tooltip="Debug panels used to match the reference. Off = clean chart.")
+
+// Reference readings: hover the reference's accelerator, copy its tooltip numbers here.
+// Volume > 0 → the candle with exactly that volume within ±12 h of the time is used.
+r1On = input.bool(false, "Ref 1", inline="r1a", group=grpC)
+r1T  = input.time(timestamp("23 Sep 2026 13:30 +0000"), "", inline="r1a", group=grpC)
+r1V  = input.int(6881, "Vol", inline="r1a", group=grpC)
+r1Rg = input.float(12.54, "Range", inline="r1b", group=grpC)
+r1R  = input.float(6.81, "Avg", inline="r1b", group=grpC)
+r1RR = input.float(0, "Ratio", inline="r1b", group=grpC)
+r1D  = input.float(-4800, "Delta", inline="r1c", group=grpC)
+r1DA = input.float(3100, "Avg", inline="r1c", group=grpC)
+r1DR = input.float(0, "Ratio", inline="r1c", group=grpC)
+r2On = input.bool(false, "Ref 2", inline="r2a", group=grpC)
+r2T  = input.time(timestamp("22 Sep 2026 08:35 +0000"), "", inline="r2a", group=grpC)
+r2V  = input.int(5126, "Vol", inline="r2a", group=grpC)
+r2Rg = input.float(14.5, "Range", inline="r2b", group=grpC)
+r2R  = input.float(8.75, "Avg", inline="r2b", group=grpC)
+r2RR = input.float(0, "Ratio", inline="r2b", group=grpC)
+r2D  = input.float(2900, "Delta", inline="r2c", group=grpC)
+r2DA = input.float(1800, "Avg", inline="r2c", group=grpC)
+r2DR = input.float(0, "Ratio", inline="r2c", group=grpC)
+r3On = input.bool(true, "Ref 3", inline="r3a", group=grpC)
+r3T  = input.time(timestamp("25 Sep 2026 06:00 +0000"), "", inline="r3a", group=grpC)
+r3V  = input.int(3968, "Vol", inline="r3a", group=grpC)
+r3Rg = input.float(5.82, "Range", inline="r3b", group=grpC)
+r3R  = input.float(3.56, "Avg", inline="r3b", group=grpC)
+r3RR = input.float(1.63, "Ratio", inline="r3b", group=grpC)
+r3D  = input.float(2800, "Delta", inline="r3c", group=grpC)
+r3DA = input.float(1100, "Avg", inline="r3c", group=grpC)
+r3DR = input.float(2.51, "Ratio", inline="r3c", group=grpC, tooltip="Ratio 0 = not known. Averages are checked the way the reference rounds them: range to 0.01, delta to 0.1K, ratios to 0.01x.")
+// Refs 4-5: accelerators on the reference's 25 Sep chart, only their on-chart text is known (D: and R: / D: ratios)
+r4On = input.bool(true, "Ref 4 · BeAx+ 18:25", inline="r4a", group=grpC)
+r4T  = input.time(timestamp("25 Sep 2026 11:25 +0000"), "", inline="r4a", group=grpC)
+r4V  = input.int(1971, "Vol", inline="r4a", group=grpC)
+r4Rg = input.float(5.75, "Range", inline="r4b", group=grpC)
+r4R  = input.float(3.43, "Avg", inline="r4b", group=grpC)
+r4RR = input.float(1.68, "Ratio", inline="r4b", group=grpC)
+r4D  = input.float(-1400, "Delta", inline="r4c", group=grpC)
+r4DA = input.float(650, "Avg", inline="r4c", group=grpC)
+r4DR = input.float(2.12, "Ratio", inline="r4c", group=grpC)
+r5On = input.bool(true, "Ref 5 · BuAx+ 21:35", inline="r5a", group=grpC)
+r5T  = input.time(timestamp("25 Sep 2026 14:35 +0000"), "", inline="r5a", group=grpC)
+r5V  = input.int(5484, "Vol", inline="r5a", group=grpC)
+r5Rg = input.float(9.03, "Range", inline="r5b", group=grpC)
+r5R  = input.float(4.64, "Avg", inline="r5b", group=grpC)
+r5RR = input.float(1.95, "Ratio", inline="r5b", group=grpC)
+r5D  = input.float(3700, "Delta", inline="r5c", group=grpC)
+r5DA = input.float(685, "Avg", inline="r5c", group=grpC)
+r5DR = input.float(5.37, "Ratio", inline="r5c", group=grpC)
+dSlack = input.float(5, "Delta average tolerance %", minval=0, maxval=30, group=grpC, tooltip="Our delta on older candles is a close estimate of the reference's, so delta averages are matched within this margin. Range averages are matched exactly (high − low is the same on both charts).")
+
+var array<int>    mR   = array.new<int>(NRF * (LMAX + 1), 0)
+var array<float>  eRs  = array.new<float>(NRF * (LMAX + 1), 0.0)
+var array<int>    mD   = array.new<int>(NDF * (LMAX + 1), 0)
+var array<float>  eDs  = array.new<float>(NDF * (LMAX + 1), 0.0)
+var array<string> calDiag = array.new<string>(5, "not found on chart")
+var int    calHits  = 0
+var string calFound = ""
+var bool   gotA = false
+var bool   gotB = false
+var bool   gotC = false
+var bool   gotD = false
+var bool   gotE = false
+var int    nRFull = 0
+var int    nDFull = 0
+var string rBest  = "—"
+var string dBest  = "—"
+var int    dFitOK = 0
+
+f_isRef(bool on, int t, int v) =>
+    on and (v > 0 ? math.abs(time - t) <= 12 * 3600 * 1000 and volume == v : time <= t and time_close > t)
+bool isA = calOn and not gotA and f_isRef(r1On, r1T, r1V)
+bool isB = calOn and not gotB and f_isRef(r2On, r2T, r2V)
+bool isC = calOn and not gotC and f_isRef(r3On, r3T, r3V)
+bool isD = calOn and not gotD and f_isRef(r4On, r4T, r4V)
+bool isE = calOn and not gotE and f_isRef(r5On, r5T, r5V)
+int  calNeed = (r1On ? 1 : 0) + (r2On ? 1 : 0) + (r3On ? 1 : 0) + (r4On ? 1 : 0) + (r5On ? 1 : 0)
+
+// does a candidate average reproduce the reference's rounded numbers?
+f_rOK(float v, float ref, float rr) =>
+    not na(v) and v > 0 and (ref <= 0 or math.abs(v - ref) <= 0.0051) and (rr <= 0 or math.abs(barRange / v - rr) <= 0.0051)
+// delta average: the reference's Delta (±50) ÷ its ratio (±0.005) gives the range its average must be in
+f_dOK(float v, float ref, float dr, float rd) =>
+    float lo = (math.abs(rd) - 50) / (dr + 0.005) * (1 - dSlack / 100)
+    float hi = (math.abs(rd) + 50) / math.max(dr - 0.005, 0.01) * (1 + dSlack / 100)
+    bool  okA = ref <= 0 or math.abs(v - ref) <= 50.5 + ref * dSlack / 100
+    bool  okR = dr <= 0 or (v >= lo and v <= hi)
+    not na(v) and v > 0 and okA and okR
+f_rErr(float v, float ref, float rr) =>
+    na(v) or v <= 0 ? 1.0 : ref > 0 ? math.abs(v - ref) / ref : math.abs(barRange / v - rr) / rr
+f_dErr(float v, float ref, float dr, float rd) =>
+    float tgt = ref > 0 ? ref : math.abs(rd) / dr
+    na(v) or v <= 0 ? 1.0 : math.abs(v - tgt) / tgt
+
+if (isA or isB or isC or isD or isE) and bar_index > LMAX + 2
+    float refAvg = isA ? r1R : isB ? r2R : isC ? r3R : isD ? r4R : r5R
+    float refRR  = isA ? r1RR : isB ? r2RR : isC ? r3RR : isD ? r4RR : r5RR
+    float refRg  = isA ? r1Rg : isB ? r2Rg : isC ? r3Rg : isD ? r4Rg : r5Rg
+    float refD   = isA ? r1D : isB ? r2D : isC ? r3D : isD ? r4D : r5D
+    float refDA  = isA ? r1DA : isB ? r2DA : isC ? r3DA : isD ? r4DA : r5DA
+    float refDR  = isA ? r1DR : isB ? r2DR : isC ? r3DR : isD ? r4DR : r5DR
+    gotA := gotA or isA
+    gotB := gotB or isB
+    gotC := gotC or isC
+    gotD := gotD or isD
+    gotE := gotE or isE
+    calHits  += 1
+    calFound += isA ? " 1" : isB ? " 2" : isC ? " 3" : isD ? " 4" : " 5"
+    int   hitR = 0
+    int   hitD = 0
+    string exR = ""
+    string exD = ""
+    // range, loop families (SMA / WMA): one pass with running sums per source
+    for src = 0 to 2
+        float a0 = 0.0
+        float a1 = 0.0
+        float b0 = 0.0
+        float b1 = 0.0
+        for n = 1 to LMAX
+            float xi = src == 0 ? nz(barRange[n - 1]) : src == 1 ? nz(trS[n - 1]) : nz(absBody[n - 1])
+            float xp = src == 0 ? nz(barRange[n]) : src == 1 ? nz(trS[n]) : nz(absBody[n])
+            a0 += xi
+            a1 += (n - 1) * xi
+            b0 += xp
+            b1 += (n - 1) * xp
+            if n >= 2
+                float tri = n * (n + 1) / 2.0
+                for q = 0 to (src == 0 ? 3 : 1)
+                    int   fam = src == 0 ? (q <= 1 ? q : q + 4) : src * 2 + q
+                    float v   = q == 0 ? a0 / n : q == 1 ? b0 / n : q == 2 ? (n * a0 - a1) / tri : (n * b0 - b1) / tri
+                    int   j   = fam * (LMAX + 1) + n
+                    eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+                    if f_rOK(v, refAvg, refRR)
+                        mR.set(j, mR.get(j) + 1)
+                        hitR += 1
+                        if exR == ""
+                            exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // range, recursive families (EMA / RMA)
+    for fam = 8 to NRF - 1
+        for n = 2 to DN
+            float v = f_rDeep(fam, n)
+            int   j = fam * (LMAX + 1) + n
+            eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+            if f_rOK(v, refAvg, refRR)
+                mR.set(j, mR.get(j) + 1)
+                hitR += 1
+                if exR == ""
+                    exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // range: same-direction candles only (16 incl · 17 prev) and median of previous ranges (18)
+    float q0 = 0.0
+    float qc = 0.0
+    float u0 = 0.0
+    float uc = 0.0
+    array<float> medR = array.new<float>()
+    for n = 1 to LMAX
+        if nz(cdir[n - 1]) == cdir
+            q0 += nz(barRange[n - 1])
+            qc += 1
+        if nz(cdir[n]) == cdir
+            u0 += nz(barRange[n])
+            uc += 1
+        if n <= DN
+            medR.push(nz(barRange[n]))
+        if n >= 2
+            for q = 0 to (n <= DN ? 2 : 1)
+                int   fam = 16 + q
+                float v   = q == 0 ? (qc > 0 ? q0 / qc : na) : q == 1 ? (uc > 0 ? u0 / uc : na) : medR.median()
+                int   j   = fam * (LMAX + 1) + n
+                eRs.set(j, eRs.get(j) + f_rErr(v, refAvg, refRR))
+                if f_rOK(v, refAvg, refRR)
+                    mR.set(j, mR.get(j) + 1)
+                    hitR += 1
+                    if exR == ""
+                        exR := f_rfName(fam) + " " + str.tostring(n) + " = " + str.tostring(v, "#.###")
+    // delta average, loop families (SMA / same-side / WMA): one pass
+    float s0 = 0.0
+    float s1 = 0.0
+    float p0 = 0.0
+    float p1 = 0.0
+    float ss = 0.0
+    float sc = 0.0
+    float ps = 0.0
+    float pc = 0.0
+    for n = 1 to LMAX
+        float xi = nz(absDS[n - 1])
+        float xp = nz(absDS[n])
+        s0 += xi
+        s1 += (n - 1) * xi
+        p0 += xp
+        p1 += (n - 1) * xp
+        if math.sign(nz(deltaSrc[n - 1])) == sgnDS
+            ss += xi
+            sc += 1
+        if math.sign(nz(deltaSrc[n])) == sgnDS
+            ps += xp
+            pc += 1
+        if n >= 2
+            float tri = n * (n + 1) / 2.0
+            for fam = 0 to 5
+                float v = fam == 0 ? s0 / n : fam == 1 ? p0 / n : fam == 2 ? (sc > 0 ? ss / sc : na) : fam == 3 ? (pc > 0 ? ps / pc : na) : fam == 4 ? (n * s0 - s1) / tri : (n * p0 - p1) / tri
+                int   j = fam * (LMAX + 1) + n
+                eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+                if f_dOK(v, refDA, refDR, refD)
+                    mD.set(j, mD.get(j) + 1)
+                    hitD += 1
+                    if exD == ""
+                        exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    // delta average, recursive families
+    for fam = 6 to NDF - 1
+        for n = 2 to DN
+            float v = f_dDeep(fam, n)
+            int   j = fam * (LMAX + 1) + n
+            eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+            if f_dOK(v, refDA, refDR, refD)
+                mD.set(j, mD.get(j) + 1)
+                hitD += 1
+                if exD == ""
+                    exD := f_dfName(fam) + " " + str.tostring(n) + " = " + f_k(v)
+    // delta average: median of previous |delta|
+    array<float> medD = array.new<float>()
+    medD.push(nz(absDS[1]))
+    for n = 2 to DN
+        medD.push(nz(absDS[n]))
+        float v = medD.median()
+        int   j = 10 * (LMAX + 1) + n
+        eDs.set(j, eDs.get(j) + f_dErr(v, refDA, refDR, refD))
+        if f_dOK(v, refDA, refDR, refD)
+            mD.set(j, mD.get(j) + 1)
+            hitD += 1
+            if exD == ""
+                exD := f_dfName(10) + " " + str.tostring(n) + " = " + f_k(v)
+    bool dOKc = math.abs(deltaSrc - refD) <= math.max(150.0, math.abs(refD) * 0.06)
+    dFitOK += dOKc ? 1 : 0
+    string d = "OHLC " + str.tostring(open, format.mintick) + " / " + str.tostring(high, format.mintick) + " / " + str.tostring(low, format.mintick) + " / " + str.tostring(close, format.mintick)
+    d += " · range " + str.tostring(barRange, "#.##") + (math.abs(barRange - refRg) < 0.02 ? " ✓" : " ✗ ref " + str.tostring(refRg, "#.##")) + " · vol " + str.tostring(volume, "#")
+    d += "\nReference's range avg here ≈ " + str.tostring(refAvg > 0 ? refAvg : barRange / refRR, "#.###") + " · delta avg ≈ " + f_k(refDA > 0 ? refDA : math.abs(refD) / refDR)
+    d += "\nDelta " + f_ks(deltaSrc) + " vs ref " + f_ks(refD) + (dOKc ? " ✓" : " ✗") + " · body " + f_ks(dBody) + " · CLV " + f_ks(dClv)
+    d += "\nRange avg: " + str.tostring(hitR) + " formulas match this candle" + (exR != "" ? " (e.g. " + exR + ")" : "")
+    d += "\nDelta avg: " + str.tostring(hitD) + " formulas match this candle" + (exD != "" ? " (e.g. " + exD + ")" : "")
+    calDiag.set(isA ? 0 : isB ? 1 : isC ? 2 : isD ? 3 : 4, d)
+
+    // best: matches every reference candle found so far (then the smallest error)
+    int   bRj = -1
+    int   bRc = -1
+    float bRe = 1e9
+    nRFull := 0
+    for j = 0 to NRF * (LMAX + 1) - 1
+        int c = mR.get(j)
+        if c == calHits
+            nRFull += 1
+        if c > bRc or (c == bRc and eRs.get(j) < bRe)
+            bRc := c
+            bRe := eRs.get(j)
+            bRj := j
+    cRF := int(math.floor(bRj / (LMAX + 1)))
+    cRN := bRj % (LMAX + 1)
+    // exact match on every reference candle, or (fallback) within 3% on average
+    calRFound := calHits >= calNeed and (bRc == calHits or bRe / calHits < 0.03)
+    rBest := f_rfName(cRF) + " · length " + str.tostring(cRN) + " · matches " + str.tostring(bRc) + "/" + str.tostring(calHits) + (nRFull > 1 ? " (" + str.tostring(nRFull) + " formulas match all)" : "")
+    int   bDj = -1
+    int   bDc = -1
+    float bDe = 1e9
+    nDFull := 0
+    for j = 0 to NDF * (LMAX + 1) - 1
+        int c = mD.get(j)
+        if c == calHits
+            nDFull += 1
+        if c > bDc or (c == bDc and eDs.get(j) < bDe)
+            bDc := c
+            bDe := eDs.get(j)
+            bDj := j
+    cDF := int(math.floor(bDj / (LMAX + 1)))
+    cDN := bDj % (LMAX + 1)
+    calDFound := calHits >= calNeed and dFitOK == calHits and (bDc == calHits or bDe / calHits < 0.03)
+    dBest := f_dfName(cDF) + " · length " + str.tostring(cDN) + " · matches " + str.tostring(bDc) + "/" + str.tostring(calHits) + (nDFull > 1 ? " (" + str.tostring(nDFull) + " formulas match all)" : "")
+
+// ---- active settings ----
+grpC0     = "⑬ Auto-calibrate"
+calApply  = input.bool(false, "Apply a formula that matches the reference", group=grpC0, tooltip="Applied only when a formula reproduces the reference's shown numbers on EVERY reference candle. It starts at the last reference candle; to use it on all candles, copy it into 'Use on all candles' below.")
+manDeep   = input.bool(false, "Use on all candles:", inline="md1", group=grpC0)
+manRF     = input.string(RF1, "Range", options=[RF0, RF1, RF2, RF3, RF4, RF5, RF6, RF7, RF8, RF9, RF10, RF11, RF12, RF13, RF14, RF15, RF16, RF17, RF18], inline="md1", group=grpC0)
+manRN     = input.int(20, "len", minval=2, maxval=200, inline="md1", group=grpC0)
+manDF     = input.string(DF1, "Delta avg", options=[DF0, DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8, DF9, DF10], inline="md2", group=grpC0)
+manDN     = input.int(20, "len", minval=2, maxval=200, inline="md2", group=grpC0)
+bool useCalR = manDeep or (calApply and calRFound)
+bool useCal  = manDeep or (calApply and calDFound)
+int  aRF = manDeep ? f_rfIdx(manRF) : cRF
+int  aRN = manDeep ? manRN : cRN
+int  aDF = manDeep ? f_dfIdx(manDF) : cDF
+int  aDN = manDeep ? manDN : cDN
+
+float avgRangeRaw = useCalR ? f_rDeep(aRF, aRN) : f_rangeCand(f_raType(rangeAvgMode), rangeLen)
+float avgDeltaRaw = useCal ? f_dDeep(aDF, aDN) : f_deltaCand(NF, f_daType(deltaAvgMode), lookback)
 // reference: averages only take in finished hours (held from the first candle of each hour)
 bool  newHour = ta.change(time("60")) != 0
 var float hRange = na
@@ -661,7 +1069,7 @@ f_refreshBlock(Block b, float totalAll) =>
         // reference tag: arrow by block type, own-side %
         label.set_text(b.tag, "#" + f_num(b) + " " + (b.kind == 1 ? "▲" : "▼") + " " + str.tostring(f_ownPct(b), "#") + "%")
     else if b.ver == 2
-        // reference metrics: "1.963K (57%)" + buyers | sellers
+        // BTrader Concept 2.0 metrics: "1.963K (57%)" + buyers | sellers
         string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
         t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
         label.set_text(b.info, t2)
@@ -899,7 +1307,7 @@ if bearBreak
         f_trimSide(-1)
 
 // ════════════════════════════════════════════════════════════════════
-// FVG ZONES (reference: "FVG Zones" · strength = volume vs MA × trend × gap size)
+// FVG ZONES (reference: Sn1P3r "FVG Zones" · strength = volume vs MA × trend × gap size)
 // ════════════════════════════════════════════════════════════════════
 float fvgVolMa = ta.sma(volume, fvgVolLen)
 float fvgEma   = ta.ema(close, fvgEmaLen)
@@ -989,7 +1397,7 @@ if fvgMode and blocks.size() > 0
             bRank.rank := n
 
 // ════════════════════════════════════════════════════════════════════
-// ORDERBLOCK 2.0 (volumetric, like reference)
+// ORDERBLOCK 2.0 (volumetric, like BTrader Concept 2.0)
 //   structure break of its own swings (internal 5 / swing 50) → the extreme candle of the leg
 //   (lowest low for bullish, highest high for bearish) = the block, full candle ("precise")
 //   volume + buy / sell activity = the 1-minute candles of the whole leg (swing → break) that traded inside the block
@@ -1197,14 +1605,6 @@ f_keepSignals() =>
 var string lastSigTxt = "—"
 var int    lastSigBar = na
 float slBuf = slBufTicks * syminfo.mintick
-int   slMd  = slMode == "Rule: block if near, candle if far" ? 0 : slMode == "Below / above the 60% OrderBlock + buffer" ? 1 : slMode == "Below / above the entry candle only" ? 3 : 2
-// stop loss of an ENTER signal (dir 1 = long) for its 60% block
-f_sl(int dir, float bTop, float bBot) =>
-    bool near = slMd != 3 and low <= bTop and high >= bBot
-    slMd == 1 or (slMd == 2 and near) ? (dir == 1 ? bBot - slObPts * 0.1 : bTop + slObPts * 0.1) : dir == 1 ? (near ? math.min(low, bBot) - slBuf : low - slBuf) : (near ? math.max(high, bTop) + slBuf : high + slBuf)
-f_slTxt(int dir, bool nearIn) =>
-    bool near = nearIn and slMd != 3
-    slMd == 1 or (slMd == 2 and near) ? (dir == 1 ? " (below OB −" : " (above OB +") + str.tostring(slObPts, "#") + ")" : dir == 1 ? (near ? " (below block)" : " (below candle)") : (near ? " (above block)" : " (above candle)")
 
 f_blockLine(int idx) =>
     string s = "none at price"
@@ -1270,10 +1670,9 @@ if drawBull
     if comboLong
         Block b = gArr.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
-        float sl   = f_sl(1, b.top, b.bot)
-        if lbAll and lbEnter
-            sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + f_slTxt(1, near), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + f_slTxt(1, near) + "\n" + tt))
-        if showSL and lbAll and lbEnter
+        float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
+        sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)") + "\n" + tt))
+        if showSL
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBear
@@ -1302,10 +1701,9 @@ if drawBear
     if comboShort
         Block b = gArr.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
-        float sl   = f_sl(-1, b.top, b.bot)
-        if lbAll and lbEnter
-            sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + f_slTxt(-1, near), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + f_slTxt(-1, near) + "\n" + tt))
-        if showSL and lbAll and lbEnter
+        float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
+        sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)") + "\n" + tt))
+        if showSL
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
 if drawBull or drawBear
@@ -1316,64 +1714,11 @@ if drawBull or drawBear
 // at the signal close, SL = the rule's stop, TP = entry ± R multiple)
 // ════════════════════════════════════════════════════════════════════
 grpW    = "⑮ Backtest · Win / Loss"
-showWL  = lbAll and lbWL   // ⓪ Display
+showWL  = input.bool(true, "Show W / L on the chart", group=grpW)
 tpMode  = input.string("Fixed price distance", "Take profit type", options=["Fixed price distance", "R multiple"], group=grpW, tooltip="Fixed: TP = entry ± the price distance below (20.00 = 200 points on XAUUSD). R multiple: TP = entry ± R × (entry → SL distance).")
 tpPts   = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW)
 tpR     = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpW, tooltip="Only for 'R multiple': 2 = TP at twice the risk.")
 oneOpen = input.bool(true, "One trade at a time", group=grpW, tooltip="On: a new ENTER signal is ignored while a trade is still open.")
-btFrom  = input.time(timestamp("01 Jan 2020 00:00 +0000"), "All tests · from date", group=grpW, tooltip="Every Win / Loss test in this script (OFX combo, Every AX) only opens trades between these dates.")
-btTo    = input.time(timestamp("31 Dec 2099 00:00 +0000"), "All tests · to date", group=grpW)
-btSpr   = input.float(0.18, "All tests · spread (ask − bid)", options=[0.0, 0.18, 0.22, 0.30], group=grpW, tooltip="Chart prices are bid. BUY opens on the ask (close + spread) and its TP / SL are hit on the bid; SELL opens on the bid and its TP / SL are hit on the ask (bid + spread).")
-dlOn    = input.bool(true, "All tests · daily limit", group=grpW, tooltip="Each test stops for the day once its closed trades today reach the profit target or the loss limit. No new trades (pending orders are cancelled) until the next daily candle; trades already open run to their own TP / SL.")
-dlTp    = input.float(400, "Daily profit target (points)", minval=1, step=50, group=grpW, tooltip="400 pts = 40.00 in price.")
-dlSl    = input.float(300, "Daily loss limit (points)", minval=1, step=50, group=grpW, tooltip="300 pts = 30.00 in price.")
-bool btIn = time >= btFrom and time <= btTo
-bool dayNew = timeframe.change("D")
-
-// daily limit state of one test (points kept in price: 1 pt = 0.10)
-type DayLim
-    float pts   = 0.0
-    bool  stop  = false
-    int   tgt   = 0
-    int   loss  = 0
-    int   skip  = 0
-
-f_dlReset(DayLim d) =>
-    d.pts  := 0.0
-    d.stop := false
-    d
-
-f_dlAdd(DayLim d, float res, string nm, bool lab) =>
-    d.pts += res
-    if dlOn and not d.stop and (d.pts >= dlTp * 0.1 or d.pts <= -dlSl * 0.1)
-        bool hit = d.pts > 0
-        d.stop := true
-        d.tgt  += hit ? 1 : 0
-        d.loss += hit ? 0 : 1
-        if lab
-            label.new(bar_index, hit ? high + atr14 * 1.5 : low - atr14 * 1.5, (hit ? "🎯 " : "⛔ ") + nm + (hit ? " DAY TARGET " : " DAY STOP ") + str.tostring(d.pts * 10, "+#;-#") + " pts", style=hit ? label.style_label_down : label.style_label_up, color=color.new(hit ? #00C853 : #D50000, 30), textcolor=color.white, size=size.tiny, tooltip=nm + ": daily limit reached (target +" + str.tostring(dlTp, "#") + " / loss −" + str.tostring(dlSl, "#") + " pts) → no new trades until the next daily candle")
-    d
-
-f_dlTxt(DayLim d) =>
-    dlOn ? "\nDaily limit: 🎯 target days " + str.tostring(d.tgt) + " · ⛔ loss days " + str.tostring(d.loss) + " · skipped " + str.tostring(d.skip) + (d.stop ? " · stopped today" : "") : ""
-
-var DayLim dlOfx = DayLim.new()
-var DayLim dlAx  = DayLim.new()
-if dayNew
-    f_dlReset(dlOfx)
-    f_dlReset(dlAx)
-var int firstBarTime = time
-// test period markers: dashed line where the tests start / end
-var bool btStarted = false
-var bool btEnded   = false
-if not btStarted and time >= btFrom and btFrom > firstBarTime
-    btStarted := true
-    line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2)
-    label.new(bar_index, high + atr14 * 3, "▶ TEST FROM " + str.format_time(btFrom, "dd MMM yy"), style=label.style_label_left, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small)
-if not btEnded and time > btTo
-    btEnded := true
-    line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2)
-    label.new(bar_index, high + atr14 * 3, "■ TEST TO " + str.format_time(btTo, "dd MMM yy"), style=label.style_label_right, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small)
 bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
 cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
 cLoss   = input.color(#F23645, "Loss color", inline="wl", group=grpW)
@@ -1387,59 +1732,8 @@ type Trade
     line  lTp
     line  lSl
     int   tm = na
-    bool  filled = true
-    int   sigBar = na
-    line  lnP    = na
-    label lbP    = na
-    int   ord    = 0
 
 var Trade trd    = na
-
-// ── session survey: W / L / points per session for the TP in use, and the other TP on the same trades ──
-f_sess(int t) =>
-    int h = hour(t, "UTC")
-    h < 7 ? 0 : h < 12 ? 1 : h < 21 ? 2 : 3
-type SessSt
-    array<int>   w
-    array<int>   l
-    array<float> p
-    array<int>   aw
-    array<int>   al
-    array<float> ap
-    array<Trade> sh
-    float        alt
-f_ssNew(float alt) =>
-    SessSt.new(array.new_int(4, 0), array.new_int(4, 0), array.new_float(4, 0.0), array.new_int(4, 0), array.new_int(4, 0), array.new_float(4, 0.0), array.new<Trade>(), alt)
-f_ssMain(SessSt z, int t, bool win, float res) =>
-    int q = f_sess(t)
-    z.w.set(q, z.w.get(q) + (win ? 1 : 0))
-    z.l.set(q, z.l.get(q) + (win ? 0 : 1))
-    z.p.set(q, z.p.get(q) + res)
-    z
-f_ssShadow(SessSt z, int d, float en, float sl) =>
-    z.sh.push(Trade.new(d, en, sl, en + d * z.alt, bar_index, na, na, time))
-    z
-f_ssRun(SessSt z) =>
-    if z.sh.size() > 0
-        for i = z.sh.size() - 1 to 0
-            Trade t = z.sh.get(i)
-            if bar_index > t.bar
-                bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
-                bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
-                if hitSL or hitTP
-                    bool win = hitTP and (not hitSL or bothBar == "Win")
-                    int  q   = f_sess(t.tm)
-                    z.aw.set(q, z.aw.get(q) + (win ? 1 : 0))
-                    z.al.set(q, z.al.get(q) + (win ? 0 : 1))
-                    z.ap.set(q, z.ap.get(q) + (win ? math.abs(t.tp - t.entry) : -math.abs(t.entry - t.sl)))
-                    z.sh.remove(i)
-    z
-var SessSt ssO = f_ssNew(tpPts == 10.0 ? 20.0 : 10.0)
-var int    tDays = 0
-if dayNew and btIn
-    tDays += 1
-if barstate.isconfirmed
-    f_ssRun(ssO)
 var int   wins   = 0
 var int   losses = 0
 var float netR   = 0.0
@@ -1447,8 +1741,8 @@ var float netPts = 0.0
 
 // 1) manage the open trade (from the candle after entry, on closed candles only)
 if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
-    bool hitSL = trd.dir == 1 ? low <= trd.sl : high + btSpr >= trd.sl
-    bool hitTP = trd.dir == 1 ? high >= trd.tp : low + btSpr <= trd.tp
+    bool hitSL = trd.dir == 1 ? low <= trd.sl : high >= trd.sl
+    bool hitTP = trd.dir == 1 ? high >= trd.tp : low <= trd.tp
     if hitSL or hitTP
         bool  win  = hitTP and (not hitSL or bothBar == "Win")
         float rsk  = math.abs(trd.entry - trd.sl)
@@ -1457,8 +1751,6 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
         losses += win ? 0 : 1
         netR   += win ? gain / rsk : -1.0
         netPts += win ? gain : -rsk
-        f_dlAdd(dlOfx, win ? gain : -rsk, "OFX", showWL)
-        f_ssMain(ssO, trd.tm, win, win ? gain : -rsk)
         if showWL
             float px = win ? trd.tp : trd.sl
             bool  up = (trd.dir == 1) == win
@@ -1473,21 +1765,17 @@ if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
 // 2) open a trade on a confirmed ENTER signal
 bool enterL = drawBull and comboLong
 bool enterS = drawBear and comboShort
-if barstate.isconfirmed and btIn and dlOn and dlOfx.stop and (enterL or enterS)
-    dlOfx.skip += 1
-if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or enterS) and (na(trd) or not oneOpen)
+if barstate.isconfirmed and (enterL or enterS) and (na(trd) or not oneOpen)
     Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
     bool  near = low <= eb.top and high >= eb.bot
-    float sl   = f_sl(enterL ? 1 : -1, eb.top, eb.bot)
-    float en   = enterL ? close + btSpr : close
-    float risk = math.abs(en - sl)
-    if risk > 0 and (enterL ? sl < en : sl > en)
+    float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
+    float risk = math.abs(close - sl)
+    if risk > 0
         int   d  = enterL ? 1 : -1
-        float tp = en + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
+        float tp = close + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
         line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
         line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
-        trd := Trade.new(d, en, sl, tp, bar_index, l1, l2, time)
-        f_ssShadow(ssO, d, en, sl)
+        trd := Trade.new(d, close, sl, tp, bar_index, l1, l2)
 
 // ════════════════════════════════════════════════════════════════════
 // BACKTEST · EVERY ACCELERATOR  (each BuAx+ / BeAx+ is a trade on its own,
@@ -1495,10 +1783,9 @@ if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or en
 // ════════════════════════════════════════════════════════════════════
 grpW2   = "⑮b Backtest · Every accelerator"
 axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
-axBtWL  = lbAll and lbAx   // ⓪ Display: small 'w' / 'l' marks
-axTp    = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points.")
-axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 100 / SL 100 = 1R.")
-axSlMd  = input.string("Fixed distance", "Stop loss", options=["Fixed distance", "Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
+axBtWL  = input.bool(true, "Show its W / L on the chart", group=grpW2, tooltip="Small 'w' / 'l' marks (lower case, so they are not mixed up with the 5-gate W / L).")
+axTp    = input.float(10.0, "TP distance (price) = 1R", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points on XAUUSD.")
+axSlMd  = input.string("Same as TP (1R)", "Stop loss", options=["Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
 axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
 
 var array<Trade> axOpen = array.new<Trade>()
@@ -1515,8 +1802,8 @@ if axBtOn and barstate.isconfirmed and axOpen.size() > 0
     for i = axOpen.size() - 1 to 0
         Trade t = axOpen.get(i)
         if bar_index > t.bar
-            bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
-            bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
+            bool hitSL = t.dir == 1 ? low <= t.sl : high >= t.sl
+            bool hitTP = t.dir == 1 ? high >= t.tp : low <= t.tp
             if hitSL or hitTP
                 bool  win  = hitTP and (not hitSL or bothBar == "Win")
                 float rsk  = math.abs(t.entry - t.sl)
@@ -1529,22 +1816,18 @@ if axBtOn and barstate.isconfirmed and axOpen.size() > 0
                 axLS  += not win and t.dir == -1 ? 1 : 0
                 axPts += win ? gain : -rsk
                 axR   += win ? gain / rsk : -1.0
-                f_dlAdd(dlAx, win ? gain : -rsk, "AX", axBtWL)
                 if axBtWL
                     float px = win ? t.tp : t.sl
                     bool  up = (t.dir == 1) == win
                     label.new(bar_index, px, win ? "w" : "l", style=up ? label.style_label_down : label.style_label_up, color=color.new(win ? cWin : cLoss, 25), textcolor=color.white, size=size.tiny, tooltip="Every-accelerator test · " + (t.dir == 1 ? "BuAx+ LONG" : "BeAx+ SHORT") + " from " + str.format_time(t.tm, "dd MMM HH:mm") + "\n" + (win ? "WIN +" + str.tostring(gain, "#.##") + " (+" + str.tostring(gain / rsk, "#.##") + "R)" : "LOSS −" + str.tostring(rsk, "#.##") + " (−1R)") + "\nEntry " + str.tostring(t.entry, format.mintick) + " · SL " + str.tostring(t.sl, format.mintick) + " · TP " + str.tostring(t.tp, format.mintick))
                 axOpen.remove(i)
 
-if axBtOn and barstate.isconfirmed and btIn and dlOn and dlAx.stop and (drawBull or drawBear)
-    dlAx.skip += 1
-if axBtOn and barstate.isconfirmed and btIn and not (dlOn and dlAx.stop) and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
+if axBtOn and barstate.isconfirmed and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
     int   d  = drawBull ? 1 : -1
-    float en = d == 1 ? close + btSpr : close
-    float tp = en + d * axTp
-    float sl = axSlMd == "Same as TP (1R)" ? en - d * axTp : axSlMd == "Fixed distance" ? en - d * axSlP : (d == 1 ? low - slBuf : high + slBuf)
-    if d * (en - sl) > 0
-        axOpen.push(Trade.new(d, en, sl, tp, bar_index, na, na, time))
+    float tp = close + d * axTp
+    float sl = axSlMd == "Same as TP (1R)" ? close - d * axTp : (d == 1 ? low - slBuf : high + slBuf)
+    if math.abs(close - sl) > 0
+        axOpen.push(Trade.new(d, close, sl, tp, bar_index, na, na, time))
 
 // ════════════════════════════════════════════════════════════════════
 // UN-AUCTIONED PRICE (UH / UL): a candle with no wick on one side leaves a level
@@ -1811,10 +2094,9 @@ if barstate.islast
 // dashboard
 var table dash = na
 if showDash and na(dash)
-    pos = dashPos == "Top Right" ? position.top_right : dashPos == "Middle Right" ? position.middle_right : dashPos == "Top Center" ? position.top_center : dashPos == "Bottom Center" ? position.bottom_center : dashPos == "Top Left" ? position.top_left : dashPos == "Middle Left" ? position.middle_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(pos, 2, mobileView ? 5 : 15, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
+    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 4 : 9, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
-string dSz = dashSize == "Small" ? size.tiny : size.small
 if showDash and barstate.islast
     color gold = #E3B341
     color ok   = #26A69A
@@ -1844,61 +2126,34 @@ if showDash and barstate.islast
         table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
         table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
-        bool ob2M = gateOb == "OrderBlock 2.0"
-        table.cell(dash, 0, 2, ob2M ? "W / L" : wlTxt, text_color=ob2M ? gold : netR >= 0 ? ok : bad, text_size=size.tiny)
-        table.cell(dash, 1, 2, ob2M ? "not tracked (OB 2.0)" : str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=ob2M ? gold : netPts >= 0 ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 0, 2, wlTxt, text_color=netR >= 0 ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 2, str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=netPts >= 0 ? ok : bad, text_size=size.tiny)
         if axBtOn
             table.cell(dash, 0, 3, "AX " + axTxt, text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
             table.cell(dash, 1, 3, str.tostring(axPts, "+#.##;-#.##") + " pts", text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
-        if axBtOn
-            int   axDn = math.max(tDays, 1)
-            float axDp = axPts * 10 / axDn
-            table.cell(dash, 0, 4, "AX avg / day", text_color=gold, text_size=size.tiny)
-            table.cell(dash, 1, 4, str.tostring(axDp, "+#;-#") + " pts · " + str.tostring(axW * 1.0 / axDn, "#.#") + "W " + str.tostring(axL * 1.0 / axDn, "#.#") + "L", text_color=axDp >= 0 ? ok : bad, text_size=size.tiny)
     else
-        table.cell(dash, 0, 0, "OFX 2.0", text_color=gold, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=dSz, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
-        table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=dSz)
-        table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=dSz)
-        table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 3, sig, text_color=txt, text_size=dSz)
-        table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=dSz)
-        table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=dSz)
+        table.cell(dash, 0, 0, "BTrader OFX 2.0", text_color=gold, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
+        table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=size.small)
+        table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 3, sig, text_color=txt, text_size=size.small)
+        table.cell(dash, 0, 4, "4 · Bar delta", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 4, f_ks(delta) + (dPass ? " ✓" : " ✗") + "  (±" + f_k(minDelta) + ")", text_color=dPass ? ok : bad, text_size=size.small)
+        table.cell(dash, 0, 5, "5 · Status", text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 5, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.small)
         table.cell(dash, 0, 6, "Delta source", text_color=txt, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
-        table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=dSz, text_halign=text.align_left)
-        string wlFull = wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)"
-        bool   ob2Gate = gateOb == "OrderBlock 2.0"
-        table.cell(dash, 1, 7, ob2Gate ? "Not tracked with OrderBlock 2.0 ⓘ" : wlFull, text_color=ob2Gate ? gold : netPts >= 0 ? ok : bad, text_size=dSz, tooltip=ob2Gate ? "Win / Loss is not reliable with OrderBlock 2.0: its blocks and buyer / seller % need 1-minute data, which TradingView only keeps for recent candles, so older blocks are not the same as they were live.\nTo test Win / Loss: ⑤ Gate 2 → OrderBlock 1.0.\nCounted anyway (for reference only): " + wlFull : "OFX combo" + f_dlTxt(dlOfx))
+        table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=size.small, text_halign=text.align_left)
+        table.cell(dash, 1, 7, wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)", text_color=netPts >= 0 ? ok : bad, text_size=size.small)
         if axBtOn
-            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP, "#.##") : axSlMd == "Same as TP (1R)" ? " = 1R" : " / SL candle"), text_color=txt, text_size=dSz, text_halign=text.align_left)
-            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=dSz, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()) + f_dlTxt(dlAx))
-        if ssOn
-            SessSt zo = ssO
-            array<string> sNm = array.from("Asia", "London", "New York", "Other")
-            for q = 0 to 3
-                string sv = str.tostring(zo.w.get(q)) + "W " + str.tostring(zo.l.get(q)) + "L " + str.tostring(zo.p.get(q) * 10, "+#;-#") + " pts (TP " + str.tostring(zo.alt, "#") + ": " + str.tostring(zo.ap.get(q) * 10, "+#;-#") + ")"
-                float sp = zo.p.get(q)
-                table.cell(dash, 0, 9 + q, "Session · " + sNm.get(q), text_color=txt, text_size=size.tiny, text_halign=text.align_left)
-                table.cell(dash, 1, 9 + q, sv, text_color=sp >= 0 ? ok : bad, text_size=size.tiny, tooltip="Points (1 pt = 0.10). Session by entry / fill time, UTC: Asia 00-07 · London 07-12 · New York 12-21 · Other 21-24.\nOFX combo uses TP " + str.tostring(tpPts, "#") + " (bracket = TP " + str.tostring(zo.alt, "#") + ").\nThe bracket runs the other TP on the same trades (same entry / SL, no daily limit), for comparison only.")
-            int   nD   = math.max(tDays, 1)
-            float dP   = netPts * 10 / nD
-            float dW   = wins * 1.0 / nD
-            float dL   = losses * 1.0 / nD
-            table.cell(dash, 0, 13, "Avg / day · OFX combo", text_color=gold, text_size=size.tiny, text_halign=text.align_left)
-            table.cell(dash, 1, 13, str.tostring(dP, "+#;-#") + " pts · " + str.tostring(dW, "#.#") + "W " + str.tostring(dL, "#.#") + "L · $" + str.tostring(dP * 0.10, "+#.0;-#.0") + " /0.01 lot", text_color=dP >= 0 ? ok : bad, text_size=size.tiny, tooltip="Over " + str.tostring(nD) + " test days (daily candles inside the test dates).\n0.01 lot = 1 oz → 1 pt (0.10) = $0.10 per 0.01 lot.")
-        if axBtOn
-            int   axDn = math.max(tDays, 1)
-            float axDp = axPts * 10 / axDn
-            table.cell(dash, 0, 14, "Avg / day · Every AX", text_color=gold, text_size=dSz, text_halign=text.align_left)
-            table.cell(dash, 1, 14, str.tostring(axDp, "+#;-#") + " pts · " + str.tostring(axW * 1.0 / axDn, "#.#") + "W " + str.tostring(axL * 1.0 / axDn, "#.#") + "L · $" + str.tostring(axDp * 0.10, "+#.0;-#.0") + " /0.01 lot", text_color=axDp >= 0 ? ok : bad, text_size=dSz, tooltip="Every AX (TP " + str.tostring(axTp * 10, "#") + " pts" + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP * 10, "#") + " pts" : "") + ") over " + str.tostring(axDn) + " test days (daily candles inside the test dates).\nTotal: " + str.tostring(axW) + "W " + str.tostring(axL) + "L · " + str.tostring(axPts * 10, "+#;-#") + " pts\n0.01 lot = 1 oz → 1 pt (0.10) = $0.10 per 0.01 lot.")
+            table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + " = 1R", text_color=txt, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()))
 
 // ════════════════════════════════════════════════════════════════════
-// EXTRA TOOLS (like reference): POC line · range box · RSI divergence
+// EXTRA TOOLS (like BTrader Concept 2.0): POC line · range box · RSI divergence
 // ════════════════════════════════════════════════════════════════════
 grpE    = "⑯ POC · Range · Divergence"
 showPoc = input.bool(true, "Show POC line", group=grpE, tooltip="Price with the most volume over the lookback (orange line).")
@@ -2054,6 +2309,86 @@ plot(dwD5i,       "Delta avg SMA5 incl",  display=display.data_window)
 plot(dwD10p,      "Delta avg SMA10 prev", display=display.data_window)
 plot(dwD20p,      "Delta avg SMA20 prev", display=display.data_window)
 plot(dwD20i,      "Delta avg SMA20 incl", display=display.data_window)
+
+// ---- REF CHECK: on each reference candle, print our numbers next to the reference's and why it fired / did not ----
+f_refWhy(bool bull) =>
+    string w = ""
+    if bull and not (close > open)
+        w += "\n✗ candle is not green"
+    if not bull and not (close < open)
+        w += "\n✗ candle is not red"
+    if not bodyOK
+        w += "\n✗ body " + str.tostring(barRange > 0 ? math.abs(close - open) / barRange * 100 : 0, "#") + "% < " + str.tostring(bodyNeed, "#") + "%"
+    if rangeRatio < rangeNeed
+        w += "\n✗ range ratio " + f_x(rangeRatio) + " < " + f_x(rangeNeed) + "  → our range avg is too big"
+    if deltaConf and (bull ? delta <= 0 : delta >= 0)
+        w += "\n✗ delta has the wrong sign"
+    if deltaConf and deltaRatio < deltaNeed
+        w += "\n✗ delta ratio " + f_x(deltaRatio) + " < " + f_x(deltaNeed) + "  → our delta avg is too big"
+    if axDeltaGate and math.abs(delta) < minDelta
+        w += "\n✗ |delta| " + f_k(math.abs(delta)) + " < " + f_k(minDelta)
+    if not volOK
+        w += "\n✗ volume ratio"
+    if not sizeOK
+        w += "\n✗ min size"
+    if not (bull ? trendBullOK : trendBearOK)
+        w += "\n✗ trend filter"
+    if (bull and bullAx and not bullAxOK) or (not bull and bearAx and not bearAxOK)
+        w += "\n✗ cooldown"
+    w
+
+if isA or isB or isC or isD or isE
+    float rD  = isA ? r1D : isB ? r2D : isC ? r3D : isD ? r4D : r5D
+    float rRR = isA ? r1RR : isB ? r2RR : isC ? r3RR : isD ? r4RR : r5RR
+    float rDR = isA ? r1DR : isB ? r2DR : isC ? r3DR : isD ? r4DR : r5DR
+    float rA  = isA ? r1R : isB ? r2R : isC ? r3R : isD ? r4R : r5R
+    float rDA = isA ? r1DA : isB ? r2DA : isC ? r3DA : isD ? r4DA : r5DA
+    string t = "REF CHECK · Ref " + (isA ? "1" : isB ? "2" : isC ? "3" : isD ? "4" : "5") + "   (ours  |  reference)"
+    t += "\nRange " + str.tostring(barRange, "#.##") + "  |  " + str.tostring(isA ? r1Rg : isB ? r2Rg : isC ? r3Rg : isD ? r4Rg : r5Rg, "#.##") + "   volume " + str.tostring(volume, "#")
+    t += "\nRange avg " + str.tostring(avgRange, "#.##") + "  |  " + str.tostring(rA, "#.##") + "   ratio " + f_x(rangeRatio) + "  |  " + f_x(rRR > 0 ? rRR : barRange / rA)
+    t += "\nDelta " + f_ks(delta) + "  |  " + f_ks(rD)
+    t += "\nDelta avg " + f_k(avgAbsDelta) + "  |  " + f_k(rDA) + "   ratio " + f_x(deltaRatio) + "  |  " + f_x(rDR > 0 ? rDR : math.abs(rD) / rDA)
+    t += "\nUsing: range avg " + (useCalR ? f_rfName(aRF) + " " + str.tostring(aRN) : rangeAvgMode + " " + str.tostring(rangeLen)) + " · delta avg " + (useCal ? f_dfName(aDF) + " " + str.tostring(aDN) : deltaAvgMode + " " + str.tostring(lookback))
+    t += "\nMedian range prev 10/14/20/30/50: " + str.tostring(f_medPrev(10), "#.##") + " / " + str.tostring(f_medPrev(14), "#.##") + " / " + str.tostring(f_medPrev(20), "#.##") + " / " + str.tostring(f_medPrev(30), "#.##") + " / " + str.tostring(f_medPrev(50), "#.##")
+    bool fired = rD > 0 ? drawBull : drawBear
+    t += "\n" + (fired ? "✓ ours fired here too" : "✗ ours did NOT fire:" + f_refWhy(rD > 0))
+    label.new(bar_index, rD > 0 ? low - atr14 * 1.2 : high + atr14 * 1.2, t, style=rD > 0 ? label.style_label_up : label.style_label_down, color=color.new(#131722, 0), textcolor=fired ? #26A69A : #E3B341, size=size.small, textalign=text.align_left)
+
+var table calTbl = na
+if calOn and barstate.islast
+    if na(calTbl)
+        calTbl := table.new(position.bottom_left, 2, 10, bgcolor=color.new(#131722, 5), border_color=color.new(#E3B341, 50), border_width=1, frame_color=#E3B341, frame_width=1)
+    color cg = #E3B341
+    color ct = #D1D4DC
+    color okC  = #26A69A
+    color badC = #F23645
+    table.cell(calTbl, 0, 0, "AUTO-CALIBRATION", text_color=cg, text_size=size.small)
+    table.cell(calTbl, 1, 0, "Reference candles found: " + str.tostring(calHits) + "/" + str.tostring(calNeed) + calFound, text_color=calHits >= calNeed ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 1, "Delta formula", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 1, srcUsed + (synMode == SYN_FIT and deltaSrcIn == SRC_SY ? " · fitted " + str.tostring(fitA, "#.##") + " / " + str.tostring(fitB, "#.##") : "") + " · matches " + str.tostring(dFitOK) + "/" + str.tostring(calHits), text_color=dFitOK == calHits and calHits > 0 ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 2, "Range average", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 2, rBest + (calRFound ? " ✓" : " ✗"), text_color=calRFound ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 3, "Delta average", text_color=ct, text_size=size.small)
+    table.cell(calTbl, 1, 3, dBest + (calDFound ? " ✓" : " ✗"), text_color=calDFound ? okC : badC, text_size=size.small)
+    table.cell(calTbl, 0, 4, "Status", text_color=ct, text_size=size.small)
+    string useTxt = "To use it: ⑬ → tick 'Use on all candles' → Range " + f_rfName(cRF) + " len " + str.tostring(cRN) + " · Delta avg " + f_dfName(cDF) + " len " + str.tostring(cDN)
+    string stTxt = manDeep ? "Using the formulas set in 'Use on all candles'" : not calApply ? (calRFound and calDFound ? "FOUND · " + useTxt : calRFound ? "Range FOUND · delta avg not exact · " + useTxt : "No formula matches every reference candle yet") : calRFound and calDFound ? "APPLIED from the last reference candle · copy into 'Use on all candles'" : calRFound ? "Range APPLIED · delta avg NOT (no exact match)" : calDFound ? "Delta avg APPLIED · range NOT (no exact match)" : "NOT applied — no formula matches every reference candle"
+    table.cell(calTbl, 1, 4, stTxt, text_color=manDeep or calRFound or calDFound ? okC : badC, text_size=size.small)
+    for k = 0 to 4
+        table.cell(calTbl, 0, 5 + k, "Ref " + str.tostring(k + 1), text_color=ct, text_size=size.tiny)
+        table.cell(calTbl, 1, 5 + k, calDiag.get(k), text_color=ct, text_size=size.tiny, text_halign=text.align_left)
+
+// ---- advance the deep recursive averages ----
+if barstate.isconfirmed
+    for n = 2 to DN
+        float ae = 2.0 / (n + 1)
+        float ar = 1.0 / n
+        dsHLE.set(n, f_step(dsHLE.get(n), barRange, ae))
+        dsHLR.set(n, f_step(dsHLR.get(n), barRange, ar))
+        dsTRR.set(n, f_step(dsTRR.get(n), trS, ar))
+        dsTRE.set(n, f_step(dsTRE.get(n), trS, ae))
+        dsDE.set(n, f_step(dsDE.get(n), absDS, ae))
+        dsDR.set(n, f_step(dsDR.get(n), absDS, ar))
 
 // ---- advance the recursive averages (only on confirmed bars, so realtime ticks don't compound) ----
 if barstate.isconfirmed
