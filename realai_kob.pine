@@ -570,6 +570,11 @@ type Block
     bool  isOb  = false
     int   ver   = 1
     line  mid
+    float x1 = na
+    float x2 = na
+    float x3 = na
+    float x4 = na
+    int   xb = na
 
 var array<Block> blocks = array.new<Block>()   // FVG zones (display)
 var array<Block> obs    = array.new<Block>()   // OrderBlock 1.0
@@ -670,6 +675,7 @@ f_refreshBlock(Block b, float totalAll) =>
         string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
         t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
         label.set_text(b.info, t2)
+        label.set_tooltip(b.info, "Volume check (compare with the reference):\nA · in-zone volume, OB candle → break (shown): " + f_k(b.vol) + "\nB · break candle + 2 before (full candles): " + f_k(b.x1) + "\nC · OB candle only (full candle): " + f_k(b.x2) + "\nD · OB candle → break (full candles, " + str.tostring(nz(b.xb) + 1) + " candles): " + f_k(b.x3) + "\nE · in-zone volume, OB candle + next 2: " + f_k(b.x4))
         label.set_x(b.info, bar_index + blockExt)
         if not na(b.mid)
             line.set_x2(b.mid, bar_index + blockExt)
@@ -1068,6 +1074,21 @@ f_ob2(int dir, int fromBar, int id) =>
             bv += zb
             sv += zs
         Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
+        // candidate volumes for matching the reference (shown in the block's tooltip)
+        float vLeg = 0.0
+        for k = best to 0
+            vLeg += nz(volume[k])
+        float vOb = 0.0
+        float vOb3 = 0.0
+        for k = best to math.max(best - 2, 0)
+            [zb1, zs1] = f_ibInside(k, zTop, zBot)
+            vOb  += k == best ? nz(volume[k]) : 0.0
+            vOb3 += zb1 + zs1
+        nb2.x1 := volume + nz(volume[1]) + nz(volume[2])
+        nb2.x2 := vOb
+        nb2.x3 := vLeg
+        nb2.x4 := vOb3
+        nb2.xb := best
         nb2.isOb := true
         nb2.ver  := 2
         obs2.unshift(nb2)
