@@ -1613,7 +1613,7 @@ f_sl(int dir, float bTop, float bBot) =>
     bool near = low <= bTop and high >= bBot
     slOb ? (dir == 1 ? bBot - slObPts * 0.1 : bTop + slObPts * 0.1) : dir == 1 ? (near ? math.min(low, bBot) - slBuf : low - slBuf) : (near ? math.max(high, bTop) + slBuf : high + slBuf)
 f_slTxt(int dir, bool near) =>
-    slOb ? (dir == 1 ? " (below OB −" : " (above OB +") + str.tostring(slObPts, "#") + ")" : dir == 1 ? f_slTxt(1, near) : f_slTxt(-1, near)
+    slOb ? (dir == 1 ? " (below OB −" : " (above OB +") + str.tostring(slObPts, "#") + ")" : dir == 1 ? (near ? " (below block)" : " (below candle)") : (near ? " (above block)" : " (above candle)")
 
 f_blockLine(int idx) =>
     string s = "none at price"
