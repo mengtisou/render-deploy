@@ -1816,7 +1816,7 @@ grpW2   = "⑮b Backtest · Every accelerator"
 axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
 axBtWL  = input.bool(true, "Show its W / L on the chart", group=grpW2, tooltip="Small 'w' / 'l' marks (lower case, so they are not mixed up with the 5-gate W / L).")
 axTp    = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points.")
-axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 200 / SL 100 = 2R.")
+axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 100 / SL 100 = 1R.")
 axSlMd  = input.string("Fixed distance", "Stop loss", options=["Fixed distance", "Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
 axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
 
@@ -1829,6 +1829,9 @@ var int   axWB = 0
 var int   axLB = 0
 var int   axWS = 0
 var int   axLS = 0
+var int   axDays = 0
+if barstate.isfirst or timeframe.change("D")
+    axDays += 1
 
 if axBtOn and barstate.isconfirmed and axOpen.size() > 0
     for i = axOpen.size() - 1 to 0
@@ -2127,7 +2130,7 @@ if barstate.islast
 var table dash = na
 if showDash and na(dash)
     pos = dashPos == "Top Right" ? position.top_right : dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 4 : 9, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    dash := table.new(mobileView ? position.top_right : pos, 2, mobileView ? 5 : 10, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
 if showDash and barstate.islast
     color gold = #E3B341
@@ -2163,6 +2166,10 @@ if showDash and barstate.islast
         if axBtOn
             table.cell(dash, 0, 3, "AX " + axTxt, text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
             table.cell(dash, 1, 3, str.tostring(axPts, "+#.##;-#.##") + " pts", text_color=axPts >= 0 ? ok : bad, text_size=size.tiny)
+            int   axDn = math.max(axDays, 1)
+            float axDp = axPts * 10 / axDn
+            table.cell(dash, 0, 4, "AX avg / day", text_color=gold, text_size=size.tiny)
+            table.cell(dash, 1, 4, str.tostring(axDp, "+#;-#") + " pts · " + str.tostring(axW * 1.0 / axDn, "#.#") + "W " + str.tostring(axL * 1.0 / axDn, "#.#") + "L", text_color=axDp >= 0 ? ok : bad, text_size=size.tiny)
     else
         table.cell(dash, 0, 0, "BTrader OFX 2.0", text_color=gold, text_size=size.small, text_halign=text.align_left)
         table.cell(dash, 1, 0, "5 gates", text_color=gold, text_size=size.small)
@@ -2183,6 +2190,10 @@ if showDash and barstate.islast
         if axBtOn
             table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP, "#.##") : axSlMd == "Same as TP (1R)" ? " = 1R" : " / SL candle"), text_color=txt, text_size=size.small, text_halign=text.align_left)
             table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=size.small, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()))
+            int   axDn = math.max(axDays, 1)
+            float axDp = axPts * 10 / axDn
+            table.cell(dash, 0, 9, "Avg / day · Every AX", text_color=gold, text_size=size.small, text_halign=text.align_left)
+            table.cell(dash, 1, 9, str.tostring(axDp, "+#;-#") + " pts · " + str.tostring(axW * 1.0 / axDn, "#.#") + "W " + str.tostring(axL * 1.0 / axDn, "#.#") + "L · $" + str.tostring(axDp * 0.10, "+#.0;-#.0") + " /0.01 lot", text_color=axDp >= 0 ? ok : bad, text_size=size.small, tooltip="Every AX (TP " + str.tostring(axTp * 10, "#") + " pts" + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP * 10, "#") + " pts" : "") + ") over " + str.tostring(axDn) + " days on the chart.\nTotal: " + str.tostring(axW) + "W " + str.tostring(axL) + "L · " + str.tostring(axPts * 10, "+#;-#") + " pts\n0.01 lot = 1 oz → 1 pt (0.10) = $0.10 per 0.01 lot.")
 
 // ════════════════════════════════════════════════════════════════════
 // EXTRA TOOLS (like BTrader Concept 2.0): POC line · range box · RSI divergence
