@@ -169,7 +169,7 @@ ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
 slBufTicks = input.int(5, "SL buffer (ticks)", minval=0, group=grpX)
-slMode     = input.string("Rule: block if near, candle if far", "Stop loss", options=["Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer"], group=grpX, tooltip="Rule (default): entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER, W / L and the KOB setups.")
+slMode     = input.string("Rule: block if near, candle if far", "Stop loss", options=["Near block: OrderBlock ± buffer · far: candle", "Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer"], group=grpX, tooltip="Near block (OB 2.0 default): entry candle touches the 60% block → SL = block bottom − buffer (BUY) / top + buffer (SELL); far from it → SL beyond the entry candle.\nRule: entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER, W / L and the KOB setups.")
 slObPts    = input.float(20, "OrderBlock SL buffer (points)", minval=0, step=5, group=grpX, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
 showSL     = input.bool(true, "Draw SL line", group=grpX)
 entrySize  = input.string("Tiny", "ENTER box size", options=["Tiny", "Small", "Normal"], group=grpX)
@@ -1200,13 +1200,13 @@ f_keepSignals() =>
 var string lastSigTxt = "—"
 var int    lastSigBar = na
 float slBuf = slBufTicks * syminfo.mintick
-bool  slOb  = slMode != "Rule: block if near, candle if far"
+int   slMd  = slMode == "Rule: block if near, candle if far" ? 0 : slMode == "Below / above the 60% OrderBlock + buffer" ? 1 : 2
 // stop loss of an ENTER signal (dir 1 = long) for its 60% block
 f_sl(int dir, float bTop, float bBot) =>
     bool near = low <= bTop and high >= bBot
-    slOb ? (dir == 1 ? bBot - slObPts * 0.1 : bTop + slObPts * 0.1) : dir == 1 ? (near ? math.min(low, bBot) - slBuf : low - slBuf) : (near ? math.max(high, bTop) + slBuf : high + slBuf)
+    slMd == 1 or (slMd == 2 and near) ? (dir == 1 ? bBot - slObPts * 0.1 : bTop + slObPts * 0.1) : dir == 1 ? (near ? math.min(low, bBot) - slBuf : low - slBuf) : (near ? math.max(high, bTop) + slBuf : high + slBuf)
 f_slTxt(int dir, bool near) =>
-    slOb ? (dir == 1 ? " (below OB −" : " (above OB +") + str.tostring(slObPts, "#") + ")" : dir == 1 ? (near ? " (below block)" : " (below candle)") : (near ? " (above block)" : " (above candle)")
+    slMd == 1 or (slMd == 2 and near) ? (dir == 1 ? " (below OB −" : " (above OB +") + str.tostring(slObPts, "#") + ")" : dir == 1 ? (near ? " (below block)" : " (below candle)") : (near ? " (above block)" : " (above candle)")
 
 f_blockLine(int idx) =>
     string s = "none at price"
