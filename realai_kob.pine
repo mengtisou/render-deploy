@@ -169,6 +169,8 @@ ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
 slBufTicks = input.int(5, "SL buffer (ticks)", minval=0, group=grpX)
+slMode     = input.string("Rule: block if near, candle if far", "Stop loss", options=["Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer"], group=grpX, tooltip="Rule (default): entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER, W / L and the KOB setups.")
+slObPts    = input.float(20, "OrderBlock SL buffer (points)", minval=0, step=5, group=grpX, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
 showSL     = input.bool(true, "Draw SL line", group=grpX)
 entrySize  = input.string("Tiny", "ENTER box size", options=["Tiny", "Small", "Normal"], group=grpX)
 entryShort = input.bool(true, "ENTER box · short text", group=grpX, tooltip="On: 'SHORT · SL 4299.40'. Off: 'ENTER SHORT / SL 4299.400 (above block)'. The full text is always in the tooltip.")
@@ -1198,6 +1200,13 @@ f_keepSignals() =>
 var string lastSigTxt = "—"
 var int    lastSigBar = na
 float slBuf = slBufTicks * syminfo.mintick
+bool  slOb  = slMode != "Rule: block if near, candle if far"
+// stop loss of an ENTER signal (dir 1 = long) for its 60% block
+f_sl(int dir, float bTop, float bBot) =>
+    bool near = low <= bTop and high >= bBot
+    slOb ? (dir == 1 ? bBot - slObPts * 0.1 : bTop + slObPts * 0.1) : dir == 1 ? (near ? math.min(low, bBot) - slBuf : low - slBuf) : (near ? math.max(high, bTop) + slBuf : high + slBuf)
+f_slTxt(int dir, bool near) =>
+    slOb ? (dir == 1 ? " (below OB −" : " (above OB +") + str.tostring(slObPts, "#") + ")" : dir == 1 ? f_slTxt(1, near) : f_slTxt(-1, near)
 
 f_blockLine(int idx) =>
     string s = "none at price"
@@ -1263,9 +1272,9 @@ if drawBull
     if comboLong
         Block b = gArr.get(bullIdx)
         bool  near = low <= b.top and high >= b.bot
-        float sl   = near ? math.min(low, b.bot) - slBuf : low - slBuf
+        float sl   = f_sl(1, b.top, b.bot)
         if lbAll and lbEnter
-            sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + (near ? " (below block)" : " (below candle)") + "\n" + tt))
+            sd.lbs.push(label.new(bar_index, low - atr14 * entryOff, entryShort ? "LONG · SL " + str.tostring(sl, "#.##") : "ENTER LONG\nSL " + str.tostring(sl, format.mintick) + f_slTxt(1, near), style=label.style_label_up, color=bullColor, textcolor=color.white, size=eSize, tooltip="ENTER LONG · SL " + str.tostring(sl, format.mintick) + f_slTxt(1, near) + "\n" + tt))
         if showSL and lbAll and lbEnter
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
@@ -1295,9 +1304,9 @@ if drawBear
     if comboShort
         Block b = gArr.get(bearIdx)
         bool  near = low <= b.top and high >= b.bot
-        float sl   = near ? math.max(high, b.top) + slBuf : high + slBuf
+        float sl   = f_sl(-1, b.top, b.bot)
         if lbAll and lbEnter
-            sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + (near ? " (above block)" : " (above candle)") + "\n" + tt))
+            sd.lbs.push(label.new(bar_index, high + atr14 * entryOff, entryShort ? "SHORT · SL " + str.tostring(sl, "#.##") : "ENTER SHORT\nSL " + str.tostring(sl, format.mintick) + f_slTxt(-1, near), style=label.style_label_down, color=bearColor, textcolor=color.white, size=eSize, tooltip="ENTER SHORT · SL " + str.tostring(sl, format.mintick) + f_slTxt(-1, near) + "\n" + tt))
         if showSL and lbAll and lbEnter
             sd.lns.push(line.new(bar_index, sl, bar_index + 12, sl, color=cBlkBear, style=line.style_dashed, width=1))
 
@@ -1471,7 +1480,7 @@ if barstate.isconfirmed and btIn and dlOn and dlOfx.stop and (enterL or enterS)
 if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or enterS) and (na(trd) or not oneOpen)
     Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
     bool  near = low <= eb.top and high >= eb.bot
-    float sl   = enterL ? (near ? math.min(low, eb.bot) - slBuf : low - slBuf) : (near ? math.max(high, eb.top) + slBuf : high + slBuf)
+    float sl   = f_sl(enterL ? 1 : -1, eb.top, eb.bot)
     float en   = enterL ? close + btSpr : close
     float risk = math.abs(en - sl)
     if risk > 0 and (enterL ? sl < en : sl > en)
@@ -1673,7 +1682,7 @@ if barstate.isconfirmed and (enterL or enterS)
     bool  cNear = low <= cb.top and high >= cb.bot
     lastCDir := enterL ? 1 : -1
     lastCBar := bar_index
-    lastCSL  := enterL ? (cNear ? math.min(low, cb.bot) - slBuf : low - slBuf) : (cNear ? math.max(high, cb.top) + slBuf : high + slBuf)
+    lastCSL  := f_sl(enterL ? 1 : -1, cb.top, cb.bot)
     cUsed    := false
     cUsed15  := false
 
