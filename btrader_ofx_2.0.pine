@@ -150,6 +150,7 @@ ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candl
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (BTrader Concept 2.0): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
 ob2Vol  = input.string("Orderblock candle → break", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches BTrader Concept 2.0 on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
+ob2Max  = input.int(0, "Max candles after the OB candle (0 = until the break)", minval=0, maxval=100, group=grpO2, tooltip="With 'Orderblock candle → break': stop counting volume this many candles after the orderblock candle, even if structure has not broken yet. Useful when price stays inside the block for a long time before the break (the volume then comes out too high). 0 = count until the break.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 
@@ -1467,7 +1468,7 @@ f_ob2(int dir, int fromBar, int id) =>
         float sv = 0.0
         string vMode = ob2Vol == "Auto (5m whole leg, others candle → break)" ? (timeframe.in_seconds() <= 300 ? "Whole leg (swing → break)" : "Orderblock candle → break") : ob2Vol
         int kFrom = vMode == "Whole leg (swing → break)" ? span : best
-        int kTo   = vMode == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : 0
+        int kTo   = vMode == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : vMode == "Orderblock candle → break" and ob2Max > 0 ? math.max(best - ob2Max, 0) : 0
         for k = kFrom to kTo
             [zb, zs] = f_ibInside(k, zTop, zBot)
             bv += zb
