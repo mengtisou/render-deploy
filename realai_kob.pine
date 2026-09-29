@@ -16,6 +16,7 @@ lbKob    = input.bool(true, "KOB-15 / KOB³ orders, fills, W / L", group=grpDisp
 lbKtr    = input.bool(true, "KTR ❖ + order flow W / L and ✗ marks", group=grpDisp)
 lbKtrDia = input.bool(true, "KTR diamonds, ❖ and 15m marks", group=grpDisp)
 ssOn     = input.bool(true, "Dashboard: sessions (TP compare) + avg / day", group=grpDisp, tooltip="Adds 5 rows for OFX and KOB-15 A+: W / L and points per session (Asia 00-07, London 07-12, New York 12-21, Other 21-24 UTC, by the entry / fill time) for the TP in use and, in brackets, the other TP on the same trades (OFX 10 ↔ 20, KOB-15 20 ↔ 10); plus the average per day. Off = smaller dashboard.")
+dbKob    = input.bool(true, "Dashboard: KOB-15 / KOB³ / KTR test rows", group=grpDisp, tooltip="Off = hide the rows KOB-15 A+, KOB³, KTR ❖ all, KTR ❖ + Order flow, Order flow now and OFX + KOB-15 A+ add-on (combo tests whose W / L depends on several signals lining up and on pending fills). The tests keep running in the background.")
 
 const string SRC_FP = "Footprint (Premium/Ultimate)"
 const string SRC_IB = "Intrabar (lower timeframe)"
@@ -2228,6 +2229,8 @@ if showDash and barstate.islast
         table.cell(dash, 1, 4, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS15))
         table.cell(dash, 0, 5, "KOB³", text_color=cK3, text_size=size.tiny)
         table.cell(dash, 1, 5, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS3))
+        if not dbKob
+            table.clear(dash, 0, 4, 1, 5)
     else
         table.cell(dash, 0, 0, "RealAI KOB", text_color=gold, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=dSz, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
@@ -2267,6 +2270,8 @@ if showDash and barstate.islast
         float allPts = netPts + kS15.pts
         table.cell(dash, 0, 14, "OFX + KOB-15 A+ add-on", text_color=gold, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 14, str.tostring(allPts, "+#.##;-#.##") + "  (OFX " + str.tostring(netPts, "+#.##;-#.##") + " + A+ " + str.tostring(kS15.pts, "+#.##;-#.##") + ")", text_color=allPts >= 0 ? ok : bad, text_size=dSz, tooltip="Trade every OFX combo with 1 position (TP above). When the 15m KTR ❖ agrees (KOB-15 A+), add a 2nd position that holds for the KOB-15 TP. Result = OFX row + KOB-15 row, same dates and spread.\nRun KTR 15m in its own script next to this: its result adds on top.")
+        if not dbKob
+            table.clear(dash, 0, 9, 1, 14)
         if ssOn
             SessSt zo = ssO
             SessSt zk = kS15.ss
