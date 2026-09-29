@@ -1499,8 +1499,8 @@ if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or en
 grpW2   = "⑮b Backtest · Every accelerator"
 axBtOn  = input.bool(true, "Track every accelerator (BuAx+ / BeAx+)", group=grpW2, tooltip="Separate from the 5-gate W / L above: every accelerator that prints is a trade, even without a block or the ±1.7K rule. Result in its own dashboard row.")
 axBtWL  = lbAll and lbAx   // ⓪ Display: small 'w' / 'l' marks
-axTp    = input.float(20.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="20.00 = 200 points.")
-axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 200 / SL 100 = 2R.")
+axTp    = input.float(10.0, "TP distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="10.00 = 100 points.")
+axSlP   = input.float(10.0, "SL distance (price)", minval=0.1, step=0.5, group=grpW2, tooltip="Used with Stop loss = Fixed distance. 10.00 = 100 points → TP 100 / SL 100 = 1R.")
 axSlMd  = input.string("Fixed distance", "Stop loss", options=["Fixed distance", "Same as TP (1R)", "Beyond the accelerator candle"], group=grpW2, tooltip="Same as TP: SL is the same distance on the other side, so a win = +1R and a loss = −1R. Beyond the candle: SL below the low (BuAx+) / above the high (BeAx+); R then = TP ÷ that risk.")
 axOne   = input.bool(false, "One trade at a time", group=grpW2, tooltip="Off: every accelerator is tracked, even while others are still open.")
 
@@ -2188,7 +2188,7 @@ if barstate.islast
 var table dash = na
 if showDash and na(dash)
     pos = dashPos == "Top Right" ? position.top_right : dashPos == "Middle Right" ? position.middle_right : dashPos == "Top Center" ? position.top_center : dashPos == "Bottom Center" ? position.bottom_center : dashPos == "Top Left" ? position.top_left : dashPos == "Middle Left" ? position.middle_left : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right
-    dash := table.new(pos, 2, mobileView ? 6 : 21, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
+    dash := table.new(pos, 2, mobileView ? 7 : 21, bgcolor=color.new(#131722, 10), border_color=color.new(#E3B341, 60), border_width=1, frame_color=color.new(#E3B341, 30), frame_width=1)
 
 string dSz = dashSize == "Small" ? size.tiny : size.small
 if showDash and barstate.islast
@@ -2232,6 +2232,11 @@ if showDash and barstate.islast
         table.cell(dash, 1, 5, f_kobTxt(kS3), text_color=kS3.pts >= 0 ? ok : bad, text_size=size.tiny, tooltip=f_kobTip(kS3))
         if not dbKob
             table.clear(dash, 0, 4, 1, 5)
+        if axBtOn
+            int   axDn = math.max(tDays, 1)
+            float axDp = axPts * 10 / axDn
+            table.cell(dash, 0, 6, "AX avg / day", text_color=gold, text_size=size.tiny)
+            table.cell(dash, 1, 6, str.tostring(axDp, "+#;-#") + " pts · " + str.tostring(axW * 1.0 / axDn, "#.#") + "W " + str.tostring(axL * 1.0 / axDn, "#.#") + "L", text_color=axDp >= 0 ? ok : bad, text_size=size.tiny)
     else
         table.cell(dash, 0, 0, "RealAI KOB", text_color=gold, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=dSz, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
@@ -2291,6 +2296,11 @@ if showDash and barstate.islast
             float dL   = (losses + kS15.l) * 1.0 / nD
             table.cell(dash, 0, 19, "Avg / day (OFX + A+)", text_color=gold, text_size=size.tiny, text_halign=text.align_left)
             table.cell(dash, 1, 19, str.tostring(dP, "+#;-#") + " pts · " + str.tostring(dW, "#.#") + "W " + str.tostring(dL, "#.#") + "L · $" + str.tostring(dP * 0.10, "+#.0;-#.0") + " /0.01 lot", text_color=dP >= 0 ? ok : bad, text_size=size.tiny, tooltip="Over " + str.tostring(nD) + " test days (daily candles inside the test dates).\n0.01 lot = 1 oz → 1 pt (0.10) = $0.10 per 0.01 lot.")
+        if axBtOn
+            int   axDn = math.max(tDays, 1)
+            float axDp = axPts * 10 / axDn
+            table.cell(dash, 0, 20, "Avg / day · Every AX", text_color=gold, text_size=dSz, text_halign=text.align_left)
+            table.cell(dash, 1, 20, str.tostring(axDp, "+#;-#") + " pts · " + str.tostring(axW * 1.0 / axDn, "#.#") + "W " + str.tostring(axL * 1.0 / axDn, "#.#") + "L · $" + str.tostring(axDp * 0.10, "+#.0;-#.0") + " /0.01 lot", text_color=axDp >= 0 ? ok : bad, text_size=dSz, tooltip="Every AX (TP " + str.tostring(axTp * 10, "#") + " pts" + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP * 10, "#") + " pts" : "") + ") over " + str.tostring(axDn) + " test days (daily candles inside the test dates).\nTotal: " + str.tostring(axW) + "W " + str.tostring(axL) + "L · " + str.tostring(axPts * 10, "+#;-#") + " pts\n0.01 lot = 1 oz → 1 pt (0.10) = $0.10 per 0.01 lot.")
 
 // ════════════════════════════════════════════════════════════════════
 // EXTRA TOOLS (like reference): POC line · range box · RSI divergence
