@@ -117,8 +117,8 @@ refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, t
 
 grpB = "⑤ Orderblocks + Volumetrix % · Gate 2"
 showBlocks = input.bool(true, "Show FVG zones", group=grpB, tooltip="Off = only orderblocks on the chart. FVG zones are only drawn; the 60% gate uses the orderblocks, so ENTER and W / L do not change.")
-showObs    = input.bool(true, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
-gateOb     = input.string("OrderBlock 1.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
+showObs    = input.bool(false, "Show OrderBlock 1.0", group=grpB, tooltip="OrderBlock 1.0: last opposite-colour candle before a swing break (swing length above), buyer / seller split of that candle.")
+gateOb     = input.string("OrderBlock 2.0", "Gate 2 (60% owner) uses", options=["OrderBlock 1.0", "OrderBlock 2.0"], group=grpB, tooltip="Which orderblocks the 60% rule, ENTER, SL 'below block', the backtest and the dashboard use. Switch to compare win rates.")
 zoneType   = input.string(ZT_FVG, "Zone type", options=[ZT_FVG, ZT_OB], group=grpB, tooltip="The reference (reference) draws FVG zones ranked by strength: '#1' = strongest. Orderblocks = this script's original swing-break blocks.")
 fvgTop     = input.int(10, "FVG · Show top zones", minval=1, maxval=30, group=grpB)
 fvgHideOvl = input.bool(true, "FVG · Hide overlapping zones", group=grpB, tooltip="Clean view (like the reference): when zones overlap, only the one nearest to price is drawn. Stacks of small zones in a range become one.")
@@ -153,7 +153,7 @@ blkColorBy = input.string("Type (supply / demand)", "Color blocks by", options=[
 barTransp  = input.int(60, "Buyer/Seller bar transparency", minval=0, maxval=95, group=grpB, tooltip="Higher = lighter bars, so signals drawn over a block stay visible.")
 
 grpO2   = "⑤b OrderBlock 2.0 (Volumetric)"
-showOb2 = input.bool(false, "Show OrderBlock 2.0", group=grpO2)
+showOb2 = input.bool(true, "Show OrderBlock 2.0", group=grpO2)
 ob2Src  = input.string("Internal", "Structure", options=["Internal", "Swing"], group=grpO2, tooltip="Internal = small swings (length below, 5 like reference). Swing = big swings (50).")
 ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
 ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
@@ -169,7 +169,7 @@ ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
 slBufTicks = input.int(5, "SL buffer (ticks)", minval=0, group=grpX)
-slMode     = input.string("Rule: block if near, candle if far", "Stop loss", options=["Near block: OrderBlock ± buffer · far: candle", "Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer"], group=grpX, tooltip="Near block (OB 2.0 default): entry candle touches the 60% block → SL = block bottom − buffer (BUY) / top + buffer (SELL); far from it → SL beyond the entry candle.\nRule: entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER, W / L and the KOB setups.")
+slMode     = input.string("Near block: OrderBlock ± buffer · far: candle", "Stop loss", options=["Near block: OrderBlock ± buffer · far: candle", "Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer"], group=grpX, tooltip="Near block (OB 2.0 default): entry candle touches the 60% block → SL = block bottom − buffer (BUY) / top + buffer (SELL); far from it → SL beyond the entry candle.\nRule: entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER, W / L and the KOB setups.")
 slObPts    = input.float(20, "OrderBlock SL buffer (points)", minval=0, step=5, group=grpX, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
 showSL     = input.bool(true, "Draw SL line", group=grpX)
 entrySize  = input.string("Tiny", "ENTER box size", options=["Tiny", "Small", "Normal"], group=grpX)
