@@ -1042,6 +1042,7 @@ f_ibInside(int k, float zTop, float zBot) =>
             sv := nz(ib.cs) * ov
     [bv, sv]
 
+float atr200 = ta.atr(200)
 // volume check: 1-minute candles of bar k in [zBot, zTop] → [share up/down buy, sell, share shape buy, sell, touch up/down buy, sell]
 f_ibIn2(int k, float zTop, float zBot) =>
     float a1 = 0.0
@@ -1118,7 +1119,7 @@ f_ob2(int dir, int fromBar, int id) =>
         float pB = dir == 1 ? low[best] : (bodyLo < high[best] ? bodyLo : low[best])
         float wT = dir == 1 ? (bodyLo > low[best] ? bodyLo : high[best]) : high[best]
         float wB = dir == 1 ? low[best] : (bodyHi < high[best] ? bodyHi : low[best])
-        string chk = "Volume check · OB candle " + str.format_time(time[best], "dd MMM HH:mm") + " · break " + str.format_time(time, "HH:mm") + " (" + str.tostring(best) + " candles) · candle " + str.tostring(low[best], format.mintick) + "-" + str.tostring(high[best], format.mintick)
+        string chk = "Volume check · OB candle " + str.format_time(time[best], "dd MMM HH:mm") + " · break " + str.format_time(time, "HH:mm") + " (" + str.tostring(best) + " candles) · candle " + str.tostring(low[best], format.mintick) + "-" + str.tostring(high[best], format.mintick) + " · ATR14 " + str.tostring(nz(atr14[best]), "#.##") + " · ATR200 " + str.tostring(nz(atr200[best]), "#.##") + " · body " + str.tostring(bodyLo, format.mintick) + "-" + str.tostring(bodyHi, format.mintick)
         for z = 0 to 2
             float zt = z == 0 ? wT : z == 1 ? hT : pT
             float zb = z == 0 ? wB : z == 1 ? hB : pB
