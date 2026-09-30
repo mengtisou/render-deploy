@@ -158,7 +158,7 @@ ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
 ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (reference): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
 ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (reference): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (reference): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
-ob2Vol  = input.string("Auto (5m whole leg, others candle → break)", "Volume interval", options=["Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Only 1-minute candles that traded INSIDE the block are counted. Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
+ob2Vol  = input.string("Break candle + 2 before (reference)", "Volume interval", options=["Break candle + 2 before (reference)", "Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Break candle + 2 before (reference, default): volume = the candle that broke structure + the 2 candles before it (chart candles, no 1-minute data, so history is the same as live). Bullish block: buyers = break candle + the one before, sellers = the 3rd candle; bearish block: sellers = break candle + the one before, buyers = the 3rd candle.\nThe other modes use 1-minute candles that traded INSIDE the block (TradingView keeps 1-minute data only for recent candles). Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
@@ -1055,13 +1055,20 @@ f_ob2(int dir, int fromBar, int id) =>
         // internal buy / sell activity: the 1-minute candles that traded inside the block
         float bv = 0.0
         float sv = 0.0
+        bool  brk3 = ob2Vol == "Break candle + 2 before (reference)"
+        if brk3
+            float vHi = nz(volume) + nz(volume[1])
+            float vLo = nz(volume[2])
+            bv := dir == 1 ? vHi : vLo
+            sv := dir == 1 ? vLo : vHi
         string vMode = ob2Vol == "Auto (5m whole leg, others candle → break)" ? (timeframe.in_seconds() <= 300 ? "Whole leg (swing → break)" : "Orderblock candle → break") : ob2Vol
         int kFrom = vMode == "Whole leg (swing → break)" ? span : best
         int kTo   = vMode == "Orderblock candle + next" ? math.max(best - ob2Bars + 1, 0) : 0
-        for k = kFrom to kTo
-            [zb, zs] = f_ibInside(k, zTop, zBot)
-            bv += zb
-            sv += zs
+        if not brk3
+            for k = kFrom to kTo
+                [zb, zs] = f_ibInside(k, zTop, zBot)
+                bv += zb
+                sv += zs
         Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
         nb2.isOb := true
         nb2.ver  := 2
@@ -1844,7 +1851,7 @@ if showDash and barstate.islast
         table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
         table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
-        bool ob2M = gateOb == "OrderBlock 2.0"
+        bool ob2M = gateOb == "OrderBlock 2.0" and ob2Vol != "Break candle + 2 before (reference)"
         table.cell(dash, 0, 2, ob2M ? "W / L" : wlTxt, text_color=ob2M ? gold : netR >= 0 ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 2, ob2M ? "not tracked (OB 2.0)" : str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=ob2M ? gold : netPts >= 0 ? ok : bad, text_size=size.tiny)
         if axBtOn
@@ -1872,8 +1879,8 @@ if showDash and barstate.islast
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
         table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=dSz, text_halign=text.align_left)
         string wlFull = wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)"
-        bool   ob2Gate = gateOb == "OrderBlock 2.0"
-        table.cell(dash, 1, 7, ob2Gate ? "Not tracked with OrderBlock 2.0 ⓘ" : wlFull, text_color=ob2Gate ? gold : netPts >= 0 ? ok : bad, text_size=dSz, tooltip=ob2Gate ? "Win / Loss is not reliable with OrderBlock 2.0: its blocks and buyer / seller % need 1-minute data, which TradingView only keeps for recent candles, so older blocks are not the same as they were live.\nTo test Win / Loss: ⑤ Gate 2 → OrderBlock 1.0.\nCounted anyway (for reference only): " + wlFull : "OFX combo" + f_dlTxt(dlOfx))
+        bool   ob2Gate = gateOb == "OrderBlock 2.0" and ob2Vol != "Break candle + 2 before (reference)"
+        table.cell(dash, 1, 7, ob2Gate ? "Not tracked with OrderBlock 2.0 ⓘ" : wlFull, text_color=ob2Gate ? gold : netPts >= 0 ? ok : bad, text_size=dSz, tooltip=ob2Gate ? "Win / Loss is not reliable with OrderBlock 2.0: its blocks and buyer / seller % need 1-minute data, which TradingView only keeps for recent candles, so older blocks are not the same as they were live.\nTo test Win / Loss: ⑤b Volume interval → Break candle + 2 before, or ⑤ Gate 2 → OrderBlock 1.0.\nCounted anyway (for reference only): " + wlFull : "OFX combo" + f_dlTxt(dlOfx))
         if axBtOn
             table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP, "#.##") : axSlMd == "Same as TP (1R)" ? " = 1R" : " / SL candle"), text_color=txt, text_size=dSz, text_halign=text.align_left)
             table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=dSz, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()) + f_dlTxt(dlAx))
