@@ -1109,7 +1109,9 @@ f_ob2(int dir, int fromBar, int id) =>
         bool  oppV = ob2Vol == "Opposite-colour candle volume (reference)" and bestO > 0
         if oppV
             float oR  = high[bestO] - low[bestO]
-            float oBf = oR > 0 ? math.max(0.0, math.min(1.0, (close[best] - low[bestO]) / oR)) : 0.5
+            // buyers % = the 1-minute up / down volume of the extreme candle (whole candle); no 1-minute data → old price rule
+            [xa1, xa2, xb1, xb2, xc1, xc2] = f_ibIn2(best, high[best], low[best])
+            float oBf = xa1 + xa2 > 0 ? xa1 / (xa1 + xa2) : oR > 0 ? math.max(0.0, math.min(1.0, (close[best] - low[bestO]) / oR)) : 0.5
             bv := nz(volume[bestO]) * oBf
             sv := nz(volume[bestO]) * (1 - oBf)
         else if brk3
@@ -1152,6 +1154,8 @@ f_ob2(int dir, int fromBar, int id) =>
                 s5 += c1
                 s6 += c2
             chk += "\n" + (z == 0 ? "W wick " : z == 1 ? "H half " : "P precise ") + str.tostring(zb, format.mintick) + "-" + str.tostring(zt, format.mintick) + ": share " + f_k(s1 + s2) + " b " + f_pc(s1, s2) + " (shape " + f_pc(s3, s4) + ") · touch " + f_k(s5 + s6) + " b " + f_pc(s5, s6)
+        [ya1, ya2, yb1, yb2, yc1, yc2] = f_ibIn2(best, high[best], low[best])
+        chk += "\nX extreme candle " + str.format_time(time[best], "HH:mm") + " whole, 1-minute: " + f_k(ya1 + ya2) + " b " + f_pc(ya1, ya2) + " (shape " + f_pc(yb1, yb2) + ")"
         if bestO > 0
             float oT = high[bestO]
             float oB = low[bestO]
