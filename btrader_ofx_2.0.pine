@@ -161,6 +161,7 @@ ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["
 ob2Vol  = input.string("Orderblock candle + next", "Volume interval", options=["Break candle + 2 before (reference)", "Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Orderblock candle + next (default, with 1 candle below = the orderblock candle only): the 1-minute candles of the orderblock candle that traded INSIDE the block (30 Sep test: closest to the reference and the same owner side on every block checked: 1.9K / 63% buyers vs their 2.4K / 69%, 1.0K / 76% sellers vs their 583 / 67%).\nBreak candle + 2 before: volume = the candle that broke structure + the 2 candles before it (chart candles, no 1-minute data, so history is the same as live). Bullish block: buyers = break candle + the one before, sellers = the 3rd candle; bearish block: sellers = break candle + the one before, buyers = the 3rd candle.\nThe other modes use 1-minute candles that traded INSIDE the block (TradingView keeps 1-minute data only for recent candles). Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
 ob2Chk  = input.bool(false, "Show volume check on the block (B-F)", group=grpO2, tooltip="Writes 5 other volume formulas under each OrderBlock 2.0 block, so you can see which one gives the reference's numbers. Turn off once it matches.")
+ob2Pick = input.string("Extreme candle", "Orderblock candle", options=["Extreme candle", "Extreme opposite-colour candle (full)"], group=grpO2, tooltip="Extreme candle: the lowest-low (bullish) / highest-high (bearish) candle of the leg. Opposite-colour: the lowest-low RED candle for a bullish block / highest-high GREEN candle for a bearish block, whole candle as the block (test: line O of the volume check).")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 
@@ -1075,11 +1076,19 @@ f_ob2(int dir, int fromBar, int id) =>
     int   span = math.min(bar_index - fromBar, 300)
     int   best = -1
     float ext  = na
+    int   bestO = -1
+    float extO  = na
     if span >= 1
         for k = 1 to span
             if dir == 1 ? (na(ext) or low[k] < ext) : (na(ext) or high[k] > ext)
                 ext  := dir == 1 ? low[k] : high[k]
                 best := k
+            if (dir == 1 ? close[k] < open[k] : close[k] > open[k]) and (dir == 1 ? (na(extO) or low[k] < extO) : (na(extO) or high[k] > extO))
+                extO  := dir == 1 ? low[k] : high[k]
+                bestO := k
+    bool oppPick = ob2Pick == "Extreme opposite-colour candle (full)" and bestO > 0
+    if oppPick
+        best := bestO
     if best > 0
         // precise = the wick on the extreme side; if there is no wick, the whole candle
         float bodyLo = math.min(open[best], close[best])
@@ -1090,6 +1099,9 @@ f_ob2(int dir, int fromBar, int id) =>
         bool  half   = ob2Pos == "Half candle (wick → 50%)"
         float zTop   = dir == 1 ? (half ? mid50 : wick and bodyLo > low[best] ? bodyLo : prec and bodyHi > low[best] ? bodyHi : high[best]) : high[best]
         float zBot   = dir == 1 ? low[best] : (half ? mid50 : wick and bodyHi < high[best] ? bodyHi : prec and bodyLo < high[best] ? bodyLo : low[best])
+        if oppPick
+            zTop := high[best]
+            zBot := low[best]
         // internal buy / sell activity: the 1-minute candles that traded inside the block
         float bv = 0.0
         float sv = 0.0
@@ -1134,6 +1146,17 @@ f_ob2(int dir, int fromBar, int id) =>
                 s5 += c1
                 s6 += c2
             chk += "\n" + (z == 0 ? "W wick " : z == 1 ? "H half " : "P precise ") + str.tostring(zb, format.mintick) + "-" + str.tostring(zt, format.mintick) + ": share " + f_k(s1 + s2) + " b " + f_pc(s1, s2) + " (shape " + f_pc(s3, s4) + ") · touch " + f_k(s5 + s6) + " b " + f_pc(s5, s6)
+        if bestO > 0
+            float oT = high[bestO]
+            float oB = low[bestO]
+            [q1, q2, q3, q4, q5, q6] = f_ibIn2(bestO, oT, oB)
+            float r1 = 0.0
+            float r2 = 0.0
+            for k = bestO to 0
+                [a1, a2, b1, b2, c1, c2] = f_ibIn2(k, oT, oB)
+                r1 += a1
+                r2 += a2
+            chk += "\nO opposite-colour candle " + str.format_time(time[bestO], "HH:mm") + " " + str.tostring(oB, format.mintick) + "-" + str.tostring(oT, format.mintick) + ": candle only " + f_k(q1 + q2) + " b " + f_pc(q1, q2) + " (shape " + f_pc(q3, q4) + ") · → break " + f_k(r1 + r2) + " b " + f_pc(r1, r2) + " · 5m vol " + f_k(nz(volume[bestO]))
         nb2.chk := chk
         nb2.isOb := true
         nb2.ver  := 2
