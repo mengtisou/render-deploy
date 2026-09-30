@@ -160,6 +160,7 @@ ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candl
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (reference): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
 ob2Vol  = input.string("Break candle + 2 before (reference)", "Volume interval", options=["Break candle + 2 before (reference)", "Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Break candle + 2 before (reference, default): volume = the candle that broke structure + the 2 candles before it (chart candles, no 1-minute data, so history is the same as live). Bullish block: buyers = break candle + the one before, sellers = the 3rd candle; bearish block: sellers = break candle + the one before, buyers = the 3rd candle.\nThe other modes use 1-minute candles that traded INSIDE the block (TradingView keeps 1-minute data only for recent candles). Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
+ob2Chk  = input.bool(true, "Show volume check on the block (B-F)", group=grpO2, tooltip="Writes 5 other volume formulas under each OrderBlock 2.0 block, so you can see which one gives the reference's numbers. Turn off once it matches.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
 
@@ -665,7 +666,7 @@ f_refreshBlock(Block b, float totalAll) =>
         // reference metrics: "1.963K (57%)" + buyers | sellers
         string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
         t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
-        label.set_text(b.info, t2)
+        label.set_text(b.info, ob2Chk ? t2 + "\n" + b.chk : t2)
         label.set_tooltip(b.info, b.chk)
         label.set_x(b.info, bar_index + blockExt)
         if not na(b.mid)
