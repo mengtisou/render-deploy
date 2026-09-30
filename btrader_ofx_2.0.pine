@@ -1106,14 +1106,16 @@ f_ob2(int dir, int fromBar, int id) =>
         float bv = 0.0
         float sv = 0.0
         bool  brk3 = ob2Vol == "Break candle + 2 before (reference)"
-        bool  oppV = ob2Vol == "Opposite-colour candle volume (reference)" and bestO > 0
+        bool  oppV = ob2Vol == "Opposite-colour candle volume (reference)"
         if oppV
-            float oR  = high[bestO] - low[bestO]
+            // volume = the candle just before the extreme candle (5m and 15m reference: 2.424K, 583, 1.387K, 1.536K, 5.194K)
+            int   bP  = best + 1
+            float oR  = high[bP] - low[bP]
             // buyers % = the 1-minute up / down volume of the extreme candle (whole candle); no 1-minute data → old price rule
             [xa1, xa2, xb1, xb2, xc1, xc2] = f_ibIn2(best, high[best], low[best])
-            float oBf = xa1 + xa2 > 0 ? xa1 / (xa1 + xa2) : oR > 0 ? math.max(0.0, math.min(1.0, (close[best] - low[bestO]) / oR)) : 0.5
-            bv := nz(volume[bestO]) * oBf
-            sv := nz(volume[bestO]) * (1 - oBf)
+            float oBf = xa1 + xa2 > 0 ? xa1 / (xa1 + xa2) : oR > 0 ? math.max(0.0, math.min(1.0, (close[best] - low[bP]) / oR)) : 0.5
+            bv := nz(volume[bP]) * oBf
+            sv := nz(volume[bP]) * (1 - oBf)
         else if brk3
             float vHi = nz(volume) + nz(volume[1])
             float vLo = nz(volume[2])
