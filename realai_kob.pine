@@ -160,7 +160,7 @@ ob2Int  = input.int(5, "Internal length", minval=2, maxval=50, group=grpO2)
 ob2Sw   = input.int(50, "Swing length", minval=5, maxval=200, group=grpO2)
 ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
 ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (reference): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
-ob2Pos  = input.string("Wick only", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (reference): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
+ob2Pos  = input.string("Wick only", "Positioning", options=["Precise", "Full candle", "Wick only", "Half candle (wick → 50%)"], group=grpO2, tooltip="Precise (reference): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (reference): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
 ob2Vol  = input.string("Orderblock candle → break", "Volume interval", options=["Break candle + 2 before (reference)", "Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Orderblock candle + next (default, with 1 candle below = the orderblock candle only): the 1-minute candles of the orderblock candle that traded INSIDE the block (30 Sep: 2.4K / 68% buyers and 583 / 67% sellers like the reference).\nBreak candle + 2 before: volume = the candle that broke structure + the 2 candles before it (chart candles, no 1-minute data, so history is the same as live). Bullish block: buyers = break candle + the one before, sellers = the 3rd candle; bearish block: sellers = break candle + the one before, buyers = the 3rd candle.\nThe other modes use 1-minute candles that traded INSIDE the block (TradingView keeps 1-minute data only for recent candles). Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
@@ -1042,6 +1042,38 @@ f_ibInside(int k, float zTop, float zBot) =>
             sv := nz(ib.cs) * ov
     [bv, sv]
 
+// volume check: 1-minute candles of bar k in [zBot, zTop] → [share up/down buy, sell, share shape buy, sell, touch up/down buy, sell]
+f_ibIn2(int k, float zTop, float zBot) =>
+    float a1 = 0.0
+    float a2 = 0.0
+    float b1 = 0.0
+    float b2 = 0.0
+    float c1 = 0.0
+    float c2 = 0.0
+    if k < ibHist.size()
+        IBar ib = ibHist.get(k)
+        int  n  = ib.v.size()
+        if n > 0
+            for i = 0 to n - 1
+                float h   = ib.h.get(i)
+                float l   = ib.l.get(i)
+                float v   = ib.v.get(i)
+                float rng = h - l
+                float ov  = rng > 0 ? math.max(0.0, math.min(h, zTop) - math.max(l, zBot)) / rng : (l <= zTop and l >= zBot ? 1.0 : 0.0)
+                float u   = ib.ud.get(i)
+                float s   = ib.bf.get(i)
+                a1 += v * ov * u
+                a2 += v * ov * (1 - u)
+                b1 += v * ov * s
+                b2 += v * ov * (1 - s)
+                if l <= zTop and h >= zBot
+                    c1 += v * u
+                    c2 += v * (1 - u)
+    [a1, a2, b1, b2, c1, c2]
+
+f_pc(float b, float s) =>
+    str.tostring(b + s > 0 ? b / (b + s) * 100 : 0, "#.#") + "%"
+
 f_ob2(int dir, int fromBar, int id) =>
     int   span = math.min(bar_index - fromBar, 300)
     int   best = -1
@@ -1057,8 +1089,10 @@ f_ob2(int dir, int fromBar, int id) =>
         float bodyHi = math.max(open[best], close[best])
         bool  wick   = ob2Pos == "Wick only"
         bool  prec   = ob2Pos == "Precise"
-        float zTop   = dir == 1 ? (wick and bodyLo > low[best] ? bodyLo : prec and bodyHi > low[best] ? bodyHi : high[best]) : high[best]
-        float zBot   = dir == 1 ? low[best] : (wick and bodyHi < high[best] ? bodyHi : prec and bodyLo < high[best] ? bodyLo : low[best])
+        float mid50  = (high[best] + low[best]) / 2
+        bool  half   = ob2Pos == "Half candle (wick → 50%)"
+        float zTop   = dir == 1 ? (half ? mid50 : wick and bodyLo > low[best] ? bodyLo : prec and bodyHi > low[best] ? bodyHi : high[best]) : high[best]
+        float zBot   = dir == 1 ? low[best] : (half ? mid50 : wick and bodyHi < high[best] ? bodyHi : prec and bodyLo < high[best] ? bodyLo : low[best])
         // internal buy / sell activity: the 1-minute candles that traded inside the block
         float bv = 0.0
         float sv = 0.0
@@ -1077,29 +1111,33 @@ f_ob2(int dir, int fromBar, int id) =>
                 bv += zb
                 sv += zs
         Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
-        // volume check: wick-only zone vs precise zone, OB candle only vs OB candle → break
+        // volume check: 3 zone heights × 3 ways to count the 1-minute candles, OB candle → break
+        float hT = dir == 1 ? mid50 : high[best]
+        float hB = dir == 1 ? low[best] : mid50
         float pT = dir == 1 ? (bodyHi > low[best] ? bodyHi : high[best]) : high[best]
         float pB = dir == 1 ? low[best] : (bodyLo < high[best] ? bodyLo : low[best])
         float wT = dir == 1 ? (bodyLo > low[best] ? bodyLo : high[best]) : high[best]
         float wB = dir == 1 ? low[best] : (bodyHi < high[best] ? bodyHi : low[best])
-        float pfB = 0.0
-        float pfS = 0.0
-        float wfB = 0.0
-        float wfS = 0.0
-        for k = best to 0
-            [p1, p2] = f_ibInside(k, pT, pB)
-            [w1, w2] = f_ibInside(k, wT, wB)
-            pfB += p1
-            pfS += p2
-            wfB += w1
-            wfS += w2
-        [pgB, pgS] = f_ibInside(best, pT, pB)
-        [wgB, wgS] = f_ibInside(best, wT, wB)
-        nb2.chk := "Volume check · OB candle " + str.format_time(time[best], "dd MMM HH:mm") + " · break " + str.format_time(time, "HH:mm") + " (" + str.tostring(best) + " candles)" +
-             "\nW1 wick zone " + str.tostring(wB, format.mintick) + "-" + str.tostring(wT, format.mintick) + ", OB candle → break: " + f_k(wfB + wfS) + " · buyers " + str.tostring(wfB / (wfB + wfS) * 100, "#.##") + "%" +
-             "\nW2 wick zone, OB candle only: " + f_k(wgB + wgS) + " · buyers " + str.tostring(wgB / (wgB + wgS) * 100, "#.##") + "%" +
-             "\nP1 precise zone " + str.tostring(pB, format.mintick) + "-" + str.tostring(pT, format.mintick) + ", OB candle → break: " + f_k(pfB + pfS) + " · buyers " + str.tostring(pfB / (pfB + pfS) * 100, "#.##") + "%" +
-             "\nP2 precise zone, OB candle only: " + f_k(pgB + pgS) + " · buyers " + str.tostring(pgB / (pgB + pgS) * 100, "#.##") + "%"
+        string chk = "Volume check · OB candle " + str.format_time(time[best], "dd MMM HH:mm") + " · break " + str.format_time(time, "HH:mm") + " (" + str.tostring(best) + " candles) · candle " + str.tostring(low[best], format.mintick) + "-" + str.tostring(high[best], format.mintick)
+        for z = 0 to 2
+            float zt = z == 0 ? wT : z == 1 ? hT : pT
+            float zb = z == 0 ? wB : z == 1 ? hB : pB
+            float s1 = 0.0
+            float s2 = 0.0
+            float s3 = 0.0
+            float s4 = 0.0
+            float s5 = 0.0
+            float s6 = 0.0
+            for k = best to 0
+                [a1, a2, b1, b2, c1, c2] = f_ibIn2(k, zt, zb)
+                s1 += a1
+                s2 += a2
+                s3 += b1
+                s4 += b2
+                s5 += c1
+                s6 += c2
+            chk += "\n" + (z == 0 ? "W wick " : z == 1 ? "H half " : "P precise ") + str.tostring(zb, format.mintick) + "-" + str.tostring(zt, format.mintick) + ": share " + f_k(s1 + s2) + " b " + f_pc(s1, s2) + " (shape " + f_pc(s3, s4) + ") · touch " + f_k(s5 + s6) + " b " + f_pc(s5, s6)
+        nb2.chk := chk
         nb2.isOb := true
         nb2.ver  := 2
         obs2.unshift(nb2)
