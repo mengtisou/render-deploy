@@ -158,7 +158,7 @@ ob2Last = input.int(2, "Show last (per side)", minval=1, maxval=10, group=grpO2)
 ob2Mit  = input.string("Absolute (close through)", "Mitigation", options=["Absolute (close through)", "Wick through"], group=grpO2, tooltip="Absolute (reference): removed only when a candle CLOSES beyond the block, a wick through it is not enough (their 4256 block survived the 21:00 wick to 4255.5). Wick through: removed on the first wick beyond it.")
 ob2Pos  = input.string("Precise", "Positioning", options=["Precise", "Full candle", "Wick only"], group=grpO2, tooltip="Precise (reference): the candle without its opposite wick. Bullish = low → top of the body, bearish = bottom of the body → high (25 Sep: 4256-4259 and 4313.5-4316). Full = whole candle. Wick only = just the extreme wick.")
 ob2Split = input.string("1-minute up / down", "Buyer / seller split", options=["1-minute up / down", "1-minute candle shape"], group=grpO2, tooltip="Up / down (reference): a green 1-minute candle counts fully as buyers, a red one fully as sellers. Shape: each 1-minute candle split by where it closed.")
-ob2Vol  = input.string("Break candle + 2 before (reference)", "Volume interval", options=["Break candle + 2 before (reference)", "Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Break candle + 2 before (reference, default): volume = the candle that broke structure + the 2 candles before it (chart candles, no 1-minute data, so history is the same as live). Bullish block: buyers = break candle + the one before, sellers = the 3rd candle; bearish block: sellers = break candle + the one before, buyers = the 3rd candle.\nThe other modes use 1-minute candles that traded INSIDE the block (TradingView keeps 1-minute data only for recent candles). Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
+ob2Vol  = input.string("Orderblock candle + next", "Volume interval", options=["Break candle + 2 before (reference)", "Auto (5m whole leg, others candle → break)", "Whole leg (swing → break)", "Orderblock candle → break", "Orderblock candle + next"], group=grpO2, tooltip="Orderblock candle + next (default, with 1 candle below = the orderblock candle only): the 1-minute candles of the orderblock candle that traded INSIDE the block (30 Sep: 2.4K / 68% buyers and 583 / 67% sellers like the reference).\nBreak candle + 2 before: volume = the candle that broke structure + the 2 candles before it (chart candles, no 1-minute data, so history is the same as live). Bullish block: buyers = break candle + the one before, sellers = the 3rd candle; bearish block: sellers = break candle + the one before, buyers = the 3rd candle.\nThe other modes use 1-minute candles that traded INSIDE the block (TradingView keeps 1-minute data only for recent candles). Whole leg: from the swing that started the leg to the candle that broke structure (matches reference on 5m). Orderblock candle → break: from the orderblock candle to the break (fits their 15m). Auto: whole leg on 5m and lower, candle → break above 5m. Orderblock candle + next: the orderblock candle and the number of candles below.")
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
 ob2Chk  = input.bool(true, "Show volume check on the block (B-F)", group=grpO2, tooltip="Writes 5 other volume formulas under each OrderBlock 2.0 block, so you can see which one gives the reference's numbers. Turn off once it matches.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
@@ -1073,35 +1073,23 @@ f_ob2(int dir, int fromBar, int id) =>
                 bv += zb
                 sv += zs
         Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
-        // volume check: the same block with other formulas, to compare with the reference (hover the block text)
-        float cV = 0.0
-        float cB = 0.0
+        // volume check: the same block with other formulas, to compare with the reference
         float dV = 0.0
-        float dB = 0.0
         float eV = 0.0
-        float eB = 0.0
-        for k = best to 0
-            dV += nz(volume[k])
-            dB += nz(buyVol[k])
-            if k >= best - 2
-                eV += nz(volume[k])
-                eB += nz(buyVol[k])
-        cV := nz(volume[best])
-        cB := nz(buyVol[best])
         float fB = 0.0
         float fS = 0.0
         for k = best to 0
+            dV += nz(volume[k])
+            eV += k >= best - 2 ? nz(volume[k]) : 0.0
             [zb, zs] = f_ibInside(k, zTop, zBot)
             fB += zb
             fS += zs
+        [gB, gS] = f_ibInside(best, zTop, zBot)
         float bV3 = nz(volume) + nz(volume[1]) + nz(volume[2])
-        float bB3 = nz(buyVol) + nz(buyVol[1]) + nz(buyVol[2])
         nb2.chk := "Volume check · OB candle " + str.format_time(time[best], "dd MMM HH:mm") + " · break " + str.format_time(time, "HH:mm") + " (" + str.tostring(best) + " candles)" +
-             "\nB break + 2 before: " + f_k(bV3) + " · buyers " + str.tostring(dir == 1 ? (nz(volume) + nz(volume[1])) / bV3 * 100 : nz(volume[2]) / bV3 * 100, "#.##") + "% (candle delta " + str.tostring(bB3 / bV3 * 100, "#.##") + "%)" +
-             "\nC OB candle only: " + f_k(cV) + " · buyers " + str.tostring(cB / cV * 100, "#.##") + "%" +
-             "\nD OB candle → break: " + f_k(dV) + " · buyers " + str.tostring(dB / dV * 100, "#.##") + "%" +
-             "\nE OB candle + 2 after: " + f_k(eV) + " · buyers " + str.tostring(eB / eV * 100, "#.##") + "%" +
-             "\nF 1-minute inside zone, OB candle → break: " + f_k(fB + fS) + " · buyers " + str.tostring(fB / (fB + fS) * 100, "#.##") + "%"
+             "\nG OB candle, 1-minute inside zone: " + f_k(gB + gS) + " · buyers " + str.tostring(gB / (gB + gS) * 100, "#.##") + "%" +
+             "\nF 1-minute inside zone, OB candle → break: " + f_k(fB + fS) + " · buyers " + str.tostring(fB / (fB + fS) * 100, "#.##") + "%" +
+             "\nB break + 2 before: " + f_k(bV3) + " · C OB candle only: " + f_k(nz(volume[best])) + " · D OB → break: " + f_k(dV) + " · E OB + 2 after: " + f_k(eV)
         nb2.isOb := true
         nb2.ver  := 2
         obs2.unshift(nb2)
