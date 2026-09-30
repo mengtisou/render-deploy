@@ -569,6 +569,7 @@ type Block
     bool  isOb  = false
     int   ver   = 1
     line  mid
+    string chk = ""
 
 var array<Block> blocks = array.new<Block>()   // FVG zones (display)
 var array<Block> obs    = array.new<Block>()   // OrderBlock 1.0
@@ -669,6 +670,7 @@ f_refreshBlock(Block b, float totalAll) =>
         string t2 = (b.vol >= 1000 ? str.tostring(b.vol / 1000, "#.###") + "K" : str.tostring(b.vol, "#")) + " (" + str.tostring(share, "#") + "%)"
         t2 += "\nBuyers: " + str.tostring(b.buyPct, "#.##") + "% | Sellers: " + str.tostring(b.sellPct, "#.##") + "%"
         label.set_text(b.info, t2)
+        label.set_tooltip(b.info, b.chk)
         label.set_x(b.info, bar_index + blockExt)
         if not na(b.mid)
             line.set_x2(b.mid, bar_index + blockExt)
@@ -1074,6 +1076,35 @@ f_ob2(int dir, int fromBar, int id) =>
                 bv += zb
                 sv += zs
         Block nb2 = f_newBlock(zTop, zBot, bar_index - best, bv, sv, dir, id)
+        // volume check: the same block with other formulas, to compare with the reference (hover the block text)
+        float cV = 0.0
+        float cB = 0.0
+        float dV = 0.0
+        float dB = 0.0
+        float eV = 0.0
+        float eB = 0.0
+        for k = best to 0
+            dV += nz(volume[k])
+            dB += nz(buyVol[k])
+            if k >= best - 2
+                eV += nz(volume[k])
+                eB += nz(buyVol[k])
+        cV := nz(volume[best])
+        cB := nz(buyVol[best])
+        float fB = 0.0
+        float fS = 0.0
+        for k = best to 0
+            [zb, zs] = f_ibInside(k, zTop, zBot)
+            fB += zb
+            fS += zs
+        float bV3 = nz(volume) + nz(volume[1]) + nz(volume[2])
+        float bB3 = nz(buyVol) + nz(buyVol[1]) + nz(buyVol[2])
+        nb2.chk := "Volume check · OB candle " + str.format_time(time[best], "dd MMM HH:mm") + " · break " + str.format_time(time, "HH:mm") + " (" + str.tostring(best) + " candles)" +
+             "\nB break + 2 before: " + f_k(bV3) + " · buyers " + str.tostring(dir == 1 ? (nz(volume) + nz(volume[1])) / bV3 * 100 : nz(volume[2]) / bV3 * 100, "#.##") + "% (candle delta " + str.tostring(bB3 / bV3 * 100, "#.##") + "%)" +
+             "\nC OB candle only: " + f_k(cV) + " · buyers " + str.tostring(cB / cV * 100, "#.##") + "%" +
+             "\nD OB candle → break: " + f_k(dV) + " · buyers " + str.tostring(dB / dV * 100, "#.##") + "%" +
+             "\nE OB candle + 2 after: " + f_k(eV) + " · buyers " + str.tostring(eB / eV * 100, "#.##") + "%" +
+             "\nF 1-minute inside zone, OB candle → break: " + f_k(fB + fS) + " · buyers " + str.tostring(fB / (fB + fS) * 100, "#.##") + "%"
         nb2.isOb := true
         nb2.ver  := 2
         obs2.unshift(nb2)
