@@ -113,6 +113,7 @@ cAxBull     = input.color(#1B8A3C, "", inline="axc", group=grpV)
 cAxBear     = input.color(#B71C1C, "", inline="axc", group=grpV)
 sigTextBg   = input.bool(false, "Background behind D:/R: text", group=grpV)
 axInval     = input.string("Wick through the candle", "Remove failed accelerators", options=["Wick through the candle", "Close through the candle", "Off"], group=grpV, tooltip="Reference: an accelerator disappears once price later trades back through it. BuAx+ is removed when price goes below its low, BeAx+ when price goes above its high. ENTER signals stay (trade history). Visual only: gates, ENTER and W / L are not changed.")
+axHist      = input.bool(true, "Keep failed accelerators as grey history", group=grpV, tooltip="On: a BuAx+ / BeAx+ that price traded back through is not deleted but turns grey and gets '✗ failed', so you can check every past signal. Off: failed accelerators are removed (as before).")
 maxSigShown = input.int(100, "Accelerators kept on chart (latest)", minval=1, maxval=100, group=grpV, tooltip="The reference keeps every accelerator on the chart. Lower it to see only the most recent ones.")
 refTooltip  = input.bool(true, "Reference tooltip only (6 lines)", group=grpV, tooltip="Off = also show size, delta gate, block and combo lines.")
 
@@ -166,6 +167,8 @@ ob2Vol  = input.string("Auto (5m whole leg, others candle → break)", "Volume i
 ob2Bars = input.int(1, "Candles counted (Orderblock candle + next)", minval=1, maxval=10, group=grpO2, tooltip="Used only with 'Orderblock candle + next'. 1 = the orderblock candle only.")
 ob2Mid  = input.bool(true, "Show middle line", group=grpO2)
 ob2Hide = input.bool(true, "Hide overlap", group=grpO2)
+ob2Hist  = input.bool(true, "Keep broken blocks as grey history", inline="o2h", group=grpO2, tooltip="On: an OrderBlock 2.0 that price closed through (mitigated) stays on the chart in grey, from the block candle to the candle that broke it, with its volume and buyers / sellers %. History only: grey blocks are not used by the 60% gate.")
+ob2HistN = input.int(10, "last", minval=1, maxval=50, inline="o2h", group=grpO2)
 
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
@@ -569,10 +572,12 @@ type Block
     bool  isOb  = false
     int   ver   = 1
     line  mid
+    int   dieBar = na
 
 var array<Block> blocks = array.new<Block>()   // FVG zones (display)
 var array<Block> obs    = array.new<Block>()   // OrderBlock 1.0
 var array<Block> obs2   = array.new<Block>()   // OrderBlock 2.0
+var array<Block> obs2Old = array.new<Block>()  // OrderBlock 2.0 broken (grey history)
 array<Block>     gArr   = gateOb == "OrderBlock 2.0" ? obs2 : obs   // the blocks gate 2 uses
 var int blockId = 0
 
@@ -1090,6 +1095,17 @@ if obs2.size() > 0
         if gone and b.born < bar_index
             f_deleteBlock(b)
             obs2.remove(i)
+            if ob2Hist
+                b.bx     := na
+                b.bBuy   := na
+                b.bSell  := na
+                b.info   := na
+                b.tag    := na
+                b.mid    := na
+                b.dieBar := bar_index
+                obs2Old.unshift(b)
+                while obs2Old.size() > ob2HistN
+                    f_deleteBlock(obs2Old.pop())
 
 // show the last N per side (newest first), skipping blocks that overlap one already shown
 if obs2.size() > 0
@@ -1234,7 +1250,16 @@ if axInval != "Off" and sigHist.size() > 0
             bool fail = sg.dir == 1 ? (wk ? low : close) < sg.lvl : (wk ? high : close) > sg.lvl
             if fail and not na(inspLbl) and sg.born == inspIdx
                 label.set_text(inspLbl, label.get_text(inspLbl) + "\n✗ REMOVED at " + str.format_time(time, "dd MMM HH:mm") + ": price went " + (sg.dir == 1 ? "below its low " : "above its high ") + str.tostring(sg.lvl, format.mintick) + "\n  (④ Remove failed accelerators → Off keeps it)")
-            if fail
+            if fail and axHist
+                // keep it as grey history: triangle grey, text grey + '✗ failed'
+                for l in sg.axl
+                    if label.get_text(l) == ""
+                        label.set_color(l, color.new(#787B86, 0))
+                    else
+                        label.set_textcolor(l, color.new(#787B86, 0))
+                        label.set_text(l, label.get_text(l) + "\n✗ failed " + str.format_time(time, "HH:mm"))
+                sg.dir := 0
+            else if fail
                 // the accelerator triangle + text go; an ENTER label, its SL line and the W / L stay
                 for l in sg.axl
                     label.delete(l)
@@ -2135,6 +2160,12 @@ if barstate.islast
             f_refreshBlock(b, b.kind == 1 ? o2Bull : o2Bear)
         else
             f_hideBlock(b)
+    // broken OrderBlock 2.0: grey history from the block candle to the break
+    for b in obs2Old
+        f_hideBlock(b)
+        if ob2Hist and showOb2
+            color gC = #787B86
+            b.bx := box.new(b.left, b.top, b.dieBar, b.bot, border_color=color.new(gC, 40), border_width=1, bgcolor=color.new(gC, 85), text="✗ " + (b.kind == 1 ? "Bull" : "Bear") + " " + f_k(b.vol) + " · B " + str.tostring(b.buyPct, "#.#") + "% / S " + str.tostring(b.sellPct, "#.#") + "%", text_color=color.new(gC, 0), text_size=size.tiny, text_halign=text.align_right, text_valign=text.align_center)
 
     // volume profile with buyer / seller split
     for bx in vpBoxes
