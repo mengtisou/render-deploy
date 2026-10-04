@@ -1399,6 +1399,7 @@ if not btEnded and time > btTo
     btEnded := true
     line.new(bar_index, close, bar_index, close + 1, extend=extend.both, color=color.new(color.aqua, 20), style=line.style_dashed, width=2)
     label.new(bar_index, high + atr14 * 3, "■ TEST TO " + str.format_time(btTo, "dd MMM yy"), style=label.style_label_right, color=color.new(color.aqua, 20), textcolor=color.black, size=size.small)
+ob2WL   = input.bool(true, "Show W / L with OrderBlock 2.0", group=grpW, tooltip="On: the W / L row shows the OFX combo result also when Gate 2 uses OrderBlock 2.0. Note: OrderBlock 2.0 buyer / seller % comes from 1-minute data, which TradingView keeps only for recent candles, so older trades can differ from what you saw live. Off: the row says 'Not tracked with OrderBlock 2.0'.")
 bothBar = input.string("Loss (conservative)", "If TP and SL are hit in the same candle", options=["Loss (conservative)", "Win"], group=grpW)
 cWin    = input.color(#26A69A, "Win color", inline="wl", group=grpW)
 cLoss   = input.color(#F23645, "Loss color", inline="wl", group=grpW)
@@ -1875,7 +1876,7 @@ if showDash and barstate.islast
         table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
         table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
-        bool ob2M = gateOb == "OrderBlock 2.0"
+        bool ob2M = gateOb == "OrderBlock 2.0" and not ob2WL
         table.cell(dash, 0, 2, ob2M ? "W / L" : wlTxt, text_color=ob2M ? gold : netR >= 0 ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 2, ob2M ? "not tracked (OB 2.0)" : str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=ob2M ? gold : netPts >= 0 ? ok : bad, text_size=size.tiny)
         if axBtOn
@@ -1903,7 +1904,7 @@ if showDash and barstate.islast
         table.cell(dash, 1, 6, srcUsed, text_color=txt, text_size=size.tiny)
         table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=dSz, text_halign=text.align_left)
         string wlFull = wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)"
-        bool   ob2Gate = gateOb == "OrderBlock 2.0"
+        bool   ob2Gate = gateOb == "OrderBlock 2.0" and not ob2WL
         table.cell(dash, 1, 7, ob2Gate ? "Not tracked with OrderBlock 2.0 ⓘ" : wlFull, text_color=ob2Gate ? gold : netPts >= 0 ? ok : bad, text_size=dSz, tooltip=ob2Gate ? "Win / Loss is not reliable with OrderBlock 2.0: its blocks and buyer / seller % need 1-minute data, which TradingView only keeps for recent candles, so older blocks are not the same as they were live.\nTo test Win / Loss: ⑤ Gate 2 → OrderBlock 1.0.\nCounted anyway (for reference only): " + wlFull : "OFX combo" + f_dlTxt(dlOfx))
         if axBtOn
             table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP, "#.##") : axSlMd == "Same as TP (1R)" ? " = 1R" : " / SL candle"), text_color=txt, text_size=dSz, text_halign=text.align_left)
