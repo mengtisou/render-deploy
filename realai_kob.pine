@@ -1357,6 +1357,11 @@ btSpr   = input.float(0.18, "All tests · spread (ask − bid)", options=[0.0, 0
 dlOn    = input.bool(true, "All tests · daily limit", group=grpW, tooltip="Like the KTR script: each test stops for the day once its closed trades today reach the profit target or the loss limit. No new trades (pending orders are cancelled) until the next daily candle; trades already open run to their own TP / SL.")
 dlTp    = input.float(400, "Daily profit target (points)", minval=1, step=50, group=grpW, tooltip="400 pts = 40.00 in price.")
 dlSl    = input.float(300, "Daily loss limit (points)", minval=1, step=50, group=grpW, tooltip="300 pts = 30.00 in price.")
+entMode = input.string("Pending LIMIT (BUY −pts · SELL +pts)", "All tests · entry", options=["At signal close", "Pending LIMIT (BUY −pts · SELL +pts)"], group=grpW, tooltip="One entry rule for every test (OFX combo, Every AX, KOB-15 A+, KOB³). Pending LIMIT: after the signal candle closes, a BUY LIMIT is placed below / SELL LIMIT above the close. It only counts as a trade when price reaches it; if not reached in time, or price runs away first, it is 'missed' (not a win, not a loss). TP is measured from the fill price; the SL stays at the rule level.")
+entOff  = input.float(20, "Pending offset (points)", minval=0, step=5, group=grpW, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
+entExp  = input.int(10, "Pending expires after (candles)", minval=1, group=grpW)
+entRun  = input.string("200 pts away", "Pending also cancelled when price runs", options=["Candles only", "100 pts away", "200 pts away"], group=grpW)
+bool entPend = entMode != "At signal close"
 bool btIn = time >= btFrom and time <= btTo
 bool dayNew = timeframe.change("D")
 
@@ -1425,6 +1430,25 @@ type Trade
     int   ord    = 0
 
 var Trade trd    = na
+var int ofxMiss = 0
+var int axMiss  = 0
+// pending LIMIT step: 1 = filled on this candle, 0 = still waiting, -1 = missed, -2 = cancelled by the daily limit
+f_pendStep(Trade t, DayLim dl) =>
+    int st = 0
+    if dlOn and dl.stop
+        st := -2
+    else if bar_index > t.sigBar
+        bool  touch = t.dir == 1 ? low + btSpr <= t.entry : high >= t.entry
+        float runD  = entRun == "100 pts away" ? 10.0 : entRun == "200 pts away" ? 20.0 : na
+        bool  ran   = not na(runD) and (t.dir == 1 ? high + btSpr >= t.entry + runD : low <= t.entry - runD)
+        if touch
+            t.filled := true
+            t.bar    := bar_index
+            t.tm     := time
+            st := 1
+        else if ran or bar_index - t.sigBar >= entExp
+            st := -1
+    st
 
 // ── session survey: W / L / points per session for the TP in use, and the other TP on the same trades ──
 f_sess(int t) =>
@@ -1477,9 +1501,25 @@ var float netR   = 0.0
 var float netPts = 0.0
 
 // 1) manage the open trade (from the candle after entry, on closed candles only)
-if barstate.isconfirmed and not na(trd) and bar_index > trd.bar
+bool ofxFill = false
+if barstate.isconfirmed and not na(trd) and not trd.filled
+    int ps = f_pendStep(trd, dlOfx)
+    if ps < 0
+        ofxMiss    += ps == -1 ? 1 : 0
+        dlOfx.skip += ps == -2 ? 1 : 0
+        line.delete(trd.lTp)
+        line.delete(trd.lSl)
+        trd := na
+    else if ps == 1
+        ofxFill := true
+        f_ssShadow(ssO, trd.dir, trd.entry, trd.sl)
+    else if showWL
+        line.set_x2(trd.lTp, bar_index)
+        line.set_x2(trd.lSl, bar_index)
+if barstate.isconfirmed and not na(trd) and trd.filled and (bar_index > trd.bar or ofxFill)
+    // on the fill candle: SL counts on the whole candle (conservative), TP only if the close is past it
     bool hitSL = trd.dir == 1 ? low <= trd.sl : high + btSpr >= trd.sl
-    bool hitTP = trd.dir == 1 ? high >= trd.tp : low + btSpr <= trd.tp
+    bool hitTP = ofxFill ? (trd.dir == 1 ? close >= trd.tp : close + btSpr <= trd.tp) : (trd.dir == 1 ? high >= trd.tp : low + btSpr <= trd.tp)
     if hitSL or hitTP
         bool  win  = hitTP and (not hitSL or bothBar == "Win")
         float rsk  = math.abs(trd.entry - trd.sl)
@@ -1510,15 +1550,16 @@ if barstate.isconfirmed and btIn and not (dlOn and dlOfx.stop) and (enterL or en
     Block eb   = gArr.get(enterL ? bullIdx : bearIdx)
     bool  near = low <= eb.top and high >= eb.bot
     float sl   = f_sl(enterL ? 1 : -1, eb.top, eb.bot)
-    float en   = enterL ? close + btSpr : close
+    float en   = entPend ? close - (enterL ? 1 : -1) * entOff * 0.10 : enterL ? close + btSpr : close
     float risk = math.abs(en - sl)
     if risk > 0 and (enterL ? sl < en : sl > en)
         int   d  = enterL ? 1 : -1
         float tp = en + d * (tpMode == "R multiple" ? tpR * risk : tpPts)
         line  l1 = showWL ? line.new(bar_index, tp, bar_index + 1, tp, color=color.new(cWin, 20), style=line.style_dotted, width=1) : na
         line  l2 = showWL ? line.new(bar_index, sl, bar_index + 1, sl, color=color.new(cLoss, 20), style=line.style_dotted, width=1) : na
-        trd := Trade.new(d, en, sl, tp, bar_index, l1, l2, time)
-        f_ssShadow(ssO, d, en, sl)
+        trd := Trade.new(d, en, sl, tp, bar_index, l1, l2, time, filled=not entPend, sigBar=bar_index)
+        if not entPend
+            f_ssShadow(ssO, d, en, sl)
 
 // ════════════════════════════════════════════════════════════════════
 // BACKTEST · EVERY ACCELERATOR  (each BuAx+ / BeAx+ is a trade on its own,
@@ -1545,9 +1586,20 @@ var int   axLS = 0
 if axBtOn and barstate.isconfirmed and axOpen.size() > 0
     for i = axOpen.size() - 1 to 0
         Trade t = axOpen.get(i)
-        if bar_index > t.bar
+        bool  fillNow = false
+        bool  gone    = false
+        if not t.filled
+            int ps = f_pendStep(t, dlAx)
+            if ps < 0
+                axMiss    += ps == -1 ? 1 : 0
+                dlAx.skip += ps == -2 ? 1 : 0
+                axOpen.remove(i)
+                gone := true
+            else if ps == 1
+                fillNow := true
+        if not gone and t.filled and (bar_index > t.bar or fillNow)
             bool hitSL = t.dir == 1 ? low <= t.sl : high + btSpr >= t.sl
-            bool hitTP = t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp
+            bool hitTP = fillNow ? (t.dir == 1 ? close >= t.tp : close + btSpr <= t.tp) : (t.dir == 1 ? high >= t.tp : low + btSpr <= t.tp)
             if hitSL or hitTP
                 bool  win  = hitTP and (not hitSL or bothBar == "Win")
                 float rsk  = math.abs(t.entry - t.sl)
@@ -1571,11 +1623,11 @@ if axBtOn and barstate.isconfirmed and btIn and dlOn and dlAx.stop and (drawBull
     dlAx.skip += 1
 if axBtOn and barstate.isconfirmed and btIn and not (dlOn and dlAx.stop) and (drawBull or drawBear) and (not axOne or axOpen.size() == 0)
     int   d  = drawBull ? 1 : -1
-    float en = d == 1 ? close + btSpr : close
+    float en = entPend ? close - d * entOff * 0.10 : d == 1 ? close + btSpr : close
     float tp = en + d * axTp
     float sl = axSlMd == "Same as TP (1R)" ? en - d * axTp : axSlMd == "Fixed distance" ? en - d * axSlP : (d == 1 ? low - slBuf : high + slBuf)
     if d * (en - sl) > 0
-        axOpen.push(Trade.new(d, en, sl, tp, bar_index, na, na, time))
+        axOpen.push(Trade.new(d, en, sl, tp, bar_index, na, na, time, filled=not entPend, sigBar=bar_index))
 
 // ════════════════════════════════════════════════════════════════════
 // KOB · KTR ❖ + OFX 2.0 COMBO  (double / triple confirmation on 5m)
@@ -1608,10 +1660,10 @@ kobTp   = input.float(20.0, "KOB³ TP distance (price)", minval=0.1, step=0.5, g
 kobTpR  = input.float(2.0, "Take profit (R)", minval=0.5, step=0.5, group=grpKB)
 kobOne  = input.bool(true, "One trade at a time (per setup)", group=grpKB)
 kobLab  = lbAll and lbKob   // ⓪ Display
-kobEnt  = input.string("Pending LIMIT (BUY −pts · SELL +pts)", "KOB-15 / KOB³ entry", options=["At signal close", "Pending LIMIT (BUY −pts · SELL +pts)"], group=grpKB, tooltip="Like the KTR ❖ trades: once the confirmation is complete (at the candle close), a BUY LIMIT is placed below / SELL LIMIT above the close. It only counts as a trade once price reaches it; if not reached in time, or price runs away first, it is 'missed' (not a win, not a loss). TP is measured from the fill price; the SL stays the OFX rule level.")
-kobOff  = input.float(20, "Pending offset (points)", minval=0, step=5, group=grpKB, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
-kobExp  = input.int(10, "Pending expires after (candles)", minval=1, group=grpKB)
-kobRun  = input.string("200 pts away", "Pending also cancelled when price runs", options=["Candles only", "100 pts away", "200 pts away"], group=grpKB)
+kobEnt  = entMode   // ⑮ All tests · entry
+kobOff  = entOff
+kobExp  = entExp
+kobRun  = entRun
 k15Tp   = input.float(20.0, "KOB-15 TP distance (price)", minval=0.1, step=0.5, group=grpKB, tooltip="KOB-15 is the A+ setup (15m ❖ and OFX combo agree), so it holds for a bigger target: 20.00 = 200 points. With 'R multiple' above, the R multiple is used instead.")
 cK3     = input.color(#FFB300, "KOB³ colour", inline="kc", group=grpKB)
 cK15    = input.color(#26C6DA, "KOB-15 colour", inline="kc", group=grpKB, tooltip="KOB-15 = 15m KTR ❖ + OFX 2.0 combo, without the 5m ❖.")
@@ -2289,10 +2341,10 @@ if showDash and barstate.islast
         table.cell(dash, 0, 7, "W / L · TP " + (tpMode == "R multiple" ? str.tostring(tpR, "#.#") + "R" : str.tostring(tpPts, "#.##")), text_color=txt, text_size=dSz, text_halign=text.align_left)
         string wlFull = wlTxt + " · " + str.tostring(netPts, "+#.##;-#.##") + " (" + str.tostring(netR, "+#.#;-#.#") + "R)"
         bool   ob2Gate = gateOb == "OrderBlock 2.0" and not ob2WL
-        table.cell(dash, 1, 7, ob2Gate ? "Not tracked with OrderBlock 2.0 ⓘ" : wlFull, text_color=ob2Gate ? gold : netPts >= 0 ? ok : bad, text_size=dSz, tooltip=ob2Gate ? "Win / Loss is not reliable with OrderBlock 2.0: its blocks and buyer / seller % need 1-minute data, which TradingView only keeps for recent candles, so older blocks are not the same as they were live.\nTo test Win / Loss: ⑤ Gate 2 → OrderBlock 1.0.\nCounted anyway (for reference only): " + wlFull : "OFX combo" + f_dlTxt(dlOfx))
+        table.cell(dash, 1, 7, ob2Gate ? "Not tracked with OrderBlock 2.0 ⓘ" : wlFull, text_color=ob2Gate ? gold : netPts >= 0 ? ok : bad, text_size=dSz, tooltip=ob2Gate ? "Win / Loss is not reliable with OrderBlock 2.0: its blocks and buyer / seller % need 1-minute data, which TradingView only keeps for recent candles, so older blocks are not the same as they were live.\nTo test Win / Loss: ⑤ Gate 2 → OrderBlock 1.0.\nCounted anyway (for reference only): " + wlFull : "OFX combo · " + (entPend ? "pending LIMIT ∓" + str.tostring(entOff, "#") + " pts · missed " + str.tostring(ofxMiss) : "entry at signal close") + f_dlTxt(dlOfx))
         if axBtOn
             table.cell(dash, 0, 8, "Every AX · TP " + str.tostring(axTp, "#.##") + (axSlMd == "Fixed distance" ? " / SL " + str.tostring(axSlP, "#.##") : axSlMd == "Same as TP (1R)" ? " = 1R" : " / SL candle"), text_color=txt, text_size=dSz, text_halign=text.align_left)
-            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=dSz, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen now: " + str.tostring(axOpen.size()) + f_dlTxt(dlAx))
+            table.cell(dash, 1, 8, axTxt + " · " + str.tostring(axPts, "+#.##;-#.##") + " (" + str.tostring(axR, "+#.#;-#.#") + "R)", text_color=axPts >= 0 ? ok : bad, text_size=dSz, tooltip="BuAx+ (long): " + str.tostring(axWB) + "W " + str.tostring(axLB) + "L" + (axWB + axLB > 0 ? " (" + str.tostring(axWB * 100.0 / (axWB + axLB), "#") + "%)" : "") + "\nBeAx+ (short): " + str.tostring(axWS) + "W " + str.tostring(axLS) + "L" + (axWS + axLS > 0 ? " (" + str.tostring(axWS * 100.0 / (axWS + axLS), "#") + "%)" : "") + "\nOpen / pending now: " + str.tostring(axOpen.size()) + (entPend ? "\nPending LIMIT ∓" + str.tostring(entOff, "#") + " pts · missed " + str.tostring(axMiss) : "\nEntry at signal close") + f_dlTxt(dlAx))
         string kobTpS = kobTpMd == "R multiple" ? str.tostring(kobTpR, "#.#") + "R" : str.tostring(kobTp, "#.##")
         table.cell(dash, 0, 9, "KOB-15 A+ 15m ❖ + Combo · TP " + (kobTpMd == "R multiple" ? kobTpS : str.tostring(k15Tp, "#.##")), text_color=cK15, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 9, f_kobTxt(kS15), text_color=kS15.pts >= 0 ? ok : bad, text_size=dSz, tooltip=f_kobTip(kS15))
