@@ -172,6 +172,7 @@ ob2HistN = input.int(10, "last", minval=1, maxval=50, inline="o2h", group=grpO2)
 
 grpX = "⑥ Combo Entry · Gates 1 + 5"
 enforce5m  = input.bool(true, "Gate 1: combo only on 5-minute chart", group=grpX)
+gate15m    = input.bool(true, "Gate 1: also allow the 15-minute chart", group=grpX, tooltip="On: the 5-gate combo (ENTER, W / L) also works on 15m. All other gates are the same. Off: 5m only.")
 slBufTicks = input.int(5, "SL buffer (ticks)", minval=0, group=grpX)
 slMode     = input.string("Near block: OrderBlock ± buffer · far: candle", "Stop loss", options=["Near block: OrderBlock ± buffer · far: candle", "Rule: block if near, candle if far", "Below / above the 60% OrderBlock + buffer", "Below / above the entry candle only"], group=grpX, tooltip="Entry candle only: SL always below the low (BUY) / above the high (SELL) of the entry candle ± SL buffer (ticks), whether it is near the block or not.\nNear block (OB 2.0 default): entry candle touches the 60% block → SL = block bottom − buffer (BUY) / top + buffer (SELL); far from it → SL beyond the entry candle.\nRule: entry candle touches the block → SL beyond the block; far from it → SL beyond the entry candle.\nOrderBlock: SL always beyond the 60% block that gave the signal (BUY: block bottom − buffer, SELL: block top + buffer). Used for ENTER, W / L and the KOB setups.")
 slObPts    = input.float(20, "OrderBlock SL buffer (points)", minval=0, step=5, group=grpX, tooltip="1 point = 0.10 → 20 pts = 2.00 in price.")
@@ -1148,7 +1149,7 @@ if obs.size() > 0
 // ════════════════════════════════════════════════════════════════════
 // ACCELERATORS (Gate 3) + DELTA GATE (Gate 4) + COMBO (Gates 1-5)
 // ════════════════════════════════════════════════════════════════════
-bool is5m  = timeframe.isminutes and timeframe.multiplier == 5
+bool is5m  = timeframe.isminutes and (timeframe.multiplier == 5 or (gate15m and timeframe.multiplier == 15))
 bool volOK = volNeed <= 0 or volRatio >= volNeed
 float atrLong   = ta.atr(100)
 float sizeRatio = nz(atrLong) > 0 ? barRange / atrLong : 0.0
@@ -2252,7 +2253,7 @@ if showDash and barstate.islast
         table.cell(dash, 0, 0, sig, text_color=txt, text_size=size.tiny)
         table.cell(dash, 1, 0, f_ks(delta) + (dPass ? " ✓" : " ✗"), text_color=dPass ? ok : bad, text_size=size.tiny)
         table.cell(dash, 0, 1, st, text_color=st == "NO PASS, NO TRADE" ? gold : st == "ENTER LONG" ? ok : bad, text_size=size.tiny)
-        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
+        table.cell(dash, 1, 1, is5m ? timeframe.period + "M ✓" : timeframe.period + " ✗", text_color=is5m ? ok : bad, text_size=size.tiny)
         bool ob2M = gateOb == "OrderBlock 2.0" and not ob2WL
         table.cell(dash, 0, 2, ob2M ? "W / L" : wlTxt, text_color=ob2M ? gold : netR >= 0 ? ok : bad, text_size=size.tiny)
         table.cell(dash, 1, 2, ob2M ? "not tracked (OB 2.0)" : str.tostring(netPts, "+#.##;-#.##") + " pts", text_color=ob2M ? gold : netPts >= 0 ? ok : bad, text_size=size.tiny)
@@ -2274,7 +2275,7 @@ if showDash and barstate.islast
         table.cell(dash, 0, 0, "RealAI KOB", text_color=gold, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 0, "5 gates · spread " + str.tostring(btSpr, "0.00"), text_color=gold, text_size=dSz, tooltip="All Win / Loss tests: " + str.format_time(math.max(btFrom, firstBarTime), "dd MMM yy") + " → " + str.format_time(math.min(btTo, time), "dd MMM yy") + " · spread " + str.tostring(btSpr, "0.00") + " (BUY opens on the ask, SELL closes on the ask)")
         table.cell(dash, 0, 1, "1 · Timeframe", text_color=txt, text_size=dSz, text_halign=text.align_left)
-        table.cell(dash, 1, 1, is5m ? "5M ✓" : timeframe.period + " ✗ use 5M", text_color=is5m ? ok : bad, text_size=dSz)
+        table.cell(dash, 1, 1, is5m ? timeframe.period + "M ✓" : timeframe.period + (gate15m ? " ✗ use 5M / 15M" : " ✗ use 5M"), text_color=is5m ? ok : bad, text_size=dSz)
         table.cell(dash, 0, 2, "2 · Nearest 60% block", text_color=txt, text_size=dSz, text_halign=text.align_left)
         table.cell(dash, 1, 2, nb, text_color=nb == "none" ? bad : ok, text_size=dSz)
         table.cell(dash, 0, 3, "3 · Last accelerator", text_color=txt, text_size=dSz, text_halign=text.align_left)
