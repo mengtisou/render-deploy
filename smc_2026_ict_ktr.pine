@@ -30,6 +30,7 @@ indicator("SMC 2026 ICT + KTR v2", overlay=false, max_boxes_count=500, max_lines
 var string G0  = "⓪ KTR MODULE  Levels · Diamonds"
 var string G0b = "⓪b KTR ❖ TRADES  TP · SL · Win / Loss"
 var string G0c = "⓪c PROP FIRM MODE  account rules"
+var string G0d = "⓪d AI DATA EXPORT"
 var string G1  = "① Structure  BOS · CHoCH"
 var string G2  = "② Order Blocks + Volume"
 var string G3  = "③ FVG + IFVG"
@@ -143,6 +144,10 @@ i_pfHedge  = input.string("Allow (hedge)", "Opposite ❖ while a trade is open",
      options=["Allow (hedge)", "Skip it (no hedging)", "Close open trade, take the new ❖"],
      tooltip="A BUY is open and a SELL ❖ confirms (or the other way round). Holding a BUY and a SELL on the same symbol at the same time is hedging — some prop firms allow it inside one account, some don't, and the rule can differ between challenge and funded: check your firm's rules.\nAllow = both trades run.\nSkip = the opposite ❖ is not taken, and a pending order that would fill against an open trade is cancelled.\nClose = the open trade is closed at the ❖ candle's close ('closed early', + or − pts, not a WIN / LOSS) and the new ❖ is taken; opposite pending orders are cancelled.")
 i_pfLab    = input.bool  (true,  "Show PASSED / FUNDED / FAILED / STOPPED labels", group=G0c)
+
+// ── AI DATA EXPORT ──
+i_aiOn     = input.bool  (true,  "AI data columns  (Data Window → Export chart data)", group=G0d,
+     tooltip="Adds hidden 'AI …' columns (only in the Data Window, nothing drawn): the ❖ signal, entry / TP / SL, features at the signal candle, and on the candle where each trade ends: bars back to its ❖, result code (1 WIN, −1 LOSS, 0 missed / cancelled, 2 closed early) and pts. Chart menu → Export chart data… saves them to CSV; tools/ktr_ai_dataset.py turns that CSV into one row per ❖ with its label. Uses the spread picked in ⓪b (●).")
 
 // ── INPUTS ──
 i_swing    = input.int   (10,    "Swing Length",                  group=G1, minval=2, maxval=50)
@@ -615,6 +620,20 @@ f_sesOk(int i) =>
     i == 0 ? i_sesAOn : i == 1 ? i_sesLOn : i == 2 ? i_sesNOn : i_sesOOn
 bool   kSesOkNow = f_sesOk(kSesNow)
 
+// AI export (⓪d): trades that end on this candle, up to 3 → [bars back to the ❖, code, pts] × 3
+array<float> aiRes = array.new_float(9, na)
+float  aiTaken  = 0.0
+float  aiEntry  = na
+float  aiTp     = na
+float  aiSl     = na
+f_aiRec(int ago, float code, float pts) =>
+    int slot = na(aiRes.get(0)) ? 0 : na(aiRes.get(3)) ? 3 : na(aiRes.get(6)) ? 6 : -1
+    if slot >= 0
+        aiRes.set(slot,     ago)
+        aiRes.set(slot + 1, code)
+        aiRes.set(slot + 2, pts)
+    slot
+
 // test period (a "day" = the chart's daily candle, same as the KTR OP)
 var int kDaysAll = 0            // daily candles since the first ❖ trade
 var int kFirstTm = na           // first ❖ trade / order
@@ -718,6 +737,7 @@ f_kCloseNow(KtrTrade t, KtrStats st) =>
     st.lastTxt := "CLOSED " + str.tostring(pts, "+#;-#") + " · " + t.name
     st.lastCol := color.gray
     if t.sc == kSel
+        f_aiRec(bar_index - t.sigBar, 2, pts)
         if not na(t.bxTp)
             box.set_right(t.bxTp, bar_index)
         if not na(t.bxSl)
@@ -738,6 +758,7 @@ f_kCloseNow(KtrTrade t, KtrStats st) =>
 // pending order cancelled before it filled (not a win, not a loss) — drawn for the picked spread only
 f_kCancel(KtrTrade t, string why) =>
     if t.sc == kSel
+        f_aiRec(bar_index - t.sigBar, 0, 0)
         if not na(t.lnPend)
             line.set_x2(t.lnPend, bar_index)
             line.set_color(t.lnPend, color.gray)
@@ -842,6 +863,7 @@ if kTrack and kOpen.size() > 0
                 st.lastTxt := kRes + " · " + kt.name
                 st.lastCol := kWin ? KWIN : KLOSS
                 if kMain
+                    f_aiRec(bar_index - kt.sigBar, kWin ? 1 : -1, kGain)
                     kHitWin  := kHitWin or kWin
                     kHitLoss := kHitLoss or not kWin
                     kSesW.set(kt.ses,   kSesW.get(kt.ses)   + (kWin ? 1 : 0))
@@ -988,6 +1010,10 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 KtrTrade kNew = KtrTrade.new(dir=kDir, entry=kEn, tp=kTpPx, sl=kSlPx, bar=bar_index, tm=time,
                      filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId, ses=kSesNow)
                 if sc == kSel
+                    aiTaken := 1
+                    aiEntry := kEn
+                    aiTp    := kTpPx
+                    aiSl    := kSlPx
                     string kOffS = (kEn >= close ? "+" : "−") + kOffTxt
                     if kPendOn and i_kPendLab
                         kNew.lnPend := line.new(bar_index, kEn, bar_index + 1, kEn, color=KPEACH, style=line.style_dashed, width=1, force_overlay=true)
@@ -2234,3 +2260,35 @@ if barstate.islast
          text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 100))
     table.cell(tPaneBot, 0, 0, ktrUp ? "BULLISHNESS" : "BEARISHNESS",
          text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 100))
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 18 — AI DATA EXPORT  (Data Window columns, nothing drawn)
+// Chart menu → Export chart data… saves every column below to CSV.
+// tools/ktr_ai_dataset.py turns it into one row per ❖ signal:
+// features at the ❖ candle + its result (WIN / LOSS / MISSED / EARLY).
+// ══════════════════════════════════════════════════════════════════
+bool aiOk = i_aiOn and kTrack
+plot(aiOk ? kDir : na,                         "AI signal",          display=display.data_window)
+plot(aiOk and kDir != 0 ? aiTaken : na,         "AI taken",           display=display.data_window)
+plot(aiOk ? aiEntry : na,                      "AI entry",           display=display.data_window)
+plot(aiOk ? aiTp : na,                         "AI TP",              display=display.data_window)
+plot(aiOk ? aiSl : na,                         "AI SL",              display=display.data_window)
+plot(aiOk ? ktrRsi : na,                       "AI RSI7",            display=display.data_window)
+plot(aiOk ? atr14 : na,                        "AI ATR14",           display=display.data_window)
+plot(aiOk ? ktrRelVol : na,                    "AI rel volume",      display=display.data_window)
+plot(aiOk ? (ktrUp ? 1 : -1) : na,             "AI trend fast",      display=display.data_window)
+plot(aiOk ? (ktrSlowUp ? 1 : -1) : na,         "AI trend slow",      display=display.data_window)
+plot(aiOk ? (close - ktr_op) / ktr_op * 100 : na, "AI dist OP %",    display=display.data_window)
+plot(aiOk ? (close - kMA) / atr14 : na,        "AI dist 30MA ATR",   display=display.data_window)
+plot(aiOk ? kSesNow : na,                      "AI session",         display=display.data_window)
+plot(aiOk ? paneRelVol : na,                   "AI boys vol %",      display=display.data_window)
+plot(aiOk ? panePress : na,                    "AI bullishness",     display=display.data_window)
+plot(aiOk ? aiRes.get(0) : na,                 "AI res1 bars ago",   display=display.data_window)
+plot(aiOk ? aiRes.get(1) : na,                 "AI res1 code",       display=display.data_window)
+plot(aiOk ? aiRes.get(2) : na,                 "AI res1 pts",        display=display.data_window)
+plot(aiOk ? aiRes.get(3) : na,                 "AI res2 bars ago",   display=display.data_window)
+plot(aiOk ? aiRes.get(4) : na,                 "AI res2 code",       display=display.data_window)
+plot(aiOk ? aiRes.get(5) : na,                 "AI res2 pts",        display=display.data_window)
+plot(aiOk ? aiRes.get(6) : na,                 "AI res3 bars ago",   display=display.data_window)
+plot(aiOk ? aiRes.get(7) : na,                 "AI res3 code",       display=display.data_window)
+plot(aiOk ? aiRes.get(8) : na,                 "AI res3 pts",        display=display.data_window)
