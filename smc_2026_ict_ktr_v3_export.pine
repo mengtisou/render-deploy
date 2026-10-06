@@ -18,6 +18,9 @@ indicator("SMC 2026 ICT + KTR v3 + Export", overlay=false, max_boxes_count=500, 
 //                 Funded, and blocks ❖ trades that could break a limit.
 // ⓪ OP SIDE FILTER (option, default Off) — price above the daily open (OP) → only BUY ❖,
 //                 price below OP → only SELL ❖. Set in the KTR group.
+// ⓪ ❖ ON 5 MIN (option, default Off) — the blue / red diamond still comes from the
+//                 chart candles (e.g. 15m), the ❖ confirms on the 1 / 3 / 5 min
+//                 candles after it and the trade starts at that candle's close.
 // ⓪d NEWS FILTER — high-impact news times (auto NFP + your own list):
 //                 no new ❖ trade from 45 min BEFORE until 15 min AFTER the
 //                 release (both editable), pending orders inside that window
@@ -84,6 +87,9 @@ i_ktrRsiLo = input.float(35,    "Buy zone: RSI was below",        group=G0)
 i_ktrRsiHi = input.float(65,    "Sell zone: RSI was above",       group=G0)
 i_ktrCool  = input.int  (3,     "Min bars between alerts",        group=G0, minval=0)
 i_ktrWin   = input.int  (12,    "Entry ❖ confirm window (bars)",  group=G0, minval=1)
+i_ktrLtf   = input.string("Off (chart candles)", "Entry ❖ confirm on lower TF", group=G0,
+     options=["Off (chart candles)", "1 min", "3 min", "5 min"],
+     tooltip="Off = the ❖ confirms on the chart's own candles (normal).\n5 min (or 1 / 3 min) = the blue / red diamond still comes from the chart candles (e.g. 15m), then the ❖ waits for the first 5-minute candle AFTER the diamond candle that confirms: the 5m trend (same Supertrend settings) flips your way, or a 5m candle closes above the diamond candle's high (BUY) / below its low (SELL). Boys volume and the OP side filter are checked on that 5m candle. The ❖ is drawn on the chart candle that holds it and the trade starts at that 5m candle's close; the rest of that chart candle is checked first on the next candle, so a fast TP / SL is not missed.\nThe confirm window still counts chart candles. Works only when the chart timeframe is higher than the one picked (15m chart + 5 min), otherwise it acts like Off. TradingView loads a limited number of lower-timeframe candles (about 100K on most plans): older chart history without 5m data gets no ❖ — the dashboard ❖ Period row shows from when it starts.")
 i_ktrCont  = input.bool (true,  "Continuation signals (trend pullbacks)", group=G0,
      tooltip="Also fire alerts + ❖ when a pullback against the bigger trend fails — e.g. SELL ❖ at a weak bounce inside a downtrend. Uses a softer RSI gate (45/55) since pullbacks rarely reach 35/65.")
 i_kMA      = input.bool (true,  "Show 30MA line",                 group=G0)
@@ -546,14 +552,57 @@ bool ktrFlipDn = not ktrUp and ktrUp[1]
 float ktrRelVol = volume / ta.sma(volume, 20)
 bool  ktrVolOK  = not i_ktrVolC or ktrRelVol >= i_ktrVolM
 
-bool ktrEntryBuy  = ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and
+// ❖ on lower-timeframe candles (option): the diamond still comes from the chart candle, the ❖ is the
+// first 1 / 3 / 5 min candle AFTER the diamond candle that confirms with the same rules
+// (its trend flips, or it closes beyond the diamond candle's high / low · Boys volume · OP side)
+string kLtfTf = i_ktrLtf == "1 min" ? "1" : i_ktrLtf == "3 min" ? "3" : "5"
+bool   kLtfOn = i_ktrOn and i_ktrLtf != "Off (chart candles)" and timeframe.in_seconds() > timeframe.in_seconds(kLtfTf)
+f_ltfKtr() =>
+    [lSt, lDir] = ta.supertrend(i_ktrSTf, i_ktrSTa)
+    [lDir < 0, close, high, low, volume / ta.sma(volume, 20), time_close]
+[lUp, lCl, lHi, lLo, lRv, lTc] = request.security_lower_tf(syminfo.tickerid, kLtfOn ? kLtfTf : timeframe.period, f_ltfKtr(),
+     ignore_invalid_timeframe=true)
+var int kLtfTr   = 0            // trend of the last LTF candle: 1 up · -1 down · 0 not known yet
+var int kLtfFrom = na           // first chart candle with LTF data (dashboard)
+int     kLtfBuy  = -1           // which LTF candle of this chart candle confirmed the ❖ (-1 = none)
+int     kLtfSell = -1
+if kLtfOn and lCl.size() > 0
+    if na(kLtfFrom)
+        kLtfFrom := time
+    bool kBuyLive  = ktrShow and not ktrBuyDone  and bar_index > ktrBuyBar  and bar_index - ktrBuyBar  <= i_ktrWin
+    bool kSellLive = ktrShow and not ktrSellDone and bar_index > ktrSellBar and bar_index - ktrSellBar <= i_ktrWin
+    for [j, c] in lCl
+        bool up  = lUp.get(j)
+        bool vOK = not i_ktrVolC or lRv.get(j) >= i_ktrVolM
+        if kBuyLive and kLtfBuy < 0 and vOK and (not ktrOpOn or na(ktr_op) or c > ktr_op) and
+             ((up and kLtfTr == -1) or c > ktrBuyHigh)
+            kLtfBuy := j
+        if kSellLive and kLtfSell < 0 and vOK and (not ktrOpOn or na(ktr_op) or c < ktr_op) and
+             ((not up and kLtfTr == 1) or c < ktrSellLow)
+            kLtfSell := j
+        kLtfTr := up ? 1 : -1
+
+bool ktrEntryBuy  = kLtfOn ? kLtfBuy >= 0 :
+     ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and
      (ktrFlipUp or (bar_index > ktrBuyBar  and close > ktrBuyHigh))
-bool ktrEntrySell = ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and
+bool ktrEntrySell = kLtfOn ? kLtfSell >= 0 :
+     ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and
      (ktrFlipDn or (bar_index > ktrSellBar and close < ktrSellLow))
 if ktrEntryBuy
     ktrBuyDone := true
 if ktrEntrySell
     ktrSellDone := true
+
+// ❖ price / time = the confirming LTF candle's close (chart candle's close when Off),
+// and the high / low of the chart candle's part after it — the trades check that part first on the next candle
+int   kLtfIx = not kLtfOn ? -1 : ktrEntryBuy and not ktrEntrySell ? kLtfBuy : ktrEntrySell and not ktrEntryBuy ? kLtfSell : -1
+float kSigPx = kLtfIx >= 0 ? lCl.get(kLtfIx) : close
+int   kSigTc = kLtfIx >= 0 ? lTc.get(kLtfIx) : time_close
+float kPreHi = na
+float kPreLo = na
+if kLtfIx >= 0 and kLtfIx < lCl.size() - 1
+    kPreHi := lHi.slice(kLtfIx + 1, lHi.size()).max()
+    kPreLo := lLo.slice(kLtfIx + 1, lLo.size()).min()
 
 color KPEACH = color.rgb(255,200,120)
 plotchar(ktrEntryBuy  ? low  - atr14*0.6 : na, "KTR BUY entry ❖",  char="❖", location=location.absolute, color=KPEACH, size=size.tiny, force_overlay=true)
@@ -766,6 +815,8 @@ type KtrTrade
     int    nws    = 0          // news zone it went live in: 0 normal · 1 before · 2 window · 3 after
     int    wk     = 0          // week counter (for "this week so far")
     int    mw     = 0          // week of the month it went live: 0 = day 1–7 … 3 = day 22+ · 4 = day 29+ (if split)
+    float  preHi  = na         // ❖ on a lower TF: high / low of the ❖ candle's part after the ❖ (checked first on the next candle)
+    float  preLo  = na
 
 // results for one spread
 type KtrStats
@@ -1166,12 +1217,22 @@ if kTrack and kOpen.size() > 0
             f_kDayCheck(st, kMain)
             kOpen.remove(i)
             continue
+        // ❖ on a lower TF: the rest of the ❖ candle (after the ❖) came before this candle → check it first
+        bool  kPre     = not na(kt.preHi) and bar_index == kt.sigBar + 1
+        bool  kFillPre = false
+        float pEHi = kt.dir == 1 ? kt.preHi + kS : kt.preHi
+        float pELo = kt.dir == 1 ? kt.preLo + kS : kt.preLo
+        float pXHi = kt.dir == 1 ? kt.preHi : kt.preHi + kS
+        float pXLo = kt.dir == 1 ? kt.preLo : kt.preLo + kS
+        float pXCl = kt.dir == 1 ? close[1] : close[1] + kS
         // BUY LIMIT / SELL STOP are reached from above (price falling into them)
         bool kFillDn = (kt.dir == 1) == kt.lim
         if not kt.filled and barstate.isconfirmed and bar_index > kt.sigBar
-            bool kTouch   = kFillDn ? eLo <= kt.entry : eHi >= kt.entry
             // ran away = moved X pts off the order on the side it was waiting on
-            bool kRanAway = not na(kRunDist) and (kFillDn ? eHi >= kt.entry + kRunDist : eLo <= kt.entry - kRunDist)
+            bool kTouchP  = kPre and (kFillDn ? pELo <= kt.entry : pEHi >= kt.entry)
+            bool kRanP    = kPre and not na(kRunDist) and (kFillDn ? pEHi >= kt.entry + kRunDist : pELo <= kt.entry - kRunDist)
+            bool kTouch   = kTouchP or (not kRanP and (kFillDn ? eLo <= kt.entry : eHi >= kt.entry))
+            bool kRanAway = kRanP or (not na(kRunDist) and (kFillDn ? eHi >= kt.entry + kRunDist : eLo <= kt.entry - kRunDist))
             if kNwBlk
                 kDone      := true
                 st.nwSkip  += 1
@@ -1194,6 +1255,7 @@ if kTrack and kOpen.size() > 0
                 kOpen.remove(i)
             else if kTouch
                 kt.filled := true
+                kFillPre  := kTouchP
                 kt.ses    := kSesNow
                 kt.wd     := kWdNow
                 kt.nws    := nwBar
@@ -1226,8 +1288,14 @@ if kTrack and kOpen.size() > 0
         if kt.filled and not kDone and barstate.isconfirmed and (bar_index > kt.bar or kFillNow)
             // on the fill candle only count what surely came after the fill:
             // filled on the way down → its low came later, its high maybe not (close is sure)
-            float aHi = kFillNow and kFillDn     ? xCl : xHi
-            float aLo = kFillNow and not kFillDn ? xCl : xLo
+            // ❖ on a lower TF: the rest of the ❖ candle comes first — if it already hit TP / SL, judge on it alone
+            float pHi  = kFillPre and kFillDn     ? pXCl : pXHi
+            float pLo  = kFillPre and not kFillDn ? pXCl : pXLo
+            bool  pHit = kPre and (not kFillNow or kFillPre) and
+                 (kt.dir == 1 ? pHi >= kt.tp or pLo <= kt.sl : pLo <= kt.tp or pHi >= kt.sl)
+            bool  kFC  = kFillNow and not kFillPre
+            float aHi  = pHit ? pHi : kFC and kFillDn     ? xCl : xHi
+            float aLo  = pHit ? pLo : kFC and not kFillDn ? xCl : xLo
             bool hitTP = kt.dir == 1 ? aHi >= kt.tp : aLo <= kt.tp
             bool hitSL = kt.dir == 1 ? aLo <= kt.sl : aHi >= kt.sl
             if hitTP or hitSL
@@ -1385,7 +1453,7 @@ int kDir = ktrEntryBuy and not ktrEntrySell ? 1 : ktrEntrySell and not ktrEntryB
 if kTrack and barstate.isconfirmed and kDir != 0
     string kNm = (kDir == 1 ? "BUY" : "SELL") + (kPendOn ? (kLimOn ? " LIMIT" : " STOP") : "")
     // the order is placed at the ❖ candle's close → is that moment inside a news no-trade window?
-    int    kNwPlaceZ   = f_nwZone(time_close, time_close + 1)
+    int    kNwPlaceZ   = f_nwZone(kSigTc, kSigTc + 1)
     bool   kNwPlaceBlk = i_nwOn and kNwPlaceZ == 2
     for sc = 0 to kSt.size() - 1
         if sc == kSel or i_kSprCmp
@@ -1396,7 +1464,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     KtrTrade t = kOpen.get(i)
                     if t.sc == sc and t.dir == -kDir and t.acct == st.acctId
                         if t.filled
-                            f_kCloseNow(t, st, close, "the opposite ❖")
+                            f_kCloseNow(t, st, kSigPx, "the opposite ❖")
                         else
                             st.hedgeSkip += 1
                             st.nOpen     -= 1
@@ -1428,23 +1496,23 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     kMwCnt.set(kMwNow, kMwCnt.get(kMwNow) + 1)
                 // pending: LIMIT = BUY below / SELL above the ❖ close · STOP = BUY above / SELL below
                 // at ❖ close: BUY fills on the ask (close + spread), SELL on the bid
-                float kEn   = kPendOn ? close + (kLimOn ? -kDir : kDir) * kOffDist : kDir == 1 ? close + st.spr : close
+                float kEn   = kPendOn ? kSigPx + (kLimOn ? -kDir : kDir) * kOffDist : kDir == 1 ? kSigPx + st.spr : kSigPx
                 float kTpPx = kEn + kDir * kTpDist
                 float kSlPx = kEn - kDir * kSlDist
                 KtrTrade kNew = KtrTrade.new(dir=kDir, entry=kEn, tp=kTpPx, sl=kSlPx, bar=bar_index, tm=time,
                      filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId, ses=kSesNow,
-                     wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow)
+                     wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow, preHi=kPreHi, preLo=kPreLo)
                 if sc == kSel
                     aiTaken := 1
                     aiEntry := kEn
                     aiTp    := kTpPx
                     aiSl    := kSlPx
-                    string kOffS = (kEn >= close ? "+" : "−") + kOffTxt
+                    string kOffS = (kEn >= kSigPx ? "+" : "−") + kOffTxt
                     if kPendOn and i_kPendLab
                         kNew.lnPend := line.new(bar_index, kEn, bar_index + 1, kEn, color=KPEACH, style=line.style_dashed, width=1, force_overlay=true)
                         kNew.lbPend := label.new(bar_index, kEn, kNm + " " + kOffS,
                              style=label.style_label_right, color=color.new(KPEACH, 20), textcolor=color.black, size=size.tiny,
-                             tooltip="❖ close " + str.tostring(close, format.mintick) + " → " + kNm + " at " + str.tostring(kEn, format.mintick) +
+                             tooltip="❖ close " + str.tostring(kSigPx, format.mintick) + " → " + kNm + " at " + str.tostring(kEn, format.mintick) +
                              "\nTP " + str.tostring(kTpPx, format.mintick) + " (+" + kTpTxt + " pts) · SL " + str.tostring(kSlPx, format.mintick) + " (−" + kSlTxt + " pts)" +
                              "\nCancelled after " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " or if price runs " + kRunTxt + " pts away first"),
                              force_overlay=true)
@@ -1453,7 +1521,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     if i_alKtr
                         alert("KTR ❖ " + kNm + (kPendOn ? " PLACED" : " ENTRY") + " — " + syminfo.ticker +
                              " | Entry:" + str.tostring(kEn, format.mintick) +
-                             (kPendOn ? " (❖ close " + str.tostring(close, format.mintick) + " " + kOffS + " pts, expires in " + str.tostring(i_kExp) + " candles)" : "") +
+                             (kPendOn ? " (❖ close " + str.tostring(kSigPx, format.mintick) + " " + kOffS + " pts, expires in " + str.tostring(i_kExp) + " candles)" : "") +
                              " | TP:" + str.tostring(kTpPx, format.mintick) + " (+" + kTpTxt + " pts)" +
                              " | SL:" + str.tostring(kSlPx, format.mintick) + " (−" + kSlTxt + " pts)",
                              alert.freq_once_per_bar_close)
@@ -2785,11 +2853,15 @@ string kPfResTip = "Phase 1 passed: " + str.tostring(kM.p1Pass) + " · reached f
 
 int    kDaysN  = math.max(kDaysAll, 1)
 int    kFT     = nz(kFirstTm, kChartTm)
-string kPerStr = na(kFirstTm) ? "—" : str.format_time(kFT, "dd MMM yy") + " → " + str.format_time(time, "dd MMM yy") + " · " + str.tostring(kDaysN) + " days"
+string kPerStr = (na(kFirstTm) ? "—" : str.format_time(kFT, "dd MMM yy") + " → " + str.format_time(time, "dd MMM yy") + " · " + str.tostring(kDaysN) + " days") +
+     (kLtfOn ? " · ❖ " + i_ktrLtf : "")
 string kPerTip = (na(kFirstTm) ? "No ❖ trade yet." :
      "From the first ❖ trade (" + str.format_time(kFT, "dd MMM yyyy HH:mm") + ") to now = " + str.tostring(kDaysN) + " trading days (daily candles)." +
      "\nAverage per day: " + str.tostring(kNetPts / kDaysN, "+#.#;-#.#") + " pts · " + str.tostring(kN * 1.0 / kDaysN, "#.#") + " trades") +
-     "\nChart history starts " + str.format_time(kChartTm, "dd MMM yyyy") + ". TradingView only loads a limited number of candles, so a lower timeframe tests a shorter period."
+     "\nChart history starts " + str.format_time(kChartTm, "dd MMM yyyy") + ". TradingView only loads a limited number of candles, so a lower timeframe tests a shorter period." +
+     (kLtfOn ? "\n❖ confirms on " + i_ktrLtf + " candles (diamond from the chart candles). " + i_ktrLtf + " data starts " +
+     (na(kLtfFrom) ? "—" : str.format_time(kLtfFrom, "dd MMM yyyy HH:mm")) + " — no ❖ before that." :
+     i_ktrLtf != "Off (chart candles)" ? "\n'Entry ❖ confirm on lower TF' = " + i_ktrLtf + ", but the chart is not higher than that → the chart candles are used." : "")
 // average per trading day / week (week = 5 trading days)
 float  kAvgPt  = kNetPts / kDaysN
 float  kUsd001 = i_kPtVal * 100 * 0.01          // $ per pt at 0.01 lot (100 oz per lot)
