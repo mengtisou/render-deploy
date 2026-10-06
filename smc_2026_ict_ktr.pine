@@ -147,7 +147,7 @@ i_pfLab    = input.bool  (true,  "Show PASSED / FUNDED / FAILED / STOPPED labels
 
 // ── AI DATA EXPORT ──
 i_aiOn     = input.bool  (true,  "AI data columns  (Data Window → Export chart data)", group=G0d,
-     tooltip="Adds hidden 'AI …' columns (only in the Data Window, nothing drawn): the ❖ signal, entry / TP / SL, features at the signal candle, and on the candle where each trade ends: bars back to its ❖, result code (1 WIN, −1 LOSS, 0 missed / cancelled, 2 closed early) and pts. Chart menu → Export chart data… saves them to CSV; tools/ktr_ai_dataset.py turns that CSV into one row per ❖ with its label. Uses the spread picked in ⓪b (●).")
+     tooltip="Adds hidden 'AI …' columns (only in the Data Window, nothing drawn): the ❖ signal (±1 taken, ±2 not taken), entry / TP / SL, features at the signal candle (packed: 'AI trend' = fast ±1 + slow ±2, 'AI time code' = session + 10 × weekday + 100 × week of month), and on the candle where each trade ends: bars back to its ❖ and the result (WIN / LOSS / missed / closed early) with its pts. Chart menu → Export chart data… saves them to CSV; tools/ktr_ai_dataset.py unpacks them into one row per ❖ with its label. Packed into few columns because TradingView allows 64 plot counts per script (alerts count too). Uses the spread picked in ⓪b (●).")
 
 // ── INPUTS ──
 i_swing    = input.int   (10,    "Swing Length",                  group=G1, minval=2, maxval=50)
@@ -2268,27 +2268,31 @@ if barstate.islast
 // features at the ❖ candle + its result (WIN / LOSS / MISSED / EARLY).
 // ══════════════════════════════════════════════════════════════════
 bool aiOk = i_aiOn and kTrack
-plot(aiOk ? kDir : na,                         "AI signal",          display=display.data_window)
-plot(aiOk and kDir != 0 ? aiTaken : na,         "AI taken",           display=display.data_window)
-plot(aiOk ? aiEntry : na,                      "AI entry",           display=display.data_window)
-plot(aiOk ? aiTp : na,                         "AI TP",              display=display.data_window)
-plot(aiOk ? aiSl : na,                         "AI SL",              display=display.data_window)
-plot(aiOk ? ktrRsi : na,                       "AI RSI7",            display=display.data_window)
-plot(aiOk ? atr14 : na,                        "AI ATR14",           display=display.data_window)
-plot(aiOk ? ktrRelVol : na,                    "AI rel volume",      display=display.data_window)
-plot(aiOk ? (ktrUp ? 1 : -1) : na,             "AI trend fast",      display=display.data_window)
-plot(aiOk ? (ktrSlowUp ? 1 : -1) : na,         "AI trend slow",      display=display.data_window)
-plot(aiOk ? (close - ktr_op) / ktr_op * 100 : na, "AI dist OP %",    display=display.data_window)
-plot(aiOk ? (close - kMA) / atr14 : na,        "AI dist 30MA ATR",   display=display.data_window)
-plot(aiOk ? kSesNow : na,                      "AI session",         display=display.data_window)
-plot(aiOk ? paneRelVol : na,                   "AI boys vol %",      display=display.data_window)
-plot(aiOk ? panePress : na,                    "AI bullishness",     display=display.data_window)
-plot(aiOk ? aiRes.get(0) : na,                 "AI res1 bars ago",   display=display.data_window)
-plot(aiOk ? aiRes.get(1) : na,                 "AI res1 code",       display=display.data_window)
-plot(aiOk ? aiRes.get(2) : na,                 "AI res1 pts",        display=display.data_window)
-plot(aiOk ? aiRes.get(3) : na,                 "AI res2 bars ago",   display=display.data_window)
-plot(aiOk ? aiRes.get(4) : na,                 "AI res2 code",       display=display.data_window)
-plot(aiOk ? aiRes.get(5) : na,                 "AI res2 pts",        display=display.data_window)
-plot(aiOk ? aiRes.get(6) : na,                 "AI res3 bars ago",   display=display.data_window)
-plot(aiOk ? aiRes.get(7) : na,                 "AI res3 code",       display=display.data_window)
-plot(aiOk ? aiRes.get(8) : na,                 "AI res3 pts",        display=display.data_window)
+// packed into few columns: TradingView allows 64 plot counts per script, and every alertcondition() counts too
+f_aiPack(int b) =>
+    na(aiRes.get(b)) ? na : aiRes.get(b) * 10 + aiRes.get(b + 1) + 2      // bars back × 10 + (code + 2)
+int  aiDw = dayofweek(time, i_sesTz)
+int  aiWd = aiDw >= 2 and aiDw <= 6 ? aiDw - 2 : -1                       // 0 Mon … 4 Fri · -1 Sat / Sun
+int  aiMw = math.min(math.floor((dayofmonth(time, i_sesTz) - 1) / 7), 3)  // 0 = day 1–7 … 3 = day 22+
+// ±1 = ❖ taken (trade / pending order placed) · ±2 = ❖ printed but not taken · 0 = no ❖
+plot(aiOk ? (kDir == 0 ? 0 : kDir * (aiTaken > 0 ? 1 : 2)) : na,          "AI signal",        display=display.data_window)
+plot(aiOk ? aiEntry : na,                                                 "AI entry",         display=display.data_window)
+plot(aiOk ? aiTp : na,                                                    "AI TP",            display=display.data_window)
+plot(aiOk ? aiSl : na,                                                    "AI SL",            display=display.data_window)
+plot(aiOk ? ktrRsi : na,                                                  "AI RSI7",          display=display.data_window)
+plot(aiOk ? atr14 : na,                                                   "AI ATR14",         display=display.data_window)
+plot(aiOk ? ktrRelVol : na,                                               "AI rel volume",    display=display.data_window)
+// fast trend ±1 + slow trend ±2  →  −3 both down · −1 fast up / slow down · +1 fast down / slow up · +3 both up
+plot(aiOk ? (ktrUp ? 1 : -1) + (ktrSlowUp ? 2 : -2) : na,                 "AI trend",         display=display.data_window)
+plot(aiOk ? (close - ktr_op) / ktr_op * 100 : na,                         "AI dist OP %",     display=display.data_window)
+plot(aiOk ? (close - kMA) / atr14 : na,                                   "AI dist 30MA ATR", display=display.data_window)
+plot(aiOk ? panePress : na,                                               "AI bullishness",   display=display.data_window)
+// session (0 Asia · 1 London · 2 New York · 3 other) + 10 × (weekday + 1, 0 = Sat / Sun) + 100 × week of the month (0 … 4)
+plot(aiOk ? kSesNow + 10 * (aiWd + 1) + 100 * aiMw : na,                 "AI time code",     display=display.data_window)
+// trades that ended on this candle (up to 3): bars back to its ❖ × 10 + (code + 2) · code 1 WIN, −1 LOSS, 0 missed / cancelled, 2 closed early
+plot(aiOk ? f_aiPack(0) : na,                                             "AI res1",          display=display.data_window)
+plot(aiOk ? aiRes.get(2) : na,                                            "AI res1 pts",      display=display.data_window)
+plot(aiOk ? f_aiPack(3) : na,                                             "AI res2",          display=display.data_window)
+plot(aiOk ? aiRes.get(5) : na,                                            "AI res2 pts",      display=display.data_window)
+plot(aiOk ? f_aiPack(6) : na,                                             "AI res3",          display=display.data_window)
+plot(aiOk ? aiRes.get(8) : na,                                            "AI res3 pts",      display=display.data_window)
