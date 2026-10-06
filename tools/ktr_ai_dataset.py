@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Turn a TradingView "Export chart data" CSV into an AI training table.
 
-The CSV must come from a chart with the "SMC 2026 ICT + KTR" indicator and its
-"AI data columns" switch on (group ⓪d). Output: one row per KTR ❖ signal with
+The CSV must come from a chart with the "SMC 2026 ICT + KTR" indicator (or the
+"v3 + Export" version) and its "AI data columns" switch on. Output: one row per KTR ❖ signal with
 the features at the signal candle and the label of what happened to that trade.
 
     python3 ktr_ai_dataset.py export.csv                  -> export_dataset.csv
@@ -27,7 +27,11 @@ FEATURES = [
     "AI RSI7", "AI ATR14", "AI rel volume", "AI trend fast", "AI trend slow",
     "AI dist OP %", "AI dist 30MA ATR", "AI session", "AI boys vol %", "AI bullishness",
 ]
+# only in the v3 + Export script — used when present
+OPTIONAL = ["AI news zone", "AI weekday", "AI month week", "AI OP side"]
 SESSIONS = {0: "Asia", 1: "London", 2: "New York", 3: "Other"}
+NEWS = {0: "no news near", 1: "before news", 2: "news window", 3: "after news"}
+WEEKDAYS = {-1: "Sat/Sun", 0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
 CODES = {1: "WIN", -1: "LOSS", 0: "MISSED", 2: "EARLY"}
 
 
@@ -69,6 +73,8 @@ def main(argv):
     c_sig, c_taken = col("AI signal"), col("AI taken")
     c_en, c_tp, c_sl = col("AI entry"), col("AI TP"), col("AI SL")
     c_feat = [col(n) for n in FEATURES]
+    opt = [(n, col(n, False)) for n in OPTIONAL]
+    opt = [(n, c) for n, c in opt if c is not None]
     c_res = [(col(f"AI res{k} bars ago"), col(f"AI res{k} code"), col(f"AI res{k} pts")) for k in (1, 2, 3)]
 
     def cell(row, c):
@@ -88,7 +94,11 @@ def main(argv):
 
     out_head = (["time", "time_utc", "open", "high", "low", "close", "direction", "taken", "entry", "tp", "sl"]
                 + [n[3:].strip().replace(" ", "_").replace("%", "pct") for n in FEATURES]
-                + ["session_name", "result", "pts", "candles_to_result"])
+                + [n[3:].strip().replace(" ", "_") for n, _ in opt]
+                + ["session_name"]
+                + (["news_zone_name"] if any(n == "AI news zone" for n, _ in opt) else [])
+                + (["weekday_name"] if any(n == "AI weekday" for n, _ in opt) else [])
+                + ["result", "pts", "candles_to_result"])
     out, counts = [], {}
     for i, row in enumerate(data):
         sig = num(cell(row, c_sig))
@@ -105,11 +115,19 @@ def main(argv):
         else:
             res, pts, ago = "NOT TAKEN", "", ""
         ses = num(cell(row, c_feat[FEATURES.index("AI session")]))
+        names = [SESSIONS.get(int(ses), "") if ses is not None else ""]
+        for n, c in opt:
+            v = num(cell(row, c))
+            if n == "AI news zone":
+                names.append(NEWS.get(int(v), "") if v is not None else "")
+            elif n == "AI weekday":
+                names.append(WEEKDAYS.get(int(v), "") if v is not None else "")
         out.append([t, t_utc] + [cell(row, c) for c in c_ohlc]
                    + ["BUY" if sig > 0 else "SELL", int(taken),
                       cell(row, c_en), cell(row, c_tp), cell(row, c_sl)]
                    + [cell(row, c) for c in c_feat]
-                   + [SESSIONS.get(int(ses), "") if ses is not None else "", res, pts, ago])
+                   + [cell(row, c) for _, c in opt]
+                   + names + [res, pts, ago])
         counts[res] = counts.get(res, 0) + 1
 
     with open(dst, "w", newline="", encoding="utf-8") as f:
