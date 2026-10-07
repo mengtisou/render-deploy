@@ -1985,7 +1985,7 @@ f_lsMoRow(int r) =>
          "\nTotal: " + str.tostring(total) + " time(s) in " + str.tostring(months) + " month(s) of trading" +
          "\nAverage: " + str.tostring(avgM, "0.00") + " per month  ·  " + str.tostring(avgM * 2, "0.00") + " per 2 months" +
          "\nMost in 1 month: " + str.tostring(mxM) + "  ·  most in 2 months in a row: " + str.tostring(mx2) +
-         (n > 0 ? "\n\nBy month (months with 0 are not listed, latest 12):\n" + lst : "") +
+         (n > 0 ? "\n\nBy month (months with 0 are not listed, latest 12):\n" + lst : "\n") +
          "Spread " + str.tostring(kM.spr, "0.00")
     f_dRow(r, "⛔ " + str.tostring(i_lsC) + " in a row / month", v, CH, total == 0 ? KWIN : color.orange, size.tiny, tip)
 
