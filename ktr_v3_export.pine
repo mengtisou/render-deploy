@@ -16,6 +16,7 @@ indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count
 //                 period, spread (W / L for 0 / 0.18 / 0.22 / 0.30 side
 //                 by side) and an optional daily limit.
 //                 Option: skip the next ❖ after 2 SL in a row (both numbers editable).
+//                 Option: 1 ❖ trade per session, or after an SL wait for the next session.
 // ⓪c PROP FIRM  — runs the ❖ trades on a prop account ($10K default):
 //                 daily / max loss, target, min days, Phase 1 → 2 →
 //                 Funded, and blocks ❖ trades that could break a limit.
@@ -130,6 +131,9 @@ i_sesOOn   = input.bool  (true,  "Other hours (outside the 3 sessions)", group=G
 i_sesTz    = input.string("UTC", "Session times are in",              group=G0b,
      options=["UTC", "GMT+7", "GMT+8", "Europe/London", "America/New_York"],
      tooltip="Defaults in UTC: Asia 00:00–07:00, London 07:00–12:00, New York 12:00–21:00 (= 07:00–14:00, 14:00–19:00, 19:00–04:00 in UTC+7). London and New York open 1 hour later in winter (daylight saving) — change the hours then if you want.")
+i_kSesLim  = input.string("Off", "Per session",                        group=G0b,
+     options=["Off", "1 ❖ trade per session", "After an SL wait for the next session"],
+     tooltip="Sessions = Asia / London / New York / Other hours above (a new day also starts a new session).\n1 ❖ trade per session: only the first ❖ of each session is traded; every later ❖ in that session is skipped, WIN or LOSS — wait for the next session. A pending order that is cancelled before it fills (missed) does not use up the session, so the next ❖ in it can still be taken.\nAfter an SL wait for the next session: ❖ are traded as normal until a trade hits SL; then the rest of that session is skipped (pending orders placed in it are cancelled) and trading starts again with the first ❖ of the next session.\nThe session of a ❖ = the candle it prints on. Trades already open keep running to their own TP / SL. Each spread counts on its own. Skipped ❖ get a grey label and are counted in the session rows' hover.")
 i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
@@ -678,6 +682,7 @@ type KtrTrade
     float  preLo  = na
     int    nth    = 0          // 1st, 2nd, 3rd … ❖ trade of its day (picked spread only)
     int    tid    = -1         // index in the ❖-of-the-day log (picked spread only)
+    int    sesId  = -1         // session (kSesId) the ❖ printed in
 
 // results for one spread
 type KtrStats
@@ -723,6 +728,9 @@ type KtrStats
     int    lRun     = 0        // SL in a row (for 'Skip ❖ after SL in a row')
     int    skLeft   = 0        // ❖ still to skip
     int    skN      = 0        // ❖ skipped by it
+    int    sesTrId  = -1       // session (kSesId) that already has its ❖ trade ('1 ❖ trade per session')
+    int    sesSlId  = -1       // session (kSesId) that had an SL ('After an SL wait for the next session')
+    int    sesLimSk = 0        // ❖ skipped / pending cancelled by the per-session rule
 
 var array<KtrTrade> kOpen = array.new<KtrTrade>()
 var array<KtrStats> kSt   = array.from(KtrStats.new(0.0), KtrStats.new(0.18), KtrStats.new(0.22), KtrStats.new(0.30))
@@ -773,6 +781,13 @@ var array<int>    kSesWB  = array.new_int(4, 0)     // BUY wins
 var array<int>    kSesLB  = array.new_int(4, 0)     // BUY losses
 var array<float>  kSesPts = array.new_float(4, 0.0)
 var array<int>    kSesSkip = array.new_int(4, 0)    // ❖ skipped because the session is OFF (picked spread)
+var array<int>    kSesLimSk = array.new_int(4, 0)   // ❖ skipped / cancelled by the per-session rule (picked spread)
+// per-session rule: one id per session (Asia / London / New York / Other), a new day also starts a new one
+bool   kSes1   = i_kSesLim == "1 ❖ trade per session"
+bool   kSesSlW = i_kSesLim == "After an SL wait for the next session"
+var int kSesId = 0
+if kSesNow != nz(kSesNow[1], kSesNow) or ktrNewDay
+    kSesId += 1
 f_sesOk(int i) =>
     i == 0 ? i_sesAOn : i == 1 ? i_sesLOn : i == 2 ? i_sesNOn : i_sesOOn
 bool   kSesOkNow = f_sesOk(kSesNow)
@@ -1078,6 +1093,9 @@ f_kCloseNow(KtrTrade t, KtrStats st, float base, string why) =>
 
 // pending order cancelled before it filled (not a win, not a loss) — drawn for the picked spread only
 f_kCancel(KtrTrade t, string why) =>
+    KtrStats cs = kSt.get(t.sc)
+    if cs.sesTrId == t.sesId
+        cs.sesTrId := -1             // never filled → the session can still take a ❖ ('1 ❖ trade per session')
     if t.sc == kSel
         f_nthRec(t, 0, 0)
         f_aiRec(bar_index - t.sigBar, 0, 0)
@@ -1205,6 +1223,8 @@ if kTrack and kOpen.size() > 0
                 st.losses += kWin ? 0 : 1
                 // SL in a row → skip the next ❖ (option)
                 st.lRun := kWin ? 0 : st.lRun + 1
+                if not kWin
+                    st.sesSlId := kSesId
                 if i_kSkOn and st.lRun >= i_kSkN
                     st.skLeft := i_kSkM
                     st.lRun   := 0
@@ -1354,6 +1374,19 @@ if kTrack and i_kDayOn and barstate.isconfirmed and kOpen.size() > 0
             f_kCancel(kt, "day limit")
             kOpen.remove(i)
 
+// per-session rule 'After an SL wait for the next session' → cancel orders placed in this session that are still pending
+if kTrack and kSesSlW and barstate.isconfirmed and kOpen.size() > 0
+    for i = kOpen.size() - 1 to 0
+        KtrTrade kt = kOpen.get(i)
+        KtrStats st = kSt.get(kt.sc)
+        if st.sesSlId == kSesId and kt.sesId == kSesId and not kt.filled
+            st.sesLimSk += 1
+            st.nOpen    -= 1
+            if kt.sc == kSel
+                kSesLimSk.set(kSesNow, kSesLimSk.get(kSesNow) + 1)
+            f_kCancel(kt, "SL this session")
+            kOpen.remove(i)
+
 // 2) a confirmed ❖ opens a trade, or places the pending order — once per spread
 int kDir = ktrEntryBuy and not ktrEntrySell ? 1 : ktrEntrySell and not ktrEntryBuy ? -1 : 0
 if kTrack and barstate.isconfirmed and kDir != 0
@@ -1364,8 +1397,10 @@ if kTrack and barstate.isconfirmed and kDir != 0
     for sc = 0 to kSt.size() - 1
         if sc == kSel or i_kSprCmp
             KtrStats st = kSt.get(sc)
+            // per-session rule: this session already had its ❖ trade / an SL → skip (checked before the hedging close)
+            bool kSesLimBlk = (kSes1 and st.sesTrId == kSesId) or (kSesSlW and st.sesSlId == kSesId)
             // hedging rule: close the opposite trades first (and cancel opposite pending orders)
-            if kRevOn and kSesOkNow and not kNwPlaceBlk and kOpen.size() > 0
+            if kRevOn and kSesOkNow and not kNwPlaceBlk and not kSesLimBlk and kOpen.size() > 0
                 for i = kOpen.size() - 1 to 0
                     KtrTrade t = kOpen.get(i)
                     if t.sc == sc and t.dir == -kDir and t.acct == st.acctId
@@ -1387,6 +1422,17 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 st.sesSkip += 1
                 if sc == kSel
                     kSesSkip.set(kSesNow, kSesSkip.get(kSesNow) + 1)
+            else if kSesLimBlk
+                st.sesLimSk += 1
+                if sc == kSel
+                    kSesLimSk.set(kSesNow, kSesLimSk.get(kSesNow) + 1)
+                    if i_kWLlab
+                        label.new(bar_index, kDir == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, kSes1 ? "1 / session" : "SL → next session",
+                             style=kDir == 1 ? label.style_label_up : label.style_label_down,
+                             color=color.new(color.gray, 30), textcolor=color.white, size=size.tiny,
+                             tooltip="❖ " + (kDir == 1 ? "BUY" : "SELL") + " skipped (" + kSesNm.get(kSesNow) + "): " +
+                             (kSes1 ? "this session already had its ❖ trade" : "a trade hit SL in this session") + " — wait for the next session",
+                             force_overlay=true)
             else if kNwPlaceBlk
                 st.nwSkip += 1
             else if kOpp
@@ -1421,7 +1467,8 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 float kSlPx = kEn - kDir * kSlDist
                 KtrTrade kNew = KtrTrade.new(dir=kDir, entry=kEn, tp=kTpPx, sl=kSlPx, bar=bar_index, tm=time,
                      filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId, ses=kSesNow,
-                     wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow, preHi=kPreHi, preLo=kPreLo)
+                     wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow, preHi=kPreHi, preLo=kPreLo, sesId=kSesId)
+                st.sesTrId := kSesId
                 if sc == kSel
                     kNthDay  += 1
                     kNew.nth := kNthDay
@@ -1522,7 +1569,8 @@ string kWLStr  = str.tostring(kWins) + "W " + str.tostring(kLosses) + "L" + f_wr
      (kPendN    > 0 ? " · " + str.tostring(kPendN)    + " pending" : "") +
      (kM.missed > 0 ? " · " + str.tostring(kM.missed) + " missed"  : "") +
      (kM.early  > 0 ? " · " + str.tostring(kM.early)  + " closed early" : "") +
-     (i_kSkOn and kM.skN > 0 ? " · " + str.tostring(kM.skN) + " skipped" : "")
+     (i_kSkOn and kM.skN > 0 ? " · " + str.tostring(kM.skN) + " skipped" : "") +
+     ((kSes1 or kSesSlW) and kM.sesLimSk > 0 ? " · " + str.tostring(kM.sesLimSk) + " session-skipped" : "")
 color  kWLCol  = kN == 0 ? CL : kNetPts >= 0 ? KWIN : KLOSS
 string kNetStr = str.tostring(kNetPts, "+#.##;-#.##") + " pts  (" + str.tostring(kNetR, "+#.#;-#.#") + "R)"
 string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
@@ -1534,6 +1582,7 @@ string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
      "\nSkipped / cancelled because the session is OFF: " + str.tostring(kM.sesSkip) +
      "\nSkipped / cancelled by the news filter: " + str.tostring(kM.nwSkip) +
      (i_kSkOn ? "\nSkipped after " + str.tostring(i_kSkN) + " SL in a row: " + str.tostring(kM.skN) + " ❖" : "") +
+     (kSes1 or kSesSlW ? "\nSkipped / cancelled by the per-session rule (" + i_kSesLim + "): " + str.tostring(kM.sesLimSk) : "") +
      (i_pfOn ? "\nHedging rule: " + i_pfHedge + " · skipped / cancelled: " + str.tostring(kM.hedgeSkip) +
      " · closed early: " + str.tostring(kM.early) + " (" + str.tostring(kM.earlyPts, "+#.#;-#.#") + " pts)" : "") +
      "\nBreak-even win rate: " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
@@ -1583,6 +1632,7 @@ f_sesRow(int r, int i, string hrs) =>
     color  vc  = not on ? color.gray : w + l == 0 ? CL : pt >= 0 ? KWIN : KLOSS
     string tip = kSesNm.get(i) + " " + hrs + (i < 3 ? " (" + i_sesTz + ")" : "") + (on ? " · ON" : " · OFF — no ❖ trades here") +
          (sk > 0 ? "\n❖ skipped / pending cancelled here: " + str.tostring(sk) : "") +
+         (kSesLimSk.get(i) > 0 ? "\n❖ skipped / cancelled by the per-session rule here: " + str.tostring(kSesLimSk.get(i)) : "") +
          "\nBUY ❖:  " + str.tostring(wb) + "W " + str.tostring(lb) + "L" + f_wr(wb, lb) +
          "\nSELL ❖: " + str.tostring(w - wb) + "W " + str.tostring(l - lb) + "L" + f_wr(w - wb, l - lb) +
          "\nSpread " + str.tostring(kM.spr, "0.00") + " · counted where the trade went live"
@@ -1944,14 +1994,17 @@ string kDayTip = (i_kDayOn ? "Daily limit ON: target +" + str.tostring(i_kDayTp,
 string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts · spread " + str.tostring(kM.spr, "0.00")
 string kTpSlTip = "TP " + str.tostring(kTpDist, "#.##") + " · SL " + str.tostring(kSlDist, "#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
 string kEntStr = (kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " / " + kRunTxt + " pts") : "At ❖ close") +
-     (i_kSkOn ? " · skip " + str.tostring(i_kSkM) + " after " + str.tostring(i_kSkN) + " SL" : "")
+     (i_kSkOn ? " · skip " + str.tostring(i_kSkM) + " after " + str.tostring(i_kSkN) + " SL" : "") +
+     (kSes1 ? " · 1 per session" : kSesSlW ? " · SL → next session" : "")
 string kEntTip = kPendOn ? (kLimOn ? "BUY at ❖ close − " + kOffTxt + " pts, SELL at ❖ close + " + kOffTxt + " pts" :
      "BUY at ❖ close + " + kOffTxt + " pts, SELL at ❖ close − " + kOffTxt + " pts") +
      " (= " + str.tostring(kOffDist, "#.##") + " in price).\nCounted only once price reaches it; missed after " + str.tostring(i_kExp) + " candles" +
      (kRunTxt == "" ? "." : " or when price runs " + kRunTxt + " pts away from it first.") :
      "Trade starts at the ❖ candle close (BUY on the ask = close + spread)." +
      (i_kSkOn ? "\nAfter " + str.tostring(i_kSkN) + " SL in a row the next " + str.tostring(i_kSkM) + " ❖ " + (i_kSkM == 1 ? "is" : "are") + " skipped" +
-     (i_kSkDay ? " (count starts again each day)" : "") + " · skipped so far: " + str.tostring(kM.skN) : "")
+     (i_kSkDay ? " (count starts again each day)" : "") + " · skipped so far: " + str.tostring(kM.skN) : "") +
+     (kSes1 ? "\nOnly the first ❖ of each session is traded" : kSesSlW ? "\nAfter an SL the rest of that session is skipped" : "") +
+     (kSes1 or kSesSlW ? " · skipped / cancelled so far: " + str.tostring(kM.sesLimSk) : "")
 // ❖ of the day rows (⓪i)
 f_resTx(int code, float pts, bool full) =>
     code == 1 ? (full ? "WIN " : "W ") + str.tostring(pts, "+#;-#") :
