@@ -36,6 +36,8 @@ indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count
 // ⓪f MONTH WEEKS — Win / Loss + win rate for Week 1 (day 1–7), Week 2 (8–14),
 //                 Week 3 (15–21), Week 4 (22–end), with the average per month.
 // ⓪g DASHBOARD ROWS — every row added in ⓪d / ⓪e / ⓪f has its own show / hide box.
+// ⓪i ❖ OF THE DAY — Win / Loss + avg for the 1st, 2nd, 3rd and 4th+ ❖ trade of each
+//                 day, "only the first N ❖ a day" totals, and a day log with the dates.
 // ⓪h AI EXPORT  — hidden 'AI …' Data Window columns for every ❖ trade (signal,
 //                 entry / TP / SL, features, WIN / LOSS label). Chart menu →
 //                 Export chart data → tools/ktr_ai_dataset.py → AI training table.
@@ -208,6 +210,10 @@ i_lsMo     = input.bool  (true,  "Loss limit in a row: per month / per 2 months 
      tooltip="Shows how many times a streak of 'Days to count' days (⛔ in a row) happened, with the average per month and per 2 months, and a month-by-month list in the hover.")
 i_lsC      = input.int   (2,     "Loss limit in a row: days to count per month", group=G0e, minval=2, maxval=15,
      tooltip="2 = every time the daily loss limit was reached 2 days in a row (a streak of 3 days counts once, in the month it reached 2 days).")
+i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (Win / Loss + avg)", group=G0e,
+     tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
+i_nthLog   = input.bool  (true,  "❖ of the day: day log row  (date + result of each ❖ that day)", group=G0e,
+     tooltip="Latest day with ❖ trades in the row; hover for the last 30 days, newest first: date, 1st / 2nd / 3rd … result and the day's pts. W = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running.")
 
 // ── ⓪h AI DATA EXPORT ──
 i_aiOn     = input.bool  (true,  "AI data columns  (Data Window → Export chart data)", group=G0h,
@@ -663,6 +669,8 @@ type KtrTrade
     int    mw     = 0          // week of the month it went live: 0 = day 1–7 … 3 = day 22+ · 4 = day 29+ (if split)
     float  preHi  = na         // ❖ on a lower TF: high / low of the ❖ candle's part after the ❖ (checked first on the next candle)
     float  preLo  = na
+    int    nth    = 0          // 1st, 2nd, 3rd … ❖ trade of its day (picked spread only)
+    int    tid    = -1         // index in the ❖-of-the-day log (picked spread only)
 
 // results for one spread
 type KtrStats
@@ -773,6 +781,35 @@ f_aiRec(int ago, float code, float pts) =>
         aiRes.set(slot + 2, pts)
     slot
 
+// ❖ of the day (⓪i): the 1st / 2nd / 3rd / 4th+ ❖ trade of each day (picked spread) + a log per trade
+var int           kNthDay = 0                        // ❖ trades placed so far today
+var array<int>    kNthW   = array.new_int(4, 0)      // [1st, 2nd, 3rd, 4th+]
+var array<int>    kNthL   = array.new_int(4, 0)
+var array<int>    kNthM   = array.new_int(4, 0)      // missed: pending order cancelled before it filled
+var array<int>    kNthE   = array.new_int(4, 0)      // closed early
+var array<float>  kNthPts = array.new_float(4, 0.0)
+var array<int>    kTrDay  = array.new_int()          // per trade: its trading day (00:00 UTC of that day)
+var array<int>    kTrNth  = array.new_int()          // per trade: 1st, 2nd … of that day
+var array<int>    kTrCode = array.new_int()          // per trade: 1 WIN · -1 LOSS · 0 missed · 2 closed early · 9 open
+var array<float>  kTrPts  = array.new_float()
+f_nthRec(KtrTrade t, int code, float pts) =>
+    if t.tid >= 0
+        int sl = math.min(t.nth, 4) - 1
+        if code == 1
+            kNthW.set(sl, kNthW.get(sl) + 1)
+        else if code == -1
+            kNthL.set(sl, kNthL.get(sl) + 1)
+        else if code == 0
+            kNthM.set(sl, kNthM.get(sl) + 1)
+        else
+            kNthE.set(sl, kNthE.get(sl) + 1)
+        kNthPts.set(sl, kNthPts.get(sl) + pts)
+        kTrCode.set(t.tid, code)
+        kTrPts.set(t.tid, pts)
+    t
+f_nthTxt(int nth) =>
+    nth == 1 ? "1st" : nth == 2 ? "2nd" : nth == 3 ? "3rd" : str.tostring(nth) + "th"
+
 // Mon – Fri (ⓞe): weekday of the candle in the "Session times" time zone · Sat / Sun = -1
 f_wd(int t) =>
     int dw = dayofweek(t, i_sesTz)
@@ -828,6 +865,7 @@ var int kFirstTm = na           // first ❖ trade / order
 var int kChartTm = time         // first candle loaded on the chart
 if ktrNewDay
     kDayId += 1
+    kNthDay := 0
     for st in kSt
         st.dayBal  := st.bal
         st.dayPts  := 0.0
@@ -987,6 +1025,7 @@ f_kCloseNow(KtrTrade t, KtrStats st, float base, string why) =>
     st.early    += 1
     st.earlyPts += pts
     if t.sc == kSel
+        f_nthRec(t, 2, pts)
         kSesPts.set(t.ses, kSesPts.get(t.ses) + pts)
         if t.wd >= 0
             kWdPts.set(t.wd, kWdPts.get(t.wd) + pts)
@@ -1027,6 +1066,7 @@ f_kCloseNow(KtrTrade t, KtrStats st, float base, string why) =>
 // pending order cancelled before it filled (not a win, not a loss) — drawn for the picked spread only
 f_kCancel(KtrTrade t, string why) =>
     if t.sc == kSel
+        f_nthRec(t, 0, 0)
         f_aiRec(bar_index - t.sigBar, 0, 0)
         if not na(t.lnPend)
             line.set_x2(t.lnPend, bar_index)
@@ -1168,6 +1208,7 @@ if kTrack and kOpen.size() > 0
                 st.lastCol := kWin ? KWIN : KLOSS
                 if kMain
                     f_aiRec(bar_index - kt.sigBar, kWin ? 1 : -1, kGain)
+                    f_nthRec(kt, kWin ? 1 : -1, kGain)
                     kHitWin  := kHitWin or kWin
                     kHitLoss := kHitLoss or not kWin
                     kSesW.set(kt.ses,   kSesW.get(kt.ses)   + (kWin ? 1 : 0))
@@ -1214,7 +1255,8 @@ if kTrack and kOpen.size() > 0
                              "\nEntry " + str.tostring(kt.entry, format.mintick) +
                              " · TP " + str.tostring(kt.tp, format.mintick) +
                              " · SL " + str.tostring(kt.sl, format.mintick) +
-                             "\n" + kRes + " pts after " + str.tostring(bar_index - kt.bar) + " candles · " + kSesNm.get(kt.ses) + " session",
+                             "\n" + kRes + " pts after " + str.tostring(bar_index - kt.bar) + " candles · " + kSesNm.get(kt.ses) + " session" +
+                             (kt.nth > 0 ? " · " + f_nthTxt(kt.nth) + " ❖ of the day" : ""),
                              force_overlay=true)
                     if i_alKtr
                         alert("KTR ❖ " + kt.name + " " + (kWin ? "WIN — TP hit" : "LOSS — SL hit") + " — " + syminfo.ticker +
@@ -1349,6 +1391,13 @@ if kTrack and barstate.isconfirmed and kDir != 0
                      filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId, ses=kSesNow,
                      wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow, preHi=kPreHi, preLo=kPreLo)
                 if sc == kSel
+                    kNthDay  += 1
+                    kNew.nth := kNthDay
+                    kNew.tid := kTrCode.size()
+                    kTrDay.push(time_tradingday)
+                    kTrNth.push(kNthDay)
+                    kTrCode.push(9)
+                    kTrPts.push(0.0)
                     aiTaken := 1
                     aiEntry := kEn
                     aiTp    := kTpPx
@@ -1866,6 +1915,77 @@ string kEntTip = kPendOn ? (kLimOn ? "BUY at ❖ close − " + kOffTxt + " pts, 
      " (= " + str.tostring(kOffDist, "#.##") + " in price).\nCounted only once price reaches it; missed after " + str.tostring(i_kExp) + " candles" +
      (kRunTxt == "" ? "." : " or when price runs " + kRunTxt + " pts away from it first.") :
      "Trade starts at the ❖ candle close (BUY on the ask = close + spread)."
+// ❖ of the day rows (⓪i)
+f_resTx(int code, float pts, bool full) =>
+    code == 1 ? (full ? "WIN " : "W ") + str.tostring(pts, "+#;-#") :
+     code == -1 ? (full ? "LOSS " : "L ") + str.tostring(pts, "+#;-#") :
+     code == 0 ? (full ? "missed (not filled)" : "M") :
+     code == 2 ? (full ? "closed early " : "C ") + str.tostring(pts, "+#;-#") : "open"
+f_nthRow(int r, int sl) =>
+    int    w   = kNthW.get(sl)
+    int    l   = kNthL.get(sl)
+    int    e   = kNthE.get(sl)
+    int    m   = kNthM.get(sl)
+    float  pt  = kNthPts.get(sl)
+    int    n   = w + l + e
+    string nm  = sl == 3 ? "4th+" : f_nthTxt(sl + 1)
+    // only the first N ❖ each day = this slot and all before it
+    int    cw  = 0
+    int    cl  = 0
+    int    ce  = 0
+    float  cp  = 0.0
+    for k = 0 to sl
+        cw += kNthW.get(k)
+        cl += kNthL.get(k)
+        ce += kNthE.get(k)
+        cp += kNthPts.get(k)
+    string ls  = ""
+    int    cnt = 0
+    if kTrCode.size() > 0
+        for i = kTrCode.size() - 1 to 0
+            if cnt >= 25
+                break
+            int nth = kTrNth.get(i)
+            if sl == 3 ? nth >= 4 : nth == sl + 1
+                ls  += "\n" + str.format_time(kTrDay.get(i), "EEE dd MMM yy", "UTC") + "   " + (sl == 3 ? f_nthTxt(nth) + " " : "") + f_resTx(kTrCode.get(i), kTrPts.get(i), true)
+                cnt += 1
+    string v   = str.tostring(w) + "W " + str.tostring(l) + "L" + f_wr(w, l) + " · " + str.tostring(pt, "+#;-#") + " pts · avg " +
+         (n > 0 ? str.tostring(pt / n, "+#;-#") : "—") + (m > 0 ? " · " + str.tostring(m) + " missed" : "")
+    color  vc  = n == 0 ? CL : pt >= 0 ? KWIN : KLOSS
+    string tip = "The " + nm + " ❖ trade of each day · spread " + str.tostring(kM.spr, "0.00") +
+         "\n" + str.tostring(w) + " wins · " + str.tostring(l) + " losses" + f_wr(w, l) + (e > 0 ? " · " + str.tostring(e) + " closed early" : "") +
+         " · " + str.tostring(m) + " missed (pending not filled, not counted)" +
+         "\nAvg per trade: " + (n > 0 ? str.tostring(pt / n, "+#.#;-#.#") : "—") + " pts · per test day: " + str.tostring(pt / kDaysN, "+#.#;-#.#") + " pts (" + str.tostring(kDaysN) + " days)" +
+         (sl > 0 and sl < 3 ? "\nOnly the first " + str.tostring(sl + 1) + " ❖ each day: " + str.tostring(cw) + "W " + str.tostring(cl) + "L" + f_wr(cw, cl) +
+         " · " + str.tostring(cp, "+#;-#") + " pts · " + str.tostring(cp / kDaysN, "+#.#;-#.#") + " pts / day" : "") +
+         (sl == 0 ? "\nOnly the 1st ❖ each day: " + str.tostring(cp / kDaysN, "+#.#;-#.#") + " pts / day" : "") +
+         (cnt > 0 ? "\n\nLatest (newest first):" + ls : "\nNo trade yet.")
+    f_dRow(r, "❖ " + nm + " of day", v, CR, vc, size.tiny, tip)
+f_dayLog(int r) =>
+    string v   = "—"
+    string tip = ""
+    int    nd  = 0
+    int    i   = kTrCode.size() - 1
+    while i >= 0 and nd < 30
+        int    d    = kTrDay.get(i)
+        string full = ""
+        string shrt = ""
+        float  dp   = 0.0
+        while i >= 0
+            if kTrDay.get(i) != d
+                break
+            full := f_nthTxt(kTrNth.get(i)) + " " + f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (full == "" ? "" : " · " + full)
+            shrt := f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (shrt == "" ? "" : " · " + shrt)
+            dp   += kTrPts.get(i)
+            i    -= 1
+        string dt = str.format_time(d, "EEE dd MMM", "UTC")
+        if nd == 0
+            v := dt + ": " + shrt + " = " + str.tostring(dp, "+#;-#") + " pts"
+        tip := tip + "\n" + dt + "   " + full + "   = " + str.tostring(dp, "+#;-#") + " pts"
+        nd  += 1
+    f_dRow(r, "📅 Day log", v, CR, CL, size.tiny, "❖ trades per day, newest first (last " + str.tostring(nd) + " days with a ❖ trade) · spread " +
+         str.tostring(kM.spr, "0.00") + "\nW = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running" + tip)
+
 if barstate.islast and i_showDash
     int r = 0
     r := f_dRow(r, "KTR", syminfo.ticker, CH, color.white, size.small, "")
@@ -1884,6 +2004,12 @@ if barstate.islast and i_showDash
             r := f_sesRow(r, 2, f_sesHrs(i_sesNy))
             if kSesW.get(3) + kSesL.get(3) + kSesSkip.get(3) > 0 or not i_sesOOn
                 r := f_sesRow(r, 3, "outside the 3 sessions")
+        if i_nthOn
+            for sl = 0 to 3
+                if sl < 3 or kNthW.get(3) + kNthL.get(3) + kNthM.get(3) + kNthE.get(3) > 0
+                    r := f_nthRow(r, sl)
+        if i_nthLog
+            r := f_dayLog(r)
         if i_wdOn
             for i = 0 to 4
                 r := f_wdRow(r, i)
@@ -1972,6 +2098,7 @@ plot(aiOk ? (close - kMA) / atr14 : na,                                   "AI di
 plot(aiOk ? panePress : na,                                               "AI bullishness",   display=display.data_window)
 plot(aiOk ? nwBar : na,                                                   "AI news zone",     display=display.data_window)
 // session (0 Asia · 1 London · 2 New York · 3 other) + 10 × (weekday + 1, 0 = Sat / Sun) + 100 × week of the month (0 … 4)
+plot(aiOk and aiTaken > 0 ? kNthDay : na,                                  "AI nth of day",    display=display.data_window)
 plot(aiOk ? kSesNow + 10 * (kWdNow + 1) + 100 * kMwNow : na,                 "AI time code",     display=display.data_window)
 // trades that ended on this candle (up to 3): bars back to its ❖ × 10 + (code + 2) · code 1 WIN, −1 LOSS, 0 missed / cancelled, 2 closed early
 plot(aiOk ? f_aiPack(0) : na,                                             "AI res1",          display=display.data_window)
