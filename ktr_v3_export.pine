@@ -42,6 +42,7 @@ indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count
 //                 0.02 → 0.04, capped) vs a fixed lot, with drawdown and biggest lot.
 // ⓪i ❖ OF THE DAY — Win / Loss + avg for the 1st, 2nd, 3rd and 4th+ ❖ trade of each
 //                 day, "only the first N ❖ a day" totals, and a day log with the dates.
+// 📆 PER MONTH   — W / L, pts, R and $ for every month (+ lot test $, 🎯 / ⛔ days).
 // ⓪h AI EXPORT  — hidden 'AI …' Data Window columns for every ❖ trade (signal,
 //                 entry / TP / SL, features, WIN / LOSS label). Chart menu →
 //                 Export chart data → tools/ktr_ai_dataset.py → AI training table.
@@ -226,6 +227,8 @@ i_lsC      = input.int   (2,     "Loss limit in a row: days to count per month",
      tooltip="2 = every time the daily loss limit was reached 2 days in a row (a streak of 3 days counts once, in the month it reached 2 days).")
 i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (Win / Loss + avg)", group=G0e,
      tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
+i_moOn     = input.bool  (true,  "Per month row  (W / L, pts, $ for every month)", group=G0e,
+     tooltip="Shows the average per month (≈ 21 trading days) and, on hover, every month: W / L, win rate, pts, R, $ at the start lot of ⓪j (0.01 when the lot test is off), the lot test $ (when on), 🎯 target / ⛔ loss-limit days and trading days. A trade counts in the month it closed. Uses the spread picked in ⓪b (●).")
 i_nthLog   = input.bool  (true,  "❖ of the day: day log row  (date + result of each ❖ that day)", group=G0e,
      tooltip="Latest day with ❖ trades in the row; hover for the last 30 days, newest first: date, 1st / 2nd / 3rd … result and the day's pts. W = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running.")
 
@@ -1037,6 +1040,48 @@ f_hitAppend(array<string> arr, int idx, string txt) =>
 f_moIx(int t) =>
     year(t, i_sesTz) * 12 + month(t, i_sesTz) - 1
 
+// 📆 per month (picked spread): a trade counts in the month it closed · days = daily candles since the first ❖ trade
+var array<int>    kMoKey = array.new_int()          // month number (f_moIx)
+var array<int>    kMoW   = array.new_int()
+var array<int>    kMoL   = array.new_int()
+var array<int>    kMoE   = array.new_int()          // closed early
+var array<float>  kMoPts = array.new_float()
+var array<float>  kMoLot = array.new_float()        // lot test (⓪j) $ with the growing lot
+var array<int>    kMoDay = array.new_int()          // trading days
+var array<int>    kMoTg  = array.new_int()          // 🎯 target days
+var array<int>    kMoLs  = array.new_int()          // ⛔ loss-limit days
+f_moSlot() =>
+    int k = f_moIx(time)
+    if kMoKey.size() == 0 or kMoKey.last() != k
+        kMoKey.push(k)
+        kMoW.push(0)
+        kMoL.push(0)
+        kMoE.push(0)
+        kMoPts.push(0.0)
+        kMoLot.push(0.0)
+        kMoDay.push(0)
+        kMoTg.push(0)
+        kMoLs.push(0)
+    kMoKey.size() - 1
+f_moRec(KtrTrade t, int code, float pts) =>
+    int i = f_moSlot()
+    if code == 1
+        kMoW.set(i, kMoW.get(i) + 1)
+    else if code == -1
+        kMoL.set(i, kMoL.get(i) + 1)
+    else
+        kMoE.set(i, kMoE.get(i) + 1)
+    kMoPts.set(i, kMoPts.get(i) + pts)
+    if i_lotOn and not na(t.lot)
+        kMoLot.set(i, kMoLot.get(i) + pts * kUsdLot1 * t.lot)
+    i
+f_moDay() =>
+    int i = f_moSlot()
+    kMoDay.set(i, kMoDay.get(i) + 1)
+    i
+if ktrNewDay and not na(kFirstTm)
+    f_moDay()
+
 // remember on which week of the month / weekday the daily limit was reached
 f_hitRec(float pts, int w, int l, bool tgt) =>
     string hitTxt = (tgt ? "🎯 " : "⛔ ") + str.format_time(time, "EEE dd MMM yy", i_sesTz) + " · " + str.tostring(pts, "+0;-0") +
@@ -1086,6 +1131,11 @@ f_kDayCheck(KtrStats st, bool isMain) =>
         st.dayWhy   := kTgt ? "🎯 target hit" : "⛔ loss limit"
         if isMain
             f_hitRec(st.dayPts, st.dayW, st.dayL, kTgt)
+            int mi = f_moSlot()
+            if kTgt
+                kMoTg.set(mi, kMoTg.get(mi) + 1)
+            else
+                kMoLs.set(mi, kMoLs.get(mi) + 1)
         if isMain and i_kDayLab
             label.new(bar_index, kTgt ? high + atr14 * 1.5 : low - atr14 * 1.5,
                  (kTgt ? "🎯 DAY TARGET " : "⛔ DAY STOP ") + str.tostring(st.dayPts, "+#.##;-#.##") + " pts",
@@ -1110,6 +1160,7 @@ f_kCloseNow(KtrTrade t, KtrStats st, float base, string why) =>
     if t.sc == kSel
         f_nthRec(t, 2, pts)
         f_lotRec(t, pts)
+        f_moRec(t, 2, pts)
         kSesPts.set(t.ses, kSesPts.get(t.ses) + pts)
         if t.wd >= 0
             kWdPts.set(t.wd, kWdPts.get(t.wd) + pts)
@@ -1304,6 +1355,7 @@ if kTrack and kOpen.size() > 0
                     f_aiRec(bar_index - kt.sigBar, kWin ? 1 : -1, kGain)
                     f_nthRec(kt, kWin ? 1 : -1, kGain)
                     f_lotRec(kt, kGain)
+                    f_moRec(kt, kWin ? 1 : -1, kGain)
                     kHitWin  := kHitWin or kWin
                     kHitLoss := kHitLoss or not kWin
                     kSesW.set(kt.ses,   kSesW.get(kt.ses)   + (kWin ? 1 : 0))
@@ -1514,6 +1566,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 if na(kFirstTm)
                     kFirstTm := time
                     kDaysAll := 1
+                    f_moDay()
                     if kWdNow >= 0
                         kWdCnt.set(kWdNow, kWdCnt.get(kWdNow) + 1)
                     kMwCnt.set(kMwNow, kMwCnt.get(kMwNow) + 1)
@@ -2064,6 +2117,53 @@ string kEntTip = kPendOn ? (kLimOn ? "BUY at ❖ close − " + kOffTxt + " pts, 
      (i_kSkDay ? " (count starts again each day)" : "") + " · skipped so far: " + str.tostring(kM.skN) : "") +
      (kSes1 ? "\nOnly the first ❖ of each session is traded" : kSesSlW ? "\nAfter an SL the rest of that session is skipped" : "") +
      (kSes1 or kSesSlW ? " · skipped / cancelled so far: " + str.tostring(kM.sesLimSk) : "")
+// 📆 per month row
+var array<string> kMoNm = array.from("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+float  kRefLot = i_lotOn ? i_lotBase : 0.01
+f_moRow(int r) =>
+    int    nm   = kMoKey.size()
+    float  tot  = 0.0
+    int    pos  = 0
+    float  best = na
+    float  wrst = na
+    string bN   = ""
+    string wN   = ""
+    string ls   = ""
+    if nm > 0
+        for i = nm - 1 to 0
+            int    k  = kMoKey.get(i)
+            float  pt = kMoPts.get(i)
+            int    w  = kMoW.get(i)
+            int    l  = kMoL.get(i)
+            string mn = kMoNm.get(k % 12) + " " + str.tostring(math.floor(k / 12) % 100, "00")
+            tot += pt
+            pos += pt > 0 ? 1 : 0
+            if na(best) or pt > best
+                best := pt
+                bN   := mn
+            if na(wrst) or pt < wrst
+                wrst := pt
+                wN   := mn
+            if nm - i <= 24
+                ls += "\n" + mn + "   " + str.tostring(w) + "W " + str.tostring(l) + "L" + f_wr(w, l) +
+                     " · " + str.tostring(pt, "+#;-#") + " pts (" + str.tostring(pt / i_kSlPts, "+#.#;-#.#") + "R)" +
+                     " · $" + str.tostring(pt * kUsdLot1 * kRefLot, "+#,##0.##;-#,##0.##") +
+                     (i_lotOn ? " · lot test $" + str.tostring(kMoLot.get(i), "+#,##0.##;-#,##0.##") : "") +
+                     (kMoTg.get(i) + kMoLs.get(i) > 0 ? " · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i)) : "") +
+                     (kMoE.get(i) > 0 ? " · " + str.tostring(kMoE.get(i)) + " closed early" : "") +
+                     " · " + str.tostring(kMoDay.get(i)) + " days"
+    float  perMo = kNetPts / kDaysN * 21                // ≈ 21 trading days a month
+    string v     = nm == 0 ? "—" : "≈ " + str.tostring(perMo, "+#;-#") + " pts · $" + str.tostring(perMo * kUsdLot1 * kRefLot, "+#,##0;-#,##0") +
+         " /month (" + str.tostring(kRefLot, "0.00") + ") · " + str.tostring(pos) + " of " + str.tostring(nm) + " months +"
+    string tip   = "Per month · spread " + str.tostring(kM.spr, "0.00") + " · $ at " + str.tostring(kRefLot, "0.00") + " lot (×10 for 0.10 lot)" +
+         "\nAverage month (21 trading days): " + str.tostring(perMo, "+#;-#") + " pts (" + str.tostring(perMo / i_kSlPts, "+#.#;-#.#") + "R) · $" +
+         str.tostring(perMo * kUsdLot1 * kRefLot, "+#,##0.##;-#,##0.##") + (i_lotOn ? " · lot test $" + str.tostring(kLotSt.get(0) / kDaysN * 21, "+#,##0.##;-#,##0.##") : "") +
+         (nm > 0 ? "\nMonths in profit: " + str.tostring(pos) + " of " + str.tostring(nm) + " · best " + bN + " " + str.tostring(best, "+#;-#") +
+         " pts · worst " + wN + " " + str.tostring(wrst, "+#;-#") + " pts" : "") +
+         "\nThe first and the last month can be part months (see days). A trade counts in the month it closed." +
+         (nm > 0 ? "\n" + ls : "")
+    f_dRow(r, "📆 Per month", v, CH, perMo >= 0 ? KWIN : KLOSS, size.tiny, tip)
+
 // lot test row (⓪j)
 string kLotStr = "$" + str.tostring(kLotSt.get(0), "+#,##0.##;-#,##0.##") + " · DD $" + str.tostring(kLotSt.get(2), "#,##0") +
      "  vs fixed " + str.tostring(i_lotBase, "0.00") + ": $" + str.tostring(kLotSt.get(3), "+#,##0.##;-#,##0.##") +
@@ -2201,6 +2301,8 @@ if barstate.islast and i_showDash
             r := f_dRow(r, "🏦 Results", kPfResStr, CH, kPfResCol, size.tiny, kPfResTip)
         r := f_dRow(r, "❖ Period",     kPerStr, CH, color.white, size.tiny, kPerTip)
         r := f_dRow(r, "❖ Avg / day",  kAvgStr, CH, kNetPts >= 0 ? KWIN : KLOSS, size.tiny, kAvgTip)
+        if i_moOn
+            r := f_moRow(r)
         if i_lotOn
             r := f_dRow(r, "💰 Lot test", kLotStr, CH, kLotSt.get(0) >= 0 ? KWIN : KLOSS, size.tiny, kLotTip)
         r := f_dRow(r, "❖ Entry",      kEntStr, CR, color.new(#FFC107,0), size.tiny, kEntTip)
