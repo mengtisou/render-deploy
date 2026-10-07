@@ -15,6 +15,7 @@ indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count
 //                 chart and counted in the dashboard, with the test
 //                 period, spread (W / L for 0 / 0.18 / 0.22 / 0.30 side
 //                 by side) and an optional daily limit.
+//                 Option: skip the next ❖ after 2 SL in a row (both numbers editable).
 // ⓪c PROP FIRM  — runs the ❖ trades on a prop account ($10K default):
 //                 daily / max loss, target, min days, Phase 1 → 2 →
 //                 Funded, and blocks ❖ trades that could break a limit.
@@ -133,6 +134,12 @@ i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
+i_kSkOn    = input.bool  (false, "Skip ❖ after SL in a row",          group=G0b,
+     tooltip="ON: after this many SL (LOSS) in a row, the next ❖ is skipped (not traded), then trading goes on with the ❖ after it. Example 2 / 1: 1st ❖ LOSS, 2nd ❖ LOSS → 3rd ❖ skipped → 4th ❖ traded.\nA WIN resets the count; missed pending orders and trades closed early don't change it. After the skip the count starts again from 0.\nThe decision is made when the ❖ prints: a ❖ that comes while the 2nd trade is still open is taken (its SL is not known yet).\nOnly a ❖ that would have been traded is skipped (not one already skipped by the daily limit, session OFF, news, prop limits, one-trade-at-a-time or the hedging rule). Skipped ❖ get a grey 'skip' label and show in the Day log. Each spread counts on its own.")
+i_kSkN     = input.int   (2,     "SL in a row before the skip",       group=G0b, minval=1, maxval=10)
+i_kSkM     = input.int   (1,     "❖ to skip after that",              group=G0b, minval=1, maxval=10)
+i_kSkDay   = input.bool  (true,  "SL in a row: count within the same day only", group=G0b,
+     tooltip="ON: the count (and a skip still waiting) starts again at the new daily candle (same day as OP). OFF: losses at the end of one day and the start of the next count together.")
 i_kZones   = input.bool  (true,  "Show TP / SL zones",                group=G0b)
 i_kWLlab   = input.bool  (true,  "Show WIN / LOSS labels",            group=G0b)
 i_kPendLab = input.bool  (true,  "Show pending orders  (BUY / SELL LIMIT · filled · missed)", group=G0b)
@@ -713,6 +720,9 @@ type KtrStats
     float  earlyPts  = 0.0
     float  fundPnl  = 0.0      // closed P&L while funded
     int    nwSkip   = 0        // ❖ skipped / pending cancelled by the news filter
+    int    lRun     = 0        // SL in a row (for 'Skip ❖ after SL in a row')
+    int    skLeft   = 0        // ❖ still to skip
+    int    skN      = 0        // ❖ skipped by it
 
 var array<KtrTrade> kOpen = array.new<KtrTrade>()
 var array<KtrStats> kSt   = array.from(KtrStats.new(0.0), KtrStats.new(0.18), KtrStats.new(0.22), KtrStats.new(0.30))
@@ -872,6 +882,9 @@ if ktrNewDay
         st.dayW    := 0
         st.dayL    := 0
         st.dayStop := false
+        if i_kSkDay
+            st.lRun   := 0
+            st.skLeft := 0
         st.dayWhy  := ""
     if not na(kFirstTm)
         kDaysAll += 1
@@ -1190,6 +1203,11 @@ if kTrack and kOpen.size() > 0
                 kDone     := true
                 st.wins   += kWin ? 1 : 0
                 st.losses += kWin ? 0 : 1
+                // SL in a row → skip the next ❖ (option)
+                st.lRun := kWin ? 0 : st.lRun + 1
+                if i_kSkOn and st.lRun >= i_kSkN
+                    st.skLeft := i_kSkM
+                    st.lRun   := 0
                 st.winB   += kWin and kt.dir == 1 ? 1 : 0
                 st.lossB  += not kWin and kt.dir == 1 ? 1 : 0
                 st.winS   += kWin and kt.dir == -1 ? 1 : 0
@@ -1375,6 +1393,20 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 st.hedgeSkip += 1
             else if kFree and i_pfOn and i_pfGuard and not f_pfRoom(st, kPfRisk.get(sc))
                 st.blocked += 1
+            else if kFree and i_kSkOn and st.skLeft > 0
+                st.skLeft -= 1
+                st.skN    += 1
+                if sc == kSel
+                    kTrDay.push(time_tradingday)
+                    kTrNth.push(0)
+                    kTrCode.push(3)
+                    kTrPts.push(0.0)
+                    if i_kWLlab
+                        label.new(bar_index, kDir == 1 ? low - atr14 * 1.2 : high + atr14 * 1.2, "skip",
+                             style=kDir == 1 ? label.style_label_up : label.style_label_down,
+                             color=color.new(color.gray, 30), textcolor=color.white, size=size.tiny,
+                             tooltip="❖ " + (kDir == 1 ? "BUY" : "SELL") + " skipped: " + str.tostring(i_kSkN) + " SL in a row before it (Skip ❖ after SL in a row)",
+                             force_overlay=true)
             else if kFree
                 if na(kFirstTm)
                     kFirstTm := time
@@ -1489,7 +1521,8 @@ string kWLStr  = str.tostring(kWins) + "W " + str.tostring(kLosses) + "L" + f_wr
      (kLiveN    > 0 ? " · " + str.tostring(kLiveN)    + " open"    : "") +
      (kPendN    > 0 ? " · " + str.tostring(kPendN)    + " pending" : "") +
      (kM.missed > 0 ? " · " + str.tostring(kM.missed) + " missed"  : "") +
-     (kM.early  > 0 ? " · " + str.tostring(kM.early)  + " closed early" : "")
+     (kM.early  > 0 ? " · " + str.tostring(kM.early)  + " closed early" : "") +
+     (i_kSkOn and kM.skN > 0 ? " · " + str.tostring(kM.skN) + " skipped" : "")
 color  kWLCol  = kN == 0 ? CL : kNetPts >= 0 ? KWIN : KLOSS
 string kNetStr = str.tostring(kNetPts, "+#.##;-#.##") + " pts  (" + str.tostring(kNetR, "+#.#;-#.#") + "R)"
 string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
@@ -1500,6 +1533,7 @@ string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
      "\nSkipped / cancelled by the daily limit: " + str.tostring(kM.skipDay) +
      "\nSkipped / cancelled because the session is OFF: " + str.tostring(kM.sesSkip) +
      "\nSkipped / cancelled by the news filter: " + str.tostring(kM.nwSkip) +
+     (i_kSkOn ? "\nSkipped after " + str.tostring(i_kSkN) + " SL in a row: " + str.tostring(kM.skN) + " ❖" : "") +
      (i_pfOn ? "\nHedging rule: " + i_pfHedge + " · skipped / cancelled: " + str.tostring(kM.hedgeSkip) +
      " · closed early: " + str.tostring(kM.early) + " (" + str.tostring(kM.earlyPts, "+#.#;-#.#") + " pts)" : "") +
      "\nBreak-even win rate: " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
@@ -1909,18 +1943,22 @@ string kDayTip = (i_kDayOn ? "Daily limit ON: target +" + str.tostring(i_kDayTp,
      "\n❖ skipped / pending cancelled by the daily limit: " + str.tostring(kM.skipDay)
 string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts · spread " + str.tostring(kM.spr, "0.00")
 string kTpSlTip = "TP " + str.tostring(kTpDist, "#.##") + " · SL " + str.tostring(kSlDist, "#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
-string kEntStr = kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " / " + kRunTxt + " pts") : "At ❖ close"
+string kEntStr = (kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " / " + kRunTxt + " pts") : "At ❖ close") +
+     (i_kSkOn ? " · skip " + str.tostring(i_kSkM) + " after " + str.tostring(i_kSkN) + " SL" : "")
 string kEntTip = kPendOn ? (kLimOn ? "BUY at ❖ close − " + kOffTxt + " pts, SELL at ❖ close + " + kOffTxt + " pts" :
      "BUY at ❖ close + " + kOffTxt + " pts, SELL at ❖ close − " + kOffTxt + " pts") +
      " (= " + str.tostring(kOffDist, "#.##") + " in price).\nCounted only once price reaches it; missed after " + str.tostring(i_kExp) + " candles" +
      (kRunTxt == "" ? "." : " or when price runs " + kRunTxt + " pts away from it first.") :
-     "Trade starts at the ❖ candle close (BUY on the ask = close + spread)."
+     "Trade starts at the ❖ candle close (BUY on the ask = close + spread)." +
+     (i_kSkOn ? "\nAfter " + str.tostring(i_kSkN) + " SL in a row the next " + str.tostring(i_kSkM) + " ❖ " + (i_kSkM == 1 ? "is" : "are") + " skipped" +
+     (i_kSkDay ? " (count starts again each day)" : "") + " · skipped so far: " + str.tostring(kM.skN) : "")
 // ❖ of the day rows (⓪i)
 f_resTx(int code, float pts, bool full) =>
     code == 1 ? (full ? "WIN " : "W ") + str.tostring(pts, "+#;-#") :
      code == -1 ? (full ? "LOSS " : "L ") + str.tostring(pts, "+#;-#") :
      code == 0 ? (full ? "missed (not filled)" : "M") :
-     code == 2 ? (full ? "closed early " : "C ") + str.tostring(pts, "+#;-#") : "open"
+     code == 2 ? (full ? "closed early " : "C ") + str.tostring(pts, "+#;-#") :
+     code == 3 ? "skip" : "open"
 f_nthRow(int r, int sl) =>
     int    w   = kNthW.get(sl)
     int    l   = kNthL.get(sl)
@@ -1974,7 +2012,7 @@ f_dayLog(int r) =>
         while i >= 0
             if kTrDay.get(i) != d
                 break
-            full := f_nthTxt(kTrNth.get(i)) + " " + f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (full == "" ? "" : " · " + full)
+            full := (kTrNth.get(i) > 0 ? f_nthTxt(kTrNth.get(i)) + " " : "") + f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (full == "" ? "" : " · " + full)
             shrt := f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (shrt == "" ? "" : " · " + shrt)
             dp   += kTrPts.get(i)
             i    -= 1
@@ -1984,7 +2022,7 @@ f_dayLog(int r) =>
         tip := tip + "\n" + dt + "   " + full + "   = " + str.tostring(dp, "+#;-#") + " pts"
         nd  += 1
     f_dRow(r, "📅 Day log", v, CR, CL, size.tiny, "❖ trades per day, newest first (last " + str.tostring(nd) + " days with a ❖ trade) · spread " +
-         str.tostring(kM.spr, "0.00") + "\nW = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running" + tip)
+         str.tostring(kM.spr, "0.00") + "\nW = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running · skip = ❖ skipped after SL in a row" + tip)
 
 if barstate.islast and i_showDash
     int r = 0
