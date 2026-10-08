@@ -135,6 +135,8 @@ i_kRun     = input.string("200 pts away", "Pending also cancelled when price run
      options=["Candles only", "100 pts away", "200 pts away"],
      tooltip="Cancel the pending order ('missed') as soon as price moves this far away from the pending price without filling it — e.g. BUY LIMIT and price rallies 100 / 200 pts above it. The candle limit above still applies too, whichever comes first. If one candle both fills the order and runs away, it counts as filled.")
 i_kTpPts   = input.float (200.0, "TP points",                         group=G0b, options=[200.0, 100.0])
+i_kTpLon   = input.int   (0,     "London TP (pts, 0 = same as TP)",   group=G0b, minval=0, step=50,
+     tooltip="Own TP for ❖ that print in the London session (session times below), e.g. 100 = take +100 pts in London, the normal TP everywhere else. SL stays the same. 0 = same TP as all trades. Compare with London unticked (no London trades) to see which is better.")
 i_kSlPts   = input.float (100,   "SL points",                         group=G0b, minval=1, step=10)
 i_kPtVal   = input.float (0.10,  "1 point = price",                   group=G0b, minval=0.00001, step=0.01,
      tooltip="XAUUSD: 0.10 → TP 200 pts = $20.00, SL 100 pts = $10.00. Set 0.01 if your broker counts gold points on the 2nd decimal (200 pts = $2.00). Set 1 to use plain price.")
@@ -855,6 +857,7 @@ type KtrTrade
     int    tid    = -1         // index in the ❖-of-the-day log (picked spread only)
     int    sesId  = -1         // session (kSesId) the ❖ printed in
     bool   be     = false      // break-even: SL already moved
+    float  tpPts  = 200.0      // TP of this trade in pts (London can have its own)
 
 // results for one spread
 type KtrStats
@@ -1100,7 +1103,7 @@ f_kZone(float a, float b, color c, string txt) =>
 // TP / SL zones start on the candle the trade goes live
 f_kZones(KtrTrade t) =>
     if i_kZones
-        t.bxTp := f_kZone(t.entry, t.tp, KWIN,  "TP +" + kTpTxt + " pts  " + str.tostring(t.tp, format.mintick))
+        t.bxTp := f_kZone(t.entry, t.tp, KWIN,  "TP +" + str.tostring(t.tpPts, "#") + " pts  " + str.tostring(t.tp, format.mintick))
         t.bxSl := f_kZone(t.entry, t.sl, KLOSS, "SL −" + kSlTxt + " pts  " + str.tostring(t.sl, format.mintick))
     t
 
@@ -1415,7 +1418,7 @@ if kTrack and kOpen.size() > 0
                 hitSL := false
             if hitTP or hitSL
                 bool  kWin  = hitTP and (not hitSL or i_kBoth == "Win")
-                float kGain = kWin ? i_kTpPts : -i_kSlPts
+                float kGain = kWin ? kt.tpPts : -i_kSlPts
                 kDone     := true
                 st.wins   += kWin ? 1 : 0
                 st.losses += kWin ? 0 : 1
@@ -1436,10 +1439,10 @@ if kTrack and kOpen.size() > 0
                 st.dayL   += kWin ? 0 : 1
                 st.nOpen  -= 1
                 if i_pfOn and kt.acct == st.acctId
-                    float kUsd = kWin ? i_kTpPts * kUsdPt - kComm : -kRisk1
+                    float kUsd = kWin ? kt.tpPts * kUsdPt - kComm : -kRisk1
                     st.bal     += kUsd
                     st.fundPnl += st.phase == 3 ? kUsd : 0.0
-                string kRes = kWin ? "WIN +" + kTpTxt : "LOSS −" + kSlTxt
+                string kRes = kWin ? "WIN +" + str.tostring(kt.tpPts, "#") : "LOSS −" + kSlTxt
                 st.lastTxt := kRes + " · " + kt.name
                 st.lastCol := kWin ? KWIN : KLOSS
                 if kMain
@@ -1684,11 +1687,12 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 // pending: LIMIT = BUY below / SELL above the ❖ close · STOP = BUY above / SELL below
                 // at ❖ close: BUY fills on the ask (close + spread), SELL on the bid
                 float kEn   = kPendOn ? kSigPx + (kLimOn ? -kDir : kDir) * kOffDist : kDir == 1 ? kSigPx + st.spr : kSigPx
-                float kTpPx = kEn + kDir * kTpDist
+                float kTpP  = i_kTpLon > 0 and kSesNow == 1 ? i_kTpLon : i_kTpPts
+                float kTpPx = kEn + kDir * kTpP * i_kPtVal
                 float kSlPx = kEn - kDir * kSlDist
                 KtrTrade kNew = KtrTrade.new(dir=kDir, entry=kEn, tp=kTpPx, sl=kSlPx, bar=bar_index, tm=time,
                      filled=not kPendOn, lim=kLimOn, sigBar=bar_index, name=kNm, sc=sc, acct=st.acctId, ses=kSesNow,
-                     wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow, preHi=kPreHi, preLo=kPreLo, sesId=kSesId)
+                     wd=kWdNow, nws=kNwPlaceZ, wk=kWkId, mw=kMwNow, preHi=kPreHi, preLo=kPreLo, sesId=kSesId, tpPts=kTpP)
                 st.sesTrId := kSesId
                 if sc == kSel
                     kNthDay  += 1
@@ -2158,7 +2162,7 @@ string kDayTip = (i_kDayOn ? "Daily limit ON: target +" + str.tostring(i_kDayTp,
      "Daily limit OFF (turn it on in ⓪b to test it)") +
      "\nDays that hit the target: " + str.tostring(kM.daysTgt) + " · hit the loss limit: " + str.tostring(kM.daysLoss) + " (of " + str.tostring(kDaysN) + " days)" +
      "\n❖ skipped / pending cancelled by the daily limit: " + str.tostring(kM.skipDay)
-string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts · spread " + str.tostring(kM.spr, "0.00")
+string kTpSlStr = "+" + kTpTxt + " / −" + kSlTxt + " pts · spread " + str.tostring(kM.spr, "0.00") + (i_kTpLon > 0 ? " · London TP +" + str.tostring(i_kTpLon) : "")
 string kTpSlTip = "TP " + str.tostring(kTpDist, "#.##") + " · SL " + str.tostring(kSlDist, "#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")"
 string kEntStr = (kPendOn ? (kLimOn ? "LIMIT" : "STOP") + " ±" + kOffTxt + " pts · " + str.tostring(i_kExp) + " candles" + (kRunTxt == "" ? "" : " / " + kRunTxt + " pts") : "At ❖ close") +
      (i_kSkOn ? " · skip " + str.tostring(i_kSkM) + " after " + str.tostring(i_kSkN) + " SL" : "") +
