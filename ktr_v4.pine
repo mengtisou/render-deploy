@@ -2505,6 +2505,10 @@ if barstate.islast and i_showDash
             r := f_dRow(r, "🏦 Results", kPfResStr, CH, kPfResCol, size.tiny, kPfResTip)
         r := f_dRow(r, "❖ Period",     kPerStr, CH, color.white, size.tiny, kPerTip)
         r := f_dRow(r, "❖ Avg / day",  kAvgStr, CH, kNetPts >= 0 ? KWIN : KLOSS, size.tiny, kAvgTip)
+        if i_lotOn
+            r := f_dRow(r, "💰 Lot test", f_lotTx(), CH, kLotSt.get(0) >= 0 ? KWIN : KLOSS, size.tiny,
+                 "Lot +" + str.tostring(i_lotBase, "0.00") + " after a ⛔ day (max " + str.tostring(i_lotMax, "0.00") + "), back to " +
+                 str.tostring(i_lotBase, "0.00") + " after a 🎯 day · first $ = with this rule, 'vs fixed' = same trades at a fixed start lot · DD = biggest drop")
         if i_moOn
             r := f_moRow(r)
         r := f_dRow(r, "❖ Entry",      kEntStr, CR, color.new(#FFC107,0), size.tiny, kEntTip)
