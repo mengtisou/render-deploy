@@ -27,6 +27,9 @@ indicator("KTR v4", overlay=false, max_boxes_count=500, max_lines_count=500, max
 //                 ❖ candle, and 'wait 1 candle: the next candle must hold'.
 //                 Order flow filter (buy / sell volume pressure must agree with the ❖)
 //                 and strong one-way trend filter (ADX: no ❖ against a strong trend).
+// 🔬 FILTER REPORT — runs the v3 ❖ (no filters) in the background and shows which ❖
+//                 the filters removed and how those would have ended (W / L).
+// 📝 TRADE JOURNAL — optional Pine Logs line per ❖ trade (no data export needed).
 // ⓪ ❖ ON 5 MIN (option, default Off) — the blue / red diamond still comes from the
 //                 chart candles (e.g. 15m), the ❖ confirms on the 1 / 3 / 5 min
 //                 candles after it and the trade starts at that candle's close.
@@ -250,6 +253,8 @@ i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (
      tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
 i_moOn     = input.bool  (true,  "Per month row  (W / L, pts, $ for every month)", group=G0e,
      tooltip="Shows the average per month (≈ 21 trading days) and, on hover, every month: W / L, win rate, pts, R, $ at the start lot of ⓪j (0.01 when the lot test is off), the lot test $ (when on), 🎯 target / ⛔ loss-limit days and trading days. A trade counts in the month it closed. Uses the spread picked in ⓪b (●).")
+i_repOn    = input.bool  (true,  "🔬 Filter report row  (what the ❖ filters removed)", group=G0e,
+     tooltip="Runs the v3 ❖ (same KTR rules, no ❖ filters) in the background and compares them with the filtered v4 ❖, using one SIMPLE trade test for both: entry at the ❖ close (BUY + spread), TP / SL as in ⓪b, no pending order, no daily limit, no other rules. Shows how many ❖ each filter removed and how those removed ❖ would have ended — if they are mostly LOSSES the filter helps, if mostly WINS it hurts. Numbers differ from the main Win / Loss rows because those use your full settings. Chart-candle ❖ only (not with 'confirm on lower TF').")
 i_aftOn    = input.bool  (true,  "Day after ⛔ / 🎯: 1st / 2nd / 3rd ❖ rows", group=G0e,
      tooltip="Two rows: '⛔ → next day' and '🎯 → next day'. For the day right after a day that hit the ⛔ daily loss limit (or the 🎯 daily target), Win / Loss of that day's 1st, 2nd and 3rd ❖ trade, and how often the 1st and 2nd both lost ('L+L') and what the 3rd ❖ did then. Hover for pts, the comparison with all days, the W/L patterns and the dates. Needs the daily limit ON (⓪b). 'Next day' = the next daily candle (Fri → Mon). Uses the spread picked in ⓪b (●).")
 i_nthLog   = input.bool  (true,  "❖ of the day: day log row  (date + result of each ❖ that day)", group=G0e,
@@ -266,6 +271,8 @@ i_lotBack  = input.string("a day in profit", "Back to the start lot after", grou
      tooltip="a day in profit = the day's closed ❖ trades are above 0 pts. the 🎯 daily target = the day reached the daily profit target (daily limit OFF: a day in profit). any day without ⛔ = every traded day that did not hit the loss limit. Days without a closed trade change nothing.")
 
 // ── ⓪h AI DATA EXPORT ──
+i_logOn    = input.bool  (false, "Trade journal in Pine Logs  (one line per ❖ trade)", group=G0h,
+     tooltip="No export needed (works on every plan): each ❖ trade of the picked spread writes one line to Pine Logs when it ends — Pine Editor → More (⋯) → Pine Logs, or the indicator's ⋯ menu on the chart → Pine Logs. Format: KTR;date time it went live;BUY/SELL;nth of day;session;WIN/LOSS/MISSED/CLOSED;pts;RSI7;order flow %;ADX signed;HTF trend. Select the lines and copy them (or screenshot) to share. The pane keeps the latest 10,000 lines.")
 i_aiOn     = input.bool  (true,  "AI data columns  (Data Window → Export chart data)", group=G0h,
      tooltip="Adds hidden 'AI …' columns (only in the Data Window, nothing drawn): the ❖ signal (±1 taken, ±2 not taken), entry / TP / SL, features at the signal candle (packed: 'AI trend' = fast ±1 + slow ±2, 'AI time code' = session + 10 × weekday + 100 × week of month), and on the candle where each trade ends: bars back to its ❖ and the result (WIN / LOSS / missed / closed early) with its pts. Chart menu → Export chart data… saves them to CSV; tools/ktr_ai_dataset.py unpacks them into one row per ❖ with its label. Packed into few columns because TradingView allows 64 plot counts per script (alerts count too). Uses the spread picked in ⓪b (●).")
 
@@ -530,6 +537,101 @@ bool kHoldOn      = i_kHold and not kLtfOn
 bool ktrEntryBuy  = kHoldOn ? ktrSigBuy[1]  and close > (high[1] + low[1]) / 2 : ktrSigBuy
 bool ktrEntrySell = kHoldOn ? ktrSigSell[1] and close < (high[1] + low[1]) / 2 : ktrSigSell
 
+// 🔬 filter report: the v3 ❖ (no filters) run in the background + one simple trade test for all
+var bool kU_BuyDone  = true
+var bool kU_SellDone = true
+if ktrAlertBuy
+    kU_BuyDone  := false
+if ktrAlertSell
+    kU_SellDone := false
+bool kU_Buy  = not kLtfOn and ktrShow and not kU_BuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and
+     (ktrFlipUp or (bar_index > ktrBuyBar  and close > ktrBuyHigh))
+bool kU_Sell = not kLtfOn and ktrShow and not kU_SellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and
+     (ktrFlipDn or (bar_index > ktrSellBar and close < ktrSellLow))
+if kU_Buy
+    kU_BuyDone  := true
+if kU_Sell
+    kU_SellDone := true
+// which filter said no: 1 higher-TF trend · 2 wick · 4 order flow / ADX · 8 wait 1 candle
+f_fltMask(int dir) =>
+    int mk = 0
+    mk += (dir == 1 ? not kHtfBuyOK  : not kHtfSellOK)  ? 1 : 0
+    mk += (dir == 1 ? not kWickBuyOK : not kWickSellOK) ? 2 : 0
+    mk += (dir == 1 ? not kFlowBuyOK : not kFlowSellOK) ? 4 : 0
+    mk
+f_bit(int mk, int k) =>
+    math.floor(mk / math.pow(2, k)) % 2 == 1
+var array<int>   kShDir = array.new_int()
+var array<float> kShEn  = array.new_float()
+var array<int>   kShSet = array.new_int()     // 0 v3 ❖ · 1 v4 ❖ · 2 removed by the filters
+var array<int>   kShMk  = array.new_int()     // filter mask (set 2)
+var array<int>   kShBar = array.new_int()     // first candle to check
+var array<int>   kRepW  = array.new_int(3, 0)
+var array<int>   kRepL  = array.new_int(3, 0)
+var array<float> kRepP  = array.new_float(3, 0.0)
+var array<int>   kRepFW = array.new_int(4, 0)   // per filter (htf, wick, flow / ADX, wait 1 candle): removed ❖ that would have won
+var array<int>   kRepFL = array.new_int(4, 0)   // … would have lost
+var array<int>   kRepFN = array.new_int(4, 0)   // … removed in total
+float kShSpr = i_kSpr
+f_shAdd(int dir, float base, int set, int mk, int fromBar) =>
+    kShDir.push(dir)
+    kShEn.push(dir == 1 ? base + kShSpr : base)
+    kShSet.push(set)
+    kShMk.push(mk)
+    kShBar.push(fromBar)
+    if set == 2
+        for k = 0 to 3
+            if f_bit(mk, k)
+                kRepFN.set(k, kRepFN.get(k) + 1)
+    dir
+bool kRepOn = i_repOn and not kLtfOn and i_ktrOn and i_kTrOn
+if kRepOn and barstate.isconfirmed
+    if kU_Buy
+        f_shAdd(1, close, 0, 0, bar_index + 1)
+        if not ktrSigBuy
+            f_shAdd(1, close, 2, f_fltMask(1), bar_index + 1)
+    if kU_Sell
+        f_shAdd(-1, close, 0, 0, bar_index + 1)
+        if not ktrSigSell
+            f_shAdd(-1, close, 2, f_fltMask(-1), bar_index + 1)
+    if ktrEntryBuy
+        f_shAdd(1, close, 1, 0, bar_index + 1)
+    if ktrEntrySell
+        f_shAdd(-1, close, 1, 0, bar_index + 1)
+    // removed by 'wait 1 candle': the ❖ candle closed, the next one did not hold → test it from the ❖ close
+    if kHoldOn and ktrSigBuy[1] and not ktrEntryBuy
+        f_shAdd(1, close[1], 2, 8, bar_index)
+    if kHoldOn and ktrSigSell[1] and not ktrEntrySell
+        f_shAdd(-1, close[1], 2, 8, bar_index)
+    if kShDir.size() > 0
+        for i = kShDir.size() - 1 to 0
+            if bar_index >= kShBar.get(i)
+                int   d   = kShDir.get(i)
+                float en  = kShEn.get(i)
+                float tpD = i_kTpPts * i_kPtVal
+                float slD = i_kSlPts * i_kPtVal
+                float xHi = d == 1 ? high : high + kShSpr
+                float xLo = d == 1 ? low  : low  + kShSpr
+                bool  hTp = d == 1 ? xHi >= en + tpD : xLo <= en - tpD
+                bool  hSl = d == 1 ? xLo <= en - slD : xHi >= en + slD
+                if hTp or hSl
+                    bool win = hTp and (not hSl or i_kBoth == "Win")
+                    int  st  = kShSet.get(i)
+                    kRepW.set(st, kRepW.get(st) + (win ? 1 : 0))
+                    kRepL.set(st, kRepL.get(st) + (win ? 0 : 1))
+                    kRepP.set(st, kRepP.get(st) + (win ? i_kTpPts : -i_kSlPts))
+                    if st == 2
+                        int mk = kShMk.get(i)
+                        for k = 0 to 3
+                            if f_bit(mk, k)
+                                kRepFW.set(k, kRepFW.get(k) + (win ? 1 : 0))
+                                kRepFL.set(k, kRepFL.get(k) + (win ? 0 : 1))
+                    kShDir.remove(i)
+                    kShEn.remove(i)
+                    kShSet.remove(i)
+                    kShMk.remove(i)
+                    kShBar.remove(i)
+
 // ❖ price / time = the confirming LTF candle's close (chart candle's close when Off),
 // and the high / low of the chart candle's part after it — the trades check that part first on the next candle
 int   kLtfIx = not kLtfOn ? -1 : ktrEntryBuy and not ktrEntrySell ? kLtfBuy : ktrEntrySell and not ktrEntryBuy ? kLtfSell : -1
@@ -758,6 +860,7 @@ type KtrTrade
     int    tid    = -1         // index in the ❖-of-the-day log (picked spread only)
     int    sesId  = -1         // session (kSesId) the ❖ printed in
     float  lot    = na         // lot test (⓪j): lot of the day it was placed (picked spread only)
+    string feat   = ""         // trade journal: features at the ❖ (picked spread only)
 
 // results for one spread
 type KtrStats
@@ -895,6 +998,10 @@ var array<int>    kTrNth  = array.new_int()          // per trade: 1st, 2nd … 
 var array<int>    kTrCode = array.new_int()          // per trade: 1 WIN · -1 LOSS · 0 missed · 2 closed early · 9 open
 var array<float>  kTrPts  = array.new_float()
 f_nthRec(KtrTrade t, int code, float pts) =>
+    if i_logOn and t.tid >= 0
+        log.info("KTR;" + str.format_time(t.tm, "yyyy-MM-dd HH:mm") + ";" + (t.dir == 1 ? "BUY" : "SELL") + ";" + str.tostring(t.nth) + ";" +
+             (t.ses == 0 ? "Asia" : t.ses == 1 ? "London" : t.ses == 2 ? "NewYork" : "Other") + ";" +
+             (code == 1 ? "WIN" : code == -1 ? "LOSS" : code == 0 ? "MISSED" : "CLOSED") + ";" + str.tostring(pts, "#.#") + ";" + t.feat)
     if t.tid >= 0
         int sl = math.min(t.nth, 4) - 1
         if code == 1
@@ -1646,6 +1753,8 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     kNew.nth := kNthDay
                     kNew.tid := kTrCode.size()
                     kNew.lot := kLot
+                    kNew.feat := str.tostring(ktrRsi, "#.#") + ";" + str.tostring(kOfD, "#.#") + ";" +
+                         str.tostring(kAdx * (kDiP >= kDiM ? 1 : -1), "#.#") + ";" + str.tostring(kHtfDir, "#")
                     kLotMaxU := math.max(kLotMaxU, kLot)
                     kTrDay.push(time_tradingday)
                     kTrNth.push(kNthDay)
@@ -2227,6 +2336,28 @@ f_moRow(int r) =>
          (nm > 0 ? "\n" + ls : "")
     f_dRow(r, "📆 Per month", v, CH, perMo >= 0 ? KWIN : KLOSS, size.tiny, tip)
 
+// 🔬 filter report row
+f_repTx(int st) =>
+    str.tostring(kRepW.get(st)) + "W " + str.tostring(kRepL.get(st)) + "L" + f_wr(kRepW.get(st), kRepL.get(st)) + " · " + str.tostring(kRepP.get(st), "+#;-#") + " pts"
+bool   kAnyFlt = i_kHtf != "Off" or i_kWick or i_kHold or i_kOfOn or i_kAdxOn
+string kRepStr = not kAnyFlt ? "no ❖ filter on (⓪)" : kLtfOn ? "not with ❖ on lower TF" :
+     "removed " + str.tostring(kRepW.get(2) + kRepL.get(2)) + ": " + str.tostring(kRepW.get(2)) + "W " + str.tostring(kRepL.get(2)) + "L · net " +
+     str.tostring(kRepP.get(1) - kRepP.get(0), "+#;-#") + " pts vs v3"
+var array<string> kFltNm = array.from("Higher-TF trend (" + i_kHtf + ")", "Rejection wick (" + str.tostring(i_kWickPct) + "%)",
+     "Order flow / ADX", "Wait 1 candle")
+string kRepTip = "Simple trade test for all ❖ (entry at the ❖ close, TP " + str.tostring(i_kTpPts, "#") + " / SL " + str.tostring(i_kSlPts, "#") +
+     ", spread " + str.tostring(i_kSpr, "0.00") + ", no pending / limits) — compare these lines with each other, not with the main rows." +
+     "\n\nv3 ❖ (no filters):  " + f_repTx(0) +
+     "\nv4 ❖ (filters on):  " + f_repTx(1) +
+     "\nDifference: " + str.tostring(kRepP.get(1) - kRepP.get(0), "+#;-#") + " pts (" + str.tostring((kRepP.get(1) - kRepP.get(0)) / i_kSlPts, "+#.#;-#.#") + "R)" +
+     "\n\n❖ removed by the filters (at the moment they printed): " + f_repTx(2) +
+     "\n→ mostly L = the filters remove bad ❖ (good) · mostly W = they remove good ❖ (bad)" +
+     "\nA removed setup can still give a later v4 ❖ — that one is in the v4 line." +
+     "\n\nPer filter (a ❖ can be removed by more than one):"
+for k = 0 to 3
+    kRepTip += "\n" + kFltNm.get(k) + ": " + str.tostring(kRepFN.get(k)) + " removed → " + str.tostring(kRepFW.get(k)) + "W " +
+         str.tostring(kRepFL.get(k)) + "L" + f_wr(kRepFW.get(k), kRepFL.get(k))
+
 // lot test row (⓪j)
 string kLotStr = "$" + str.tostring(kLotSt.get(0), "+#,##0.##;-#,##0.##") + " · DD $" + str.tostring(kLotSt.get(2), "#,##0") +
      "  vs fixed " + str.tostring(i_lotBase, "0.00") + ": $" + str.tostring(kLotSt.get(3), "+#,##0.##;-#,##0.##") +
@@ -2418,6 +2549,8 @@ if barstate.islast and i_showDash
             for sl = 0 to 3
                 if sl < 3 or kNthW.get(3) + kNthL.get(3) + kNthM.get(3) + kNthE.get(3) > 0
                     r := f_nthRow(r, sl)
+        if i_repOn
+            r := f_dRow(r, "🔬 Filters", kRepStr, CH, kRepP.get(1) >= kRepP.get(0) ? KWIN : KLOSS, size.tiny, kRepTip)
         if i_aftOn
             r := f_aftRow(r, 1)
             r := f_aftRow(r, 2)
