@@ -91,7 +91,7 @@ i_ktrLtf   = input.string("Off (chart candles)", "Entry ❖ confirm on lower TF"
      tooltip="Off = the ❖ confirms on the chart's own candles (normal).\n5 min (or 1 / 3 min) = the blue / red diamond still comes from the chart candles (e.g. 15m), then the ❖ waits for the first 5-minute candle AFTER the diamond candle that confirms: the 5m trend (same Supertrend settings) flips your way, or a 5m candle closes above the diamond candle's high (BUY) / below its low (SELL). Boys volume and the OP side filter are checked on that 5m candle. The ❖ is drawn on the chart candle that holds it and the trade starts at that 5m candle's close; the rest of that chart candle is checked first on the next candle, so a fast TP / SL is not missed.\nThe confirm window still counts chart candles. Works only when the chart timeframe is higher than the one picked (15m chart + 5 min), otherwise it acts like Off. TradingView loads a limited number of lower-timeframe candles (about 100K on most plans): older chart history without 5m data gets no ❖ — the dashboard ❖ Period row shows from when it starts.")
 i_tRev     = input.bool (true,  "Trade ❖ from REVERSAL diamonds",          group=G0,
      tooltip="Each ❖ belongs to the diamond that started it:\nREVERSAL = counter-trend exhaustion (stretched RSI or a fresh 12-candle low / high).\nCONTINUATION = a pullback against the slow trend that fails.\nMICRO = 2+ small counter candles inside the trend, then a thrust back.\nUntick a type to stop its ❖ (the diamond still shows). The 🧪 Breakdown row shows which type wins.")
-i_tCon     = input.bool (true,  "Trade ❖ from CONTINUATION diamonds",      group=G0)
+i_tCon     = input.bool (false, "Trade ❖ from CONTINUATION diamonds",      group=G0)
 i_tMic     = input.bool (true,  "Trade ❖ from MICRO-PULLBACK diamonds",    group=G0)
 i_ktrCont  = input.bool (true,  "Continuation signals (trend pullbacks)", group=G0,
      tooltip="Also fire alerts + ❖ when a pullback against the bigger trend fails — e.g. SELL ❖ at a weak bounce inside a downtrend. Uses a softer RSI gate (45/55) since pullbacks rarely reach 35/65.")
@@ -153,7 +153,7 @@ i_sesOn    = input.bool  (true,  "Dashboard: Win / Loss per session", group=G0b,
 i_sesAOn   = input.bool  (true,  "Asia",                              group=G0b, inline="sesA")
 i_sesAsia  = input.session("0000-0700", "",                           group=G0b, inline="sesA",
      tooltip="Untick a session = OFF: no ❖ trades in it. A ❖ that prints in an OFF session is skipped, and a pending order that would fill in an OFF session is cancelled. The dashboard still shows every session and marks the OFF ones. Tick it again to turn it back ON.")
-i_sesLOn   = input.bool  (true,  "London",                            group=G0b, inline="sesL")
+i_sesLOn   = input.bool  (false, "London",                            group=G0b, inline="sesL")
 i_sesLon   = input.session("0700-1200", "",                           group=G0b, inline="sesL")
 i_sesNOn   = input.bool  (true,  "New York",                          group=G0b, inline="sesN")
 i_sesNy    = input.session("1200-2100", "",                           group=G0b, inline="sesN")
@@ -168,11 +168,11 @@ i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
-i_lotOn    = input.bool  (false, "Lot test: bigger lot after a ⛔ day, back after 🎯", group=G0b,
+i_lotOn    = input.bool  (true,  "Lot test: bigger lot after a ⛔ day, back after 🎯", group=G0b,
      tooltip="Test only ($, nothing changes on the chart): after a day that hit the ⛔ daily loss limit the next day's lot = lot + 'add after a ⛔ day' (e.g. 0.02 → 0.03) up to the max lot; after a 🎯 target day it goes back to the start lot; other days keep it. Shown in the ❖ Net hover and the summary log next to the fixed start lot. $ = pts × 1 point price × 100 oz × lot.")
 i_lotBase  = input.float (0.01,  "Lot test: start lot",               group=G0b, minval=0.01, step=0.01)
-i_lotStep  = input.float (0.01,  "Lot test: add after a ⛔ day",       group=G0b, minval=0.01, step=0.01)
-i_lotMax   = input.float (0.02,  "Lot test: max lot",                 group=G0b, minval=0.01, step=0.01)
+i_lotStep  = input.float (0.02,  "Lot test: add after a ⛔ day",       group=G0b, minval=0.01, step=0.01)
+i_lotMax   = input.float (0.03,  "Lot test: max lot",                 group=G0b, minval=0.01, step=0.01)
 i_kBeOn    = input.bool  (false, "Break-even: move SL after +X pts",  group=G0b,
      tooltip="Once a live trade has been at least +X pts in profit (checked at the close of each candle, on the price it can exit at), its SL moves to the entry + 'lock' pts. If price then comes back to it, the trade ends at that price: not a LOSS, counted as 'closed early' (BE) with its pts. TP stays the same. Compare ❖ Net with this ON and OFF.")
 i_kBePts   = input.float (100,   "Break-even after + (pts)",          group=G0b, minval=10, step=10)
