@@ -272,7 +272,7 @@ i_lotBack  = input.string("a day in profit", "Back to the start lot after", grou
 
 // ── ⓪h AI DATA EXPORT ──
 i_logOn    = input.bool  (false, "Trade journal in Pine Logs  (one line per ❖ trade)", group=G0h,
-     tooltip="No export needed (works on every plan): each ❖ trade of the picked spread writes one line to Pine Logs when it ends — Pine Editor → More (⋯) → Pine Logs, or the indicator's ⋯ menu on the chart → Pine Logs. Format: KTR;date time it went live;BUY/SELL;nth of day;session;WIN/LOSS/MISSED/CLOSED;pts;RSI7;order flow %;ADX signed;HTF trend. Select the lines and copy them (or screenshot) to share. The pane keeps the latest 10,000 lines.")
+     tooltip="No export needed (works on every plan): each ❖ trade of the picked spread writes one line to Pine Logs when it ends — Pine Editor → More (⋯) → Pine Logs, or the indicator's ⋯ menu on the chart → Pine Logs. Format: KTR;date time it went live (GMT+7);BUY/SELL;nth of day;session;WIN/LOSS/MISSED/CLOSED;pts;RSI7;order flow %;ADX signed;HTF trend. Select the lines and copy them (or screenshot) to share. The pane keeps the latest 10,000 lines.")
 i_aiOn     = input.bool  (true,  "AI data columns  (Data Window → Export chart data)", group=G0h,
      tooltip="Adds hidden 'AI …' columns (only in the Data Window, nothing drawn): the ❖ signal (±1 taken, ±2 not taken), entry / TP / SL, features at the signal candle (packed: 'AI trend' = fast ±1 + slow ±2, 'AI time code' = session + 10 × weekday + 100 × week of month), and on the candle where each trade ends: bars back to its ❖ and the result (WIN / LOSS / missed / closed early) with its pts. Chart menu → Export chart data… saves them to CSV; tools/ktr_ai_dataset.py unpacks them into one row per ❖ with its label. Packed into few columns because TradingView allows 64 plot counts per script (alerts count too). Uses the spread picked in ⓪b (●).")
 
@@ -999,7 +999,7 @@ var array<int>    kTrCode = array.new_int()          // per trade: 1 WIN · -1 L
 var array<float>  kTrPts  = array.new_float()
 f_nthRec(KtrTrade t, int code, float pts) =>
     if i_logOn and t.tid >= 0
-        log.info("KTR;" + str.format_time(t.tm, "yyyy-MM-dd HH:mm") + ";" + (t.dir == 1 ? "BUY" : "SELL") + ";" + str.tostring(t.nth) + ";" +
+        log.info("KTR;" + str.format_time(t.tm, "yyyy-MM-dd HH:mm", "GMT+7") + ";" + (t.dir == 1 ? "BUY" : "SELL") + ";" + str.tostring(t.nth) + ";" +
              (t.ses == 0 ? "Asia" : t.ses == 1 ? "London" : t.ses == 2 ? "NewYork" : "Other") + ";" +
              (code == 1 ? "WIN" : code == -1 ? "LOSS" : code == 0 ? "MISSED" : "CLOSED") + ";" + str.tostring(pts, "#.#") + ";" + t.feat)
     if t.tid >= 0
