@@ -2242,6 +2242,7 @@ f_aftRow(int r, int typ) =>
     int    nd   = 0
     int    last = -1
     string ls   = ""
+    string dayS = ""
     int    n    = kTrCode.size()
     if n > 0
         for i = n - 1 to 0
@@ -2258,12 +2259,15 @@ f_aftRow(int r, int typ) =>
                 pt.set(s, pt.get(s) + kTrPts.get(i))
                 int d = kTrDay.get(i)
                 if d != last
+                    if nd > 0 and nd <= 25
+                        ls += "\n" + str.format_time(last, "EEE dd MMM yy", "UTC") + "   " + dayS
                     nd   += 1
                     last := d
-                    if nd <= 25
-                        ls += "\n" + str.format_time(d, "EEE dd MMM yy", "UTC") + "  "
-                if nd <= 25
-                    ls += "  " + f_nthTxt(nth) + " " + f_resTx(c, kTrPts.get(i), false)
+                    dayS := ""
+                // newest first → put the earlier ❖ of the day in front (1st before 2nd)
+                dayS := f_nthTxt(nth) + " " + f_resTx(c, kTrPts.get(i), false) + (dayS == "" ? "" : "  ·  " + dayS)
+        if nd > 0 and nd <= 25
+            ls += "\n" + str.format_time(last, "EEE dd MMM yy", "UTC") + "   " + dayS
     string v   = "1st " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) +
          " · 2nd " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1))
     float  tp  = pt.get(0) + pt.get(1)
