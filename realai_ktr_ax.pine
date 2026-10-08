@@ -90,6 +90,24 @@ tFrom   = input.time(timestamp("01 Jan 2020 00:00 +0000"), "Test from", group=gr
 tTo     = input.time(timestamp("31 Dec 2099 00:00 +0000"), "Test to", group=grpT)
 tMarks  = input.string("KTR ❖ + AX ±Δ", "Show W / L marks for", options=["Off", "KTR ❖", "KTR ❖ + AX", "KTR ❖ + AX ±Δ", "Every AX", "Every AX ±Δ"], group=grpT)
 
+// ── ⑥ Sessions + news filter (all tests, same as KTR v4) ──
+grpF    = "⑥ Sessions + news filter (all tests)"
+sAOn    = input.bool(true, "Asia", inline="sA", group=grpF)
+sAsia   = input.session("0000-0700", "", inline="sA", group=grpF, tooltip="Untick a session = no trades in it: a signal on a candle in an OFF session is skipped, and a pending order that would fill in an OFF session is cancelled.")
+sLOn    = input.bool(false, "London", inline="sL", group=grpF)
+sLon    = input.session("0700-1200", "", inline="sL", group=grpF)
+sNOn    = input.bool(true, "New York", inline="sN", group=grpF)
+sNy     = input.session("1200-2100", "", inline="sN", group=grpF)
+sOOn    = input.bool(true, "Other hours (outside the 3 sessions)", group=grpF)
+sTz     = input.string("UTC", "Session times are in", options=["UTC", "GMT+7", "GMT+8", "Europe/London", "America/New_York"], group=grpF, tooltip="UTC defaults: Asia 00–07, London 07–12, New York 12–21 (= 07–14, 14–19, 19–04 in UTC+7). New York wins over London where they overlap.")
+nwOn    = input.bool(true, "News filter ON (no trade around high-impact news)", group=grpF, tooltip="No new trade from 'BEFORE' minutes before a news time until 'AFTER' minutes after it. A signal inside that window is skipped and a pending order still waiting when the window starts is cancelled. Trades already open keep running to their TP / SL.")
+nwBef   = input.int(45, "No trade BEFORE news (min)", minval=0, group=grpF)
+nwAft   = input.int(15, "Trade again AFTER news (min)", minval=0, group=grpF)
+nwNFP   = input.bool(true, "Auto: NFP (1st Friday of the month, 08:30 New York)", group=grpF)
+nwTz    = input.string("America/New_York", "News list times are in", options=["America/New_York", "UTC", "GMT+7", "GMT+8", "Europe/London"], group=grpF)
+nwList  = input.text_area("// one event per line:   YYYY-MM-DD HH:MM | name      (time in the zone chosen above)\n// lines starting with // are ignored.  NFP is automatic - do not list it.\n2026-07-14 08:30 | CPI\n2026-07-29 14:00 | FOMC\n2026-07-29 14:30 | FOMC presser\n2026-09-11 08:30 | CPI\n2026-09-16 14:00 | FOMC\n2026-09-16 14:30 | FOMC presser\n2026-10-14 08:30 | CPI\n2026-10-28 14:00 | FOMC\n2026-10-28 14:30 | FOMC presser\n2026-10-29 08:30 | GDP + PCE\n2026-11-10 08:30 | CPI\n2026-12-09 14:00 | FOMC\n2026-12-09 14:30 | FOMC presser\n2026-12-10 08:30 | CPI", title="High-impact news list", group=grpF, tooltip="Same list format as KTR v4. Pine cannot read a calendar: add the red-folder events (also past dates to test the past) and check them against your own calendar.")
+nwShade = input.bool(true, "Shade the no-trade window + 📰 markers", group=grpF)
+
 // ── Dashboard ──
 grpD    = "⑤ Dashboard"
 dbOn    = input.bool(true, "Show dashboard", group=grpD)
@@ -469,6 +487,8 @@ type Tst
     bool  stop = false
     int   tgt  = 0
     int   los  = 0
+    int   sesSk = 0
+    int   nwSk  = 0
 var array<Tst> tests = array.from(
      Tst.new("KTR ❖",          array.new<Tr>(), tMarks == "KTR ❖"),
      Tst.new("KTR ❖ + AX",     array.new<Tr>(), tMarks == "KTR ❖ + AX"),
@@ -489,6 +509,78 @@ if kNewDay
 if tIn and na(tFirst)
     tFirst := time
 
+// sessions: New York wins over London, London over Asia
+bool   inAsia = not na(time(timeframe.period, sAsia, sTz))
+bool   inLon  = not na(time(timeframe.period, sLon, sTz))
+bool   inNy   = not na(time(timeframe.period, sNy, sTz))
+int    sesNow = inNy ? 2 : inLon ? 1 : inAsia ? 0 : 3
+bool   sesOK  = sesNow == 0 ? sAOn : sesNow == 1 ? sLOn : sesNow == 2 ? sNOn : sOOn
+var array<string> sesNm = array.from("Asia", "London", "New York", "Other")
+// news: list (read once) + auto NFP · no-trade window = event − BEFORE … event + AFTER
+var array<int>    nwTm = array.new_int()
+var array<string> nwNm = array.new_string()
+if barstate.isfirst
+    for ln in str.split(nwList, "\n")
+        string s = str.trim(ln)
+        if str.length(s) >= 16 and not str.startswith(s, "//")
+            float py = str.tonumber(str.substring(s, 0, 4))
+            float pm = str.tonumber(str.substring(s, 5, 7))
+            float pd = str.tonumber(str.substring(s, 8, 10))
+            float ph = str.tonumber(str.substring(s, 11, 13))
+            float pn = str.tonumber(str.substring(s, 14, 16))
+            if not na(py) and not na(pm) and not na(pd) and not na(ph) and not na(pn)
+                nwTm.push(timestamp(nwTz, int(py), int(pm), int(pd), int(ph), int(pn), 0))
+                string lab = str.length(s) > 16 ? str.trim(str.substring(s, 16)) : ""
+                nwNm.push(str.startswith(lab, "|") ? str.trim(str.substring(lab, 1)) : lab == "" ? "News" : lab)
+int nwPre  = nwBef * 60000
+int nwPost = nwAft * 60000
+f_nfp(int t) =>
+    string tz = "America/New_York"
+    nwNFP and dayofweek(t, tz) == dayofweek.friday and dayofmonth(t, tz) <= 7 ? timestamp(tz, year(t, tz), month(t, tz), dayofmonth(t, tz), 8, 30, 0) : na
+// does [t0, t1) touch a no-trade window?
+f_nwWin(int t0, int t1) =>
+    bool hit = false
+    if nwTm.size() > 0
+        for ev in nwTm
+            if ev - nwPre < t1 and ev + nwPost > t0
+                hit := true
+    for e in array.from(f_nfp(t0), f_nfp(t1 - 1))
+        if not na(e) and e - nwPre < t1 and e + nwPost > t0
+            hit := true
+    hit
+bool nwBar   = f_nwWin(time, time_close)                // this candle touches a window
+bool nwBlk   = nwOn and nwBar                           // → pending orders cancelled
+bool nwPlace = nwOn and f_nwWin(time_close, time_close + 1)   // the order would be placed inside a window
+bgcolor(nwShade and nwBar ? (nwOn ? color.new(color.red, 88) : color.new(color.orange, 90)) : na, title="News no-trade window")
+if nwShade
+    string nwHere = ""
+    if nwTm.size() > 0
+        for i = 0 to nwTm.size() - 1
+            if nwTm.get(i) >= time and nwTm.get(i) < time_close
+                nwHere += (nwHere == "" ? "" : " + ") + nwNm.get(i)
+    int nfpE = f_nfp(time)
+    if not na(nfpE) and nfpE >= time and nfpE < time_close
+        nwHere += (nwHere == "" ? "" : " + ") + "NFP"
+    if nwHere != ""
+        label.new(bar_index, high, "📰 " + nwHere, style=label.style_label_down, color=color.new(color.orange, 15), textcolor=color.black, size=size.small,
+             tooltip=nwHere + (nwOn ? "\nNo new trade " + str.tostring(nwBef) + " min before until " + str.tostring(nwAft) + " min after" : "\nNews filter is OFF"))
+// next news (dashboard)
+f_nwNext() =>
+    int    best = na
+    string nm   = ""
+    if nwTm.size() > 0
+        for i = 0 to nwTm.size() - 1
+            int ev = nwTm.get(i)
+            if ev + nwPost > timenow and (na(best) or ev < best)
+                best := ev
+                nm   := nwNm.get(i)
+    for dd = 0 to 35
+        int c = f_nfp(timenow + dd * 86400000)
+        if not na(c) and c + nwPost > timenow and (na(best) or c < best)
+            best := c
+            nm   := "NFP"
+    [best, nm]
+
 f_tRun(Tst s) =>
     if s.op.size() > 0
         for i = s.op.size() - 1 to 0
@@ -499,10 +591,16 @@ f_tRun(Tst s) =>
                 if tDayOn and s.stop
                     s.skip += 1
                     gone := true
+                else if nwBlk
+                    s.nwSk += 1
+                    gone := true
                 else if bar_index > t.sig
                     bool touch = t.dir == 1 ? low + tSpr <= t.entry : high >= t.entry
                     bool ran   = not na(tRunD) and (t.dir == 1 ? high + tSpr >= t.entry + tRunD : low <= t.entry - tRunD)
-                    if touch
+                    if touch and not sesOK
+                        s.sesSk += 1
+                        gone := true
+                    else if touch
                         t.filled := true
                         t.bar    := bar_index
                         fillNow  := true
@@ -540,6 +638,10 @@ f_tOpen(Tst s, int d) =>
     if tIn
         if tDayOn and s.stop
             s.skip += 1
+        else if not sesOK
+            s.sesSk += 1
+        else if nwPlace
+            s.nwSk += 1
         else
             float en = tPend ? close - d * tOff * tPt : d == 1 ? close + tSpr : close
             s.op.push(Tr.new(d, en, en - d * tSl * tPt, en + d * tTp * tPt, bar_index, bar_index, not tPend))
@@ -640,7 +742,15 @@ if dbOn and barstate.islast
         string v = str.tostring(s.w) + "W " + str.tostring(s.l) + "L" + f_wr(s.w, s.l) + " · " + str.tostring(s.pts, "+#;-#") + " pts (" + str.tostring(s.pts / tSl, "+#.#;-#.#") + "R) · " + str.tostring(pd, "+#;-#") + "/day"
         string tip = s.nm + "\nBUY: " + str.tostring(s.wB) + "W " + str.tostring(s.lB) + "L" + f_wr(s.wB, s.lB) + "\nSELL: " + str.tostring(s.w - s.wB) + "W " + str.tostring(s.l - s.lB) + "L" + f_wr(s.w - s.wB, s.l - s.lB) +
              "\nMissed (pending not filled): " + str.tostring(s.miss) + " · open / pending now: " + str.tostring(s.op.size()) +
+             "\nSkipped / cancelled: session OFF " + str.tostring(s.sesSk) + " · news window " + str.tostring(s.nwSk) +
              (tDayOn ? "\n🎯 target days " + str.tostring(s.tgt) + " · ⛔ loss days " + str.tostring(s.los) + " · skipped by the daily limit " + str.tostring(s.skip) : "") +
              "\nAvg per day: " + str.tostring(pd, "+#.#;-#.#") + " pts · $" + str.tostring(pd * tPt * 100 * 0.01, "+0.0#;-0.0#") + " per 0.01 lot · " + str.tostring(n * 1.0 / nD, "0.0") + " trades"
         r := f_row(r, s.nm, v, n == 0 ? cTxt : s.pts >= 0 ? #26A69A : #F23645, tip)
+    [nxE, nxN] = f_nwNext()
+    string sesTx = (sAOn ? "Asia ✓ " : "Asia ✕ ") + (sLOn ? "London ✓ " : "London ✕ ") + (sNOn ? "NY ✓ " : "NY ✕ ") + (sOOn ? "Other ✓" : "Other ✕")
+    string nwTx  = not nwOn ? "news OFF" : "news −" + str.tostring(nwBef) + "/+" + str.tostring(nwAft) + " min" +
+         (na(nxE) ? "" : " · next " + nxN + (timenow >= nxE - nwPre and timenow < nxE + nwPost ? " 🚫 NO TRADE now" : " " + str.format_time(nxE, "dd MMM HH:mm", nwTz)))
+    r := f_row(r, "Filters", sesTx + " · " + nwTx, nwOn and not na(nxE) and timenow >= nxE - nwPre and timenow < nxE + nwPost ? #F23645 : cTxt,
+         "Sessions (" + sTz + "): Asia " + sAsia + " · London " + sLon + " · New York " + sNy + "\nNow: " + sesNm.get(sesNow) + (sesOK ? " (ON)" : " (OFF — no trades)") +
+         "\nNews: no trade " + str.tostring(nwBef) + " min before until " + str.tostring(nwAft) + " min after (list in ⑥ + auto NFP). Next: " + (na(nxE) ? "none in the list" : nxN + " " + str.format_time(nxE, "dd MMM yyyy HH:mm", nwTz) + " (" + nwTz + ")"))
     r := f_row(r, "Period", na(tFirst) ? "—" : str.format_time(tFirst, "dd MMM yy") + " → " + str.format_time(time, "dd MMM yy") + " · " + str.tostring(nD) + " days", cTxt, "Test dates in ④. TradingView loads a limited number of candles, so 5m tests a shorter period than 15m.")
