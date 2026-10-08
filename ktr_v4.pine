@@ -1774,6 +1774,15 @@ f_wr(int w, int l) =>
 
 // KTR ❖ trade stats — main rows use the spread picked in ⓪b
 KtrStats kM     = kSt.get(kSel)
+// biggest drawdown of the closed ❖ results (picked spread), in pts and the longest losing run in R
+var float kPk = 0.0
+var float kDD = 0.0
+kPk := math.max(kPk, kM.net)
+kDD := math.max(kDD, kPk - kM.net)
+f_ddTx() =>
+    "max drawdown " + str.tostring(kDD / i_kSlPts, "#.#") + "R = $" + str.tostring(kDD * i_kPtVal * 100 * 0.01, "#,##0") + " at 0.01 lot · $" +
+     str.tostring(kDD * i_kPtVal * 100 * 0.10, "#,##0") + " at 0.10 · biggest safe lot for 12% of 10K ≈ " +
+     str.tostring(kDD > 0 ? math.floor(1200 / (kDD * i_kPtVal * 100) * 100) / 100 : 0, "0.00")
 int    kWins    = kM.wins
 int    kLosses  = kM.losses
 float  kNetPts  = kM.net
@@ -1795,7 +1804,7 @@ string kWLStr  = str.tostring(kWins) + "W " + str.tostring(kLosses) + "L" + f_wr
      (i_kSkOn and kM.skN > 0 ? " · " + str.tostring(kM.skN) + " skipped" : "") +
      ((kSes1 or kSesSlW) and kM.sesLimSk > 0 ? " · " + str.tostring(kM.sesLimSk) + " session-skipped" : "")
 color  kWLCol  = kN == 0 ? CL : kNetPts >= 0 ? KWIN : KLOSS
-string kNetStr = str.tostring(kNetPts, "+#.##;-#.##") + " pts  (" + str.tostring(kNetR, "+#.#;-#.#") + "R)"
+string kNetStr = str.tostring(kNetPts, "+#.##;-#.##") + " pts  (" + str.tostring(kNetR, "+#.#;-#.#") + "R) · DD " + str.tostring(kDD / i_kSlPts, "#.#") + "R"
 string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
      "\nBUY ❖:  " + str.tostring(kM.winB) + "W " + str.tostring(kM.lossB) + "L" + f_wr(kM.winB, kM.lossB) +
      "\nSELL ❖: " + str.tostring(kM.winS) + "W " + str.tostring(kM.lossS) + "L" + f_wr(kM.winS, kM.lossS) +
@@ -1815,7 +1824,8 @@ string kNetTip = "1R = SL = " + kSlTxt + " pts → a WIN is +" + str.tostring(i_
      (kM.early > 0 ? " " + str.tostring(kM.earlyPts, "+#.#;-#.#") + " (" + str.tostring(kM.early) + " closed early)" : "") +
      " = " + str.tostring(kNetPts, "+#.##;-#.##") + " pts" +
      "\n= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
-     "\nSpread " + str.tostring(kM.spr, "0.00") + " is already inside the W / L (BUY opens on the ask, SELL closes on the ask)"
+     "\nSpread " + str.tostring(kM.spr, "0.00") + " is already inside the W / L (BUY opens on the ask, SELL closes on the ask)" +
+     "\n\nDD = " + f_ddTx() + "\n(closed trades; open trades can go a bit deeper — keep extra room)"
 
 // one dashboard row per spread: W / L and Net
 f_sprRow(int r, int sc) =>
@@ -2556,7 +2566,7 @@ if i_sumLog and barstate.islastconfirmedhistory
              str.tostring(kMoL.get(i)) + "L · " + str.tostring(kMoPts.get(i), "+#;-#") + " pts · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i))
     string rep = "=== KTR v4 SUMMARY · " + syminfo.ticker + " " + timeframe.period + " · " + kPerStr + " ===" +
          "\nEntry: " + kEntStr + " · " + kTpSlStr + " · daily limit " + (i_kDayOn ? "+" + str.tostring(i_kDayTp, "#") + "/-" + str.tostring(i_kDaySl, "#") : "off") +
-         "\nFilters: " + fl + "\nWin/Loss: " + kWLStr + "\nNet: " + kNetStr + "\nAvg/day: " + kAvgStr +
+         "\nFilters: " + fl + "\nWin/Loss: " + kWLStr + "\nNet: " + kNetStr + "\nDrawdown: " + f_ddTx() + "\nAvg/day: " + kAvgStr +
          "\n" + bt + "\n\n🔬 FILTERS: " + kRepStr + "\n" + kRepTip + "\n\n📆 MONTHS" + mo + "\n=== END ==="
     for ln in str.split(rep, "\n")
         if str.length(ln) > 0
