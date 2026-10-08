@@ -1646,6 +1646,20 @@ kWin   = input.int(12, "Entry ❖ confirm window (bars)", minval=1, group=grpK)
 kCont  = input.bool(true, "Continuation signals (trend pullbacks)", group=grpK)
 kVolC  = input.bool(true, "❖ needs above-average volume (Boys confirm)", group=grpK)
 kVolM  = input.float(1.0, "Min relative volume for ❖", step=0.1, group=grpK)
+// KTR v4 ❖ filters (same defaults as KTR v4)
+kTRev   = input.bool(true, "Trade ❖ from REVERSAL diamonds", group=grpK, tooltip="KTR v4: each ❖ belongs to the diamond that started it. Reversal = counter-trend exhaustion · Continuation = failed pullback against the slow trend · Micro = 2+ small counter candles, then a thrust back. Untick a type to stop its ❖ (the diamond still shows).")
+kTCon   = input.bool(false, "Trade ❖ from CONTINUATION diamonds", group=grpK)
+kTMic   = input.bool(true, "Trade ❖ from MICRO-PULLBACK diamonds", group=grpK)
+kOpF    = input.string("Off", "OP side filter (below OP → only SELL · above → only BUY)", options=["Off", "On — ❖ entries only", "On — diamonds and ❖"], group=grpK, tooltip="OP = daily open. Side = candle close vs OP.")
+kHtfF   = input.string("Off", "❖ only with the higher-TF trend", options=["Off", "1H", "4H"], group=grpK, tooltip="BUY ❖ only while the 1H / 4H KTR trend (last closed candle) is up, SELL ❖ only while it is down.")
+kWickOn = input.bool(true, "Skip ❖ on a rejection candle (big wick against it)", group=grpK)
+kWickP  = input.int(40, "Max wick against the ❖ (% of candle)", minval=5, maxval=95, step=5, group=grpK)
+kHoldOn = input.bool(false, "Wait 1 candle: next candle must hold", group=grpK, tooltip="The ❖ counts on the NEXT candle only if it closes above (BUY) / below (SELL) the middle of the ❖ candle.")
+kOfOn   = input.bool(false, "❖ needs order flow on its side", group=grpK)
+kOfMin  = input.int(10, "Min order flow for the ❖ (%)", minval=0, maxval=80, step=5, group=grpK)
+kOfLen  = input.int(10, "Order flow: delta lookback bars", minval=1, group=grpK)
+kAdxOn  = input.bool(true, "No ❖ against a strong one-way trend (ADX)", group=grpK)
+kAdxMin = input.int(30, "Strong trend: ADX at least", minval=10, maxval=60, group=grpK)
 kHtf   = input.timeframe("15", "Higher KTR timeframe", group=grpK)
 kShow5 = lbAll and lbKtrDia   // ⓪ Display
 kShowH = lbAll and lbKtrDia
@@ -1668,7 +1682,13 @@ k15Tp   = input.float(20.0, "KOB-15 TP distance (price)", minval=0.1, step=0.5, 
 cK3     = input.color(#FFB300, "KOB³ colour", inline="kc", group=grpKB)
 cK15    = input.color(#26C6DA, "KOB-15 colour", inline="kc", group=grpKB, tooltip="KOB-15 = 15m KTR ❖ + OFX 2.0 combo, without the 5m ❖.")
 
-// KTR ❖ logic (same rules as the KTR module) → [alert buy, alert sell, ❖ buy, ❖ sell]
+// KTR ❖ logic (same rules as KTR v4) → [alert buy, alert sell, ❖ buy, ❖ sell]
+f_kHtfDir() =>
+    [hs, hd] = ta.supertrend(kSTf, kSTa)
+    hd[1]
+f_kWick(int dir) =>
+    float rng = high - low
+    not kWickOn or rng <= 0 or (dir == 1 ? high - close : close - low) <= rng * kWickP / 100
 f_ktr() =>
     [kst1, kd1] = ta.supertrend(kSTf, kSTa)
     [kst2, kd2] = ta.supertrend(kSTf * 2.0, kSTa)
@@ -1691,10 +1711,18 @@ f_ktr() =>
     dnRun := close < open ? dnRun + 1 : 0
     bool  micSell = kCont and not slowUp and not up and upRun[1] >= 2 and bearTh
     bool  micBuy  = kCont and slowUp and up and dnRun[1] >= 2 and bullTh
+    // OP side filter (daily open, candle close vs OP)
+    var float op = na
+    if timeframe.change("D")
+        op := open
+    bool  opOn    = kOpF != "Off"
+    bool  opDia   = kOpF == "On — diamonds and ❖"
+    bool  opBuy   = not opOn or na(op) or close > op
+    bool  opSell  = not opOn or na(op) or close < op
     var int lastSig = -99999
     bool  coolOK = bar_index - lastSig >= kCool
-    bool  aBuy   = (revBuy or conBuy or micBuy) and coolOK
-    bool  aSell  = (revSell or conSell or micSell) and coolOK
+    bool  aBuy   = (revBuy or conBuy or micBuy) and coolOK and (not opDia or opBuy)
+    bool  aSell  = (revSell or conSell or micSell) and coolOK and (not opDia or opSell)
     if aBuy or aSell
         lastSig := bar_index
     var int   buyBar   = -99999
@@ -1703,24 +1731,44 @@ f_ktr() =>
     var float sellLow  = na
     var bool  buyDone  = true
     var bool  sellDone = true
+    var int   buyTy    = 0
+    var int   sellTy   = 0
     if aBuy
         buyBar  := bar_index
         buyHigh := high
         buyDone := false
+        buyTy   := revBuy ? 0 : conBuy ? 1 : 2
     if aSell
         sellBar  := bar_index
         sellLow  := low
         sellDone := false
+        sellTy   := revSell ? 0 : conSell ? 1 : 2
+    bool  tyBuy  = buyTy == 0 ? kTRev : buyTy == 1 ? kTCon : kTMic
+    bool  tySell = sellTy == 0 ? kTRev : sellTy == 1 ? kTCon : kTMic
     bool  flipUp = up and not up[1]
     bool  flipDn = not up and up[1]
     float relVol = volume / ta.sma(volume, 20)
     bool  volOK  = not kVolC or relVol >= kVolM
-    bool  eBuy   = not buyDone and bar_index - buyBar <= kWin and volOK and (flipUp or (bar_index > buyBar and close > buyHigh))
-    bool  eSell  = not sellDone and bar_index - sellBar <= kWin and volOK and (flipDn or (bar_index > sellBar and close < sellLow))
-    if eBuy
+    // higher-TF trend · order flow · ADX
+    float hDir   = request.security(syminfo.tickerid, kHtfF == "4H" ? "240" : "60", f_kHtfDir(), lookahead=barmerge.lookahead_on)
+    bool  htfBuy  = kHtfF == "Off" or na(hDir) or hDir < 0
+    bool  htfSell = kHtfF == "Off" or na(hDir) or hDir > 0
+    float bv     = close >= open ? volume : volume * (close - low) / math.max(high - low, 0.0001)
+    float sv     = close < open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+    float ofD    = math.sum(bv - sv, kOfLen) / math.max(math.sum(bv + sv, kOfLen), 0.0001) * 100
+    [diP, diM, adx] = ta.dmi(14, 14)
+    bool  strong  = kAdxOn and adx >= kAdxMin
+    bool  flBuy   = (not kOfOn or na(ofD) or ofD >= kOfMin) and (not strong or diP >= diM)
+    bool  flSell  = (not kOfOn or na(ofD) or ofD <= -kOfMin) and (not strong or diM >= diP)
+    bool  sBuy   = not buyDone and bar_index - buyBar <= kWin and volOK and opBuy and htfBuy and f_kWick(1) and flBuy and tyBuy and (flipUp or (bar_index > buyBar and close > buyHigh))
+    bool  sSell  = not sellDone and bar_index - sellBar <= kWin and volOK and opSell and htfSell and f_kWick(-1) and flSell and tySell and (flipDn or (bar_index > sellBar and close < sellLow))
+    if sBuy
         buyDone := true
-    if eSell
+    if sSell
         sellDone := true
+    // wait 1 candle (option): the ❖ counts on the next candle if it closes beyond the middle of the ❖ candle
+    bool  eBuy   = kHoldOn ? sBuy[1] and close > (high[1] + low[1]) / 2 : sBuy
+    bool  eSell  = kHoldOn ? sSell[1] and close < (high[1] + low[1]) / 2 : sSell
     [aBuy, aSell, eBuy, eSell]
 
 // the finished higher-timeframe candle only (no repainting): its ❖ and its open time
