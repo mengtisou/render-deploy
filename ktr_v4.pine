@@ -30,6 +30,10 @@ indicator("KTR v4", overlay=false, max_boxes_count=500, max_lines_count=500, max
 // 🔬 FILTER REPORT — runs the v3 ❖ (no filters) in the background and shows which ❖
 //                 the filters removed and how those would have ended (W / L).
 // 📝 TRADE JOURNAL — optional Pine Logs line per ❖ trade (no data export needed).
+// 🧪 BREAKDOWN    — W / L and R of all ❖ trades by diamond type, side, session, nth of
+//                 day, 1H trend, order flow, ADX and location vs OP (one hover).
+// ◇ DIAMOND TYPES — reversal / continuation / micro-pullback ❖ can be switched off one by one.
+// ⚖ BREAK-EVEN    — option: SL moves to entry (+ lock) after +X pts.
 // ⓪ ❖ ON 5 MIN (option, default Off) — the blue / red diamond still comes from the
 //                 chart candles (e.g. 15m), the ❖ confirms on the 1 / 3 / 5 min
 //                 candles after it and the trade starts at that candle's close.
@@ -93,6 +97,10 @@ i_ktrWin   = input.int  (12,    "Entry ❖ confirm window (bars)",  group=G0, mi
 i_ktrLtf   = input.string("Off (chart candles)", "Entry ❖ confirm on lower TF", group=G0,
      options=["Off (chart candles)", "1 min", "3 min", "5 min"],
      tooltip="Off = the ❖ confirms on the chart's own candles (normal).\n5 min (or 1 / 3 min) = the blue / red diamond still comes from the chart candles (e.g. 15m), then the ❖ waits for the first 5-minute candle AFTER the diamond candle that confirms: the 5m trend (same Supertrend settings) flips your way, or a 5m candle closes above the diamond candle's high (BUY) / below its low (SELL). Boys volume and the OP side filter are checked on that 5m candle. The ❖ is drawn on the chart candle that holds it and the trade starts at that 5m candle's close; the rest of that chart candle is checked first on the next candle, so a fast TP / SL is not missed.\nThe confirm window still counts chart candles. Works only when the chart timeframe is higher than the one picked (15m chart + 5 min), otherwise it acts like Off. TradingView loads a limited number of lower-timeframe candles (about 100K on most plans): older chart history without 5m data gets no ❖ — the dashboard ❖ Period row shows from when it starts.")
+i_tRev     = input.bool (true,  "Trade ❖ from REVERSAL diamonds",          group=G0,
+     tooltip="Each ❖ belongs to the diamond that started it:\nREVERSAL = counter-trend exhaustion (stretched RSI or a fresh 12-candle low / high).\nCONTINUATION = a pullback against the slow trend that fails.\nMICRO = 2+ small counter candles inside the trend, then a thrust back.\nUntick a type to stop its ❖ (the diamond still shows). The 🧪 Breakdown row shows which type wins.")
+i_tCon     = input.bool (true,  "Trade ❖ from CONTINUATION diamonds",      group=G0)
+i_tMic     = input.bool (true,  "Trade ❖ from MICRO-PULLBACK diamonds",    group=G0)
 i_ktrCont  = input.bool (true,  "Continuation signals (trend pullbacks)", group=G0,
      tooltip="Also fire alerts + ❖ when a pullback against the bigger trend fails — e.g. SELL ❖ at a weak bounce inside a downtrend. Uses a softer RSI gate (45/55) since pullbacks rarely reach 35/65.")
 i_kMA      = input.bool (true,  "Show 30MA line",                 group=G0)
@@ -166,6 +174,11 @@ i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
+i_kBeOn    = input.bool  (false, "Break-even: move SL after +X pts",  group=G0b,
+     tooltip="Once a live trade has been at least +X pts in profit (checked at the close of each candle, on the price it can exit at), its SL moves to the entry + 'lock' pts. If price then comes back to it, the trade ends at that price: not a LOSS, counted as 'closed early' (BE) with its pts. TP stays the same. Compare ❖ Net with this ON and OFF.")
+i_kBePts   = input.float (100,   "Break-even after + (pts)",          group=G0b, minval=10, step=10)
+i_kBeLock  = input.float (0,     "Break-even: lock in (pts)",         group=G0b, minval=0, step=10,
+     tooltip="0 = SL exactly at the entry price (BUY: the ask you paid). 20 = SL at entry + 20 pts, so a BE exit still makes +20.")
 i_kSkOn    = input.bool  (false, "Skip ❖ after SL in a row",          group=G0b,
      tooltip="ON: after this many SL (LOSS) in a row, the next ❖ is skipped (not traded), then trading goes on with the ❖ after it. Example 2 / 1: 1st ❖ LOSS, 2nd ❖ LOSS → 3rd ❖ skipped → 4th ❖ traded.\nA WIN resets the count; missed pending orders and trades closed early don't change it. After the skip the count starts again from 0.\nThe decision is made when the ❖ prints: a ❖ that comes while the 2nd trade is still open is taken (its SL is not known yet).\nOnly a ❖ that would have been traded is skipped (not one already skipped by the daily limit, session OFF, news, prop limits, one-trade-at-a-time or the hedging rule). Skipped ❖ get a grey 'skip' label and show in the Day log. Each spread counts on its own.")
 i_kSkN     = input.int   (2,     "SL in a row before the skip",       group=G0b, minval=1, maxval=10)
@@ -253,6 +266,8 @@ i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (
      tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
 i_moOn     = input.bool  (true,  "Per month row  (W / L, pts, $ for every month)", group=G0e,
      tooltip="Shows the average per month (≈ 21 trading days) and, on hover, every month: W / L, win rate, pts, R, $ at the start lot of ⓪j (0.01 when the lot test is off), the lot test $ (when on), 🎯 target / ⛔ loss-limit days and trading days. A trade counts in the month it closed. Uses the spread picked in ⓪b (●).")
+i_brkOn    = input.bool  (true,  "🧪 Breakdown row  (W / L by type, session, trend, flow …)", group=G0e,
+     tooltip="Every closed ❖ trade of the picked spread (WIN / LOSS) grouped by: diamond type, BUY / SELL, session, 1st / 2nd / 3rd / 4th+ ❖ of the day, with / against the 1H trend, order flow with / against, ADX (weak / strong with / strong against), and location vs OP in KTR steps (cheap = BUY below OP / SELL above OP). Each line: W / L, win rate, pts and R. Values are taken when the ❖ printed.")
 i_repOn    = input.bool  (true,  "🔬 Filter report row  (what the ❖ filters removed)", group=G0e,
      tooltip="Runs the v3 ❖ (same KTR rules, no ❖ filters) in the background and compares them with the filtered v4 ❖, using one SIMPLE trade test for both: entry at the ❖ close (BUY + spread), TP / SL as in ⓪b, no pending order, no daily limit, no other rules. Shows how many ❖ each filter removed and how those removed ❖ would have ended — if they are mostly LOSSES the filter helps, if mostly WINS it hurts. Numbers differ from the main Win / Loss rows because those use your full settings. Chart-candle ❖ only (not with 'confirm on lower TF').")
 i_aftOn    = input.bool  (true,  "Day after ⛔ / 🎯: 1st / 2nd / 3rd ❖ rows", group=G0e,
@@ -445,14 +460,22 @@ var float ktrBuyHigh  = na
 var float ktrSellLow  = na
 var bool  ktrBuyDone  = true
 var bool  ktrSellDone = true
+var int   ktrBuyType  = 0        // diamond type of the setup: 0 reversal · 1 continuation · 2 micro pullback
+var int   ktrSellType = 0
 if ktrAlertBuy
     ktrBuyBar  := bar_index
     ktrBuyHigh := high
     ktrBuyDone := false
+    ktrBuyType := ktrRevBuy ? 0 : ktrConBuy ? 1 : 2
 if ktrAlertSell
     ktrSellBar := bar_index
     ktrSellLow := low
     ktrSellDone := false
+    ktrSellType := ktrRevSell ? 0 : ktrConSell ? 1 : 2
+f_typeOK(int ty) =>
+    ty == 0 ? i_tRev : ty == 1 ? i_tCon : i_tMic
+bool kTypeBuyOK  = f_typeOK(ktrBuyType)
+bool kTypeSellOK = f_typeOK(ktrSellType)
 
 bool ktrFlipUp = ktrUp and not ktrUp[1]
 bool ktrFlipDn = not ktrUp and ktrUp[1]
@@ -507,8 +530,8 @@ int     kLtfSell = -1
 if kLtfOn and lCl.size() > 0
     if na(kLtfFrom)
         kLtfFrom := time
-    bool kBuyLive  = ktrShow and not ktrBuyDone  and bar_index > ktrBuyBar  and bar_index - ktrBuyBar  <= i_ktrWin
-    bool kSellLive = ktrShow and not ktrSellDone and bar_index > ktrSellBar and bar_index - ktrSellBar <= i_ktrWin
+    bool kBuyLive  = ktrShow and not ktrBuyDone  and bar_index > ktrBuyBar  and bar_index - ktrBuyBar  <= i_ktrWin and kTypeBuyOK
+    bool kSellLive = ktrShow and not ktrSellDone and bar_index > ktrSellBar and bar_index - ktrSellBar <= i_ktrWin and kTypeSellOK
     for [j, c] in lCl
         bool up  = lUp.get(j)
         bool vOK = not i_ktrVolC or lRv.get(j) >= i_ktrVolM
@@ -523,10 +546,10 @@ if kLtfOn and lCl.size() > 0
         kLtfTr := up ? 1 : -1
 
 bool ktrSigBuy  = kLtfOn ? kLtfBuy >= 0 :
-     ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and kHtfBuyOK and kWickBuyOK and kFlowBuyOK and
+     ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and kHtfBuyOK and kWickBuyOK and kFlowBuyOK and kTypeBuyOK and
      (ktrFlipUp or (bar_index > ktrBuyBar  and close > ktrBuyHigh))
 bool ktrSigSell = kLtfOn ? kLtfSell >= 0 :
-     ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and kHtfSellOK and kWickSellOK and kFlowSellOK and
+     ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and kHtfSellOK and kWickSellOK and kFlowSellOK and kTypeSellOK and
      (ktrFlipDn or (bar_index > ktrSellBar and close < ktrSellLow))
 if ktrSigBuy
     ktrBuyDone := true
@@ -861,6 +884,7 @@ type KtrTrade
     int    sesId  = -1         // session (kSesId) the ❖ printed in
     float  lot    = na         // lot test (⓪j): lot of the day it was placed (picked spread only)
     string feat   = ""         // trade journal: features at the ❖ (picked spread only)
+    bool   be     = false      // break-even: SL already moved
 
 // results for one spread
 type KtrStats
@@ -903,6 +927,8 @@ type KtrStats
     float  earlyPts  = 0.0
     float  fundPnl  = 0.0      // closed P&L while funded
     int    nwSkip   = 0        // ❖ skipped / pending cancelled by the news filter
+    int    beN      = 0        // trades that ended at break-even
+    float  bePts    = 0.0
     int    lRun     = 0        // SL in a row (for 'Skip ❖ after SL in a row')
     int    skLeft   = 0        // ❖ still to skip
     int    skN      = 0        // ❖ skipped by it
@@ -988,6 +1014,14 @@ f_aiRec(int ago, float code, float pts) =>
 var int           kNthDay = 0                        // ❖ trades placed so far today
 var int           kPrevDay = 0                       // how the previous day ended: 0 normal · 1 ⛔ loss limit · 2 🎯 target
 var array<int>    kTrPrev  = array.new_int()         // per trade: kPrevDay of its day
+// 🧪 breakdown: per trade (same index as kTrCode) the group of each feature at the ❖
+var array<int>    kTrTyp = array.new_int()          // 0 reversal · 1 continuation · 2 micro
+var array<int>    kTrDir = array.new_int()          // 1 BUY · -1 SELL
+var array<int>    kTrSes = array.new_int()          // session at the ❖
+var array<int>    kTrHtf = array.new_int()          // 1 with the 1H trend · -1 against · 0 unknown
+var array<int>    kTrOf  = array.new_int()          // 1 order flow with the ❖ · -1 against
+var array<int>    kTrAdx = array.new_int()          // 0 weak · 1 strong with · 2 strong against
+var array<int>    kTrLoc = array.new_int()          // vs OP in KTR steps (cheap side −): 0 < −1 · 1 −1…0 · 2 0…+1 · 3 > +1 · -1 unknown
 var array<int>    kNthW   = array.new_int(4, 0)      // [1st, 2nd, 3rd, 4th+]
 var array<int>    kNthL   = array.new_int(4, 0)
 var array<int>    kNthM   = array.new_int(4, 0)      // missed: pending order cancelled before it filled
@@ -1490,6 +1524,18 @@ if kTrack and kOpen.size() > 0
             float aLo  = pHit ? pLo : kFC and not kFillDn ? xCl : xLo
             bool hitTP = kt.dir == 1 ? aHi >= kt.tp : aLo <= kt.tp
             bool hitSL = kt.dir == 1 ? aLo <= kt.sl : aHi >= kt.sl
+            // break-even: the moved SL is hit (TP on the same candle only wins with 'TP and SL … = Win')
+            if kt.be and hitSL and not (hitTP and i_kBoth == "Win")
+                st.beN  += 1
+                st.bePts += kt.dir * (kt.sl - kt.entry) / i_kPtVal
+                f_kCloseNow(kt, st, kt.dir == 1 ? kt.sl : kt.sl - kS, "break-even")
+                if i_pfOn
+                    kPfRisk.set(kt.sc, math.max(kPfRisk.get(kt.sc) - kRisk1, 0.0))
+                f_kDayCheck(st, kMain)
+                kOpen.remove(i)
+                kDone := true
+                hitTP := false
+                hitSL := false
             if hitTP or hitSL
                 bool  kWin  = hitTP and (not hitSL or i_kBoth == "Win")
                 float kGain = kWin ? i_kTpPts : -i_kSlPts
@@ -1583,6 +1629,12 @@ if kTrack and kOpen.size() > 0
                 // this trade reached the daily target / loss limit → stop for the day
                 f_kDayCheck(st, kMain)
                 kOpen.remove(i)
+            // break-even: +X pts reached at this candle → SL to entry (+ lock) from the next candle on
+            if i_kBeOn and not kDone and not kt.be
+                float kFav = kt.dir == 1 ? aHi - kt.entry : kt.entry - aLo
+                if kFav >= i_kBePts * i_kPtVal
+                    kt.be := true
+                    kt.sl := kt.entry + kt.dir * i_kBeLock * i_kPtVal
         if not kDone and kMain
             if not na(kt.bxTp)
                 box.set_right(kt.bxTp, bar_index + 1)
@@ -1664,6 +1716,20 @@ if kTrack and kSesSlW and barstate.isconfirmed and kOpen.size() > 0
             f_kCancel(kt, "SL this session")
             kOpen.remove(i)
 
+// 🧪 breakdown: remember the ❖'s groups (picked spread, same index as kTrCode)
+f_brkPush(int dir) =>
+    int   ty  = dir == 1 ? ktrBuyType : ktrSellType
+    float stp = ktrStep
+    float x   = na(ktr_op) or na(stp) or stp == 0 ? na : (kSigPx - ktr_op) / stp * dir
+    kTrTyp.push(ty)
+    kTrDir.push(dir)
+    kTrSes.push(kSesNow)
+    kTrHtf.push(na(kHtfDir) ? 0 : (kHtfDir < 0) == (dir == 1) ? 1 : -1)
+    kTrOf.push(kOfD * dir >= 0 ? 1 : -1)
+    kTrAdx.push(kAdx < i_kAdxMin ? 0 : (kDiP >= kDiM) == (dir == 1) ? 1 : 2)
+    kTrLoc.push(na(x) ? -1 : x < -1 ? 0 : x < 0 ? 1 : x < 1 ? 2 : 3)
+    dir
+
 // 2) a confirmed ❖ opens a trade, or places the pending order — once per spread
 int kDir = ktrEntryBuy and not ktrEntrySell ? 1 : ktrEntrySell and not ktrEntryBuy ? -1 : 0
 if kTrack and barstate.isconfirmed and kDir != 0
@@ -1723,6 +1789,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     kTrDay.push(time_tradingday)
                     kTrNth.push(0)
                     kTrPrev.push(kPrevDay)
+                    f_brkPush(kDir)
                     kTrCode.push(3)
                     kTrPts.push(0.0)
                     if i_kWLlab
@@ -1759,6 +1826,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     kTrDay.push(time_tradingday)
                     kTrNth.push(kNthDay)
                     kTrPrev.push(kPrevDay)
+                    f_brkPush(kDir)
                     kTrCode.push(9)
                     kTrPts.push(0.0)
                     aiTaken := 1
@@ -1865,6 +1933,7 @@ string kWLTip  = "Spread " + str.tostring(kM.spr, "0.00") +
      "\nSkipped / cancelled by the daily limit: " + str.tostring(kM.skipDay) +
      "\nSkipped / cancelled because the session is OFF: " + str.tostring(kM.sesSkip) +
      "\nSkipped / cancelled by the news filter: " + str.tostring(kM.nwSkip) +
+     (i_kBeOn ? "\nEnded at break-even: " + str.tostring(kM.beN) + " (" + str.tostring(kM.bePts, "+#;-#") + " pts, in 'closed early')" : "") +
      (i_kSkOn ? "\nSkipped after " + str.tostring(i_kSkN) + " SL in a row: " + str.tostring(kM.skN) + " ❖" : "") +
      (kSes1 or kSesSlW ? "\nSkipped / cancelled by the per-session rule (" + i_kSesLim + "): " + str.tostring(kM.sesLimSk) : "") +
      (i_pfOn ? "\nHedging rule: " + i_pfHedge + " · skipped / cancelled: " + str.tostring(kM.hedgeSkip) +
@@ -2336,6 +2405,50 @@ f_moRow(int r) =>
          (nm > 0 ? "\n" + ls : "")
     f_dRow(r, "📆 Per month", v, CH, perMo >= 0 ? KWIN : KLOSS, size.tiny, tip)
 
+// 🧪 breakdown row: groups 0-2 type · 3-4 side · 5-8 session · 9-12 nth · 13-14 1H · 15-16 flow · 17-19 ADX · 20-23 location
+var array<string> kBrkNm = array.from("Reversal ◇", "Continuation ◇", "Micro-pullback ◇", "BUY", "SELL",
+     "Asia", "London", "New York", "Other hours", "1st ❖ of day", "2nd ❖", "3rd ❖", "4th+ ❖",
+     "With 1H trend", "Against 1H trend", "Order flow with ❖", "Order flow against ❖",
+     "ADX weak (ranging)", "ADX strong, ❖ with it", "ADX strong, ❖ against it",
+     "Cheap: > 1 step past OP", "Cheap: 0–1 step", "Expensive: 0–1 step", "Expensive: > 1 step (chasing)")
+f_brkRow(int r) =>
+    array<int>   w = array.new_int(24, 0)
+    array<int>   l = array.new_int(24, 0)
+    array<float> p = array.new_float(24, 0.0)
+    int n = math.min(kTrCode.size(), kTrTyp.size())
+    if n > 0
+        for i = 0 to n - 1
+            int c = kTrCode.get(i)
+            if c == 1 or c == -1
+                float pt  = kTrPts.get(i)
+                int   nth = kTrNth.get(i)
+                array<int> g = array.from(kTrTyp.get(i), kTrDir.get(i) == 1 ? 3 : 4, 5 + kTrSes.get(i), 9 + math.min(math.max(nth, 1), 4) - 1,
+                     kTrHtf.get(i) == 1 ? 13 : kTrHtf.get(i) == -1 ? 14 : -1, kTrOf.get(i) == 1 ? 15 : 16, 17 + kTrAdx.get(i),
+                     kTrLoc.get(i) >= 0 ? 20 + kTrLoc.get(i) : -1)
+                for k in g
+                    if k >= 0
+                        w.set(k, w.get(k) + (c == 1 ? 1 : 0))
+                        l.set(k, l.get(k) + (c == 1 ? 0 : 1))
+                        p.set(k, p.get(k) + pt)
+    string tip = "🧪 Breakdown of closed ❖ trades (WIN / LOSS) · spread " + str.tostring(kM.spr, "0.00") +
+         " · break-even win rate " + str.tostring(i_kSlPts * 100.0 / (i_kTpPts + i_kSlPts), "#") + "%"
+    array<string> hd = array.from("\n\n◇ DIAMOND TYPE", "\n\nSIDE", "\n\nSESSION (at the ❖)", "\n\n❖ OF THE DAY",
+         "\n\n1H TREND", "\n\nORDER FLOW", "\n\nADX (" + str.tostring(i_kAdxMin) + ")", "\n\nLOCATION vs OP (KTR steps)")
+    array<int>    st = array.from(0, 3, 5, 9, 13, 15, 17, 20)
+    for k = 0 to 23
+        int hi = st.indexof(k)
+        if hi >= 0
+            tip += hd.get(hi)
+        int ww = w.get(k)
+        int ll = l.get(k)
+        if ww + ll > 0
+            tip += "\n  " + kBrkNm.get(k) + ":  " + str.tostring(ww) + "W " + str.tostring(ll) + "L" + f_wr(ww, ll) +
+                 " · " + str.tostring(p.get(k), "+#;-#") + " pts (" + str.tostring(p.get(k) / i_kSlPts, "+#.#;-#.#") + "R)"
+    string v = "Rev " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) +
+         " · Cont " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1)) +
+         " · Micro " + str.tostring(w.get(2)) + "W " + str.tostring(l.get(2)) + "L" + f_wr(w.get(2), l.get(2))
+    f_dRow(r, "🧪 Breakdown", v, CH, CL, size.tiny, tip + "\n\nHover-only list; small groups (< 20 trades) are not reliable.")
+
 // 🔬 filter report row
 f_repTx(int st) =>
     str.tostring(kRepW.get(st)) + "W " + str.tostring(kRepL.get(st)) + "L" + f_wr(kRepW.get(st), kRepL.get(st)) + " · " + str.tostring(kRepP.get(st), "+#;-#") + " pts"
@@ -2549,6 +2662,8 @@ if barstate.islast and i_showDash
             for sl = 0 to 3
                 if sl < 3 or kNthW.get(3) + kNthL.get(3) + kNthM.get(3) + kNthE.get(3) > 0
                     r := f_nthRow(r, sl)
+        if i_brkOn
+            r := f_brkRow(r)
         if i_repOn
             r := f_dRow(r, "🔬 Filters", kRepStr, CH, kRepP.get(1) >= kRepP.get(0) ? KWIN : KLOSS, size.tiny, kRepTip)
         if i_aftOn
