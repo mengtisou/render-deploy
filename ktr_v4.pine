@@ -1170,6 +1170,7 @@ var array<int>    kMoW   = array.new_int()
 var array<int>    kMoL   = array.new_int()
 var array<int>    kMoE   = array.new_int()          // closed early
 var array<float>  kMoPts = array.new_float()
+var array<float>  kMoLot = array.new_float()        // lot test $ per month
 var array<int>    kMoDay = array.new_int()          // trading days
 var array<int>    kMoTg  = array.new_int()          // 🎯 target days
 var array<int>    kMoLs  = array.new_int()          // ⛔ loss-limit days
@@ -1181,6 +1182,7 @@ f_moSlot() =>
         kMoL.push(0)
         kMoE.push(0)
         kMoPts.push(0.0)
+        kMoLot.push(0.0)
         kMoDay.push(0)
         kMoTg.push(0)
         kMoLs.push(0)
@@ -1194,6 +1196,8 @@ f_moRec(KtrTrade t, int code, float pts) =>
     else
         kMoE.set(i, kMoE.get(i) + 1)
     kMoPts.set(i, kMoPts.get(i) + pts)
+    if i_lotOn and not na(t.lot)
+        kMoLot.set(i, kMoLot.get(i) + pts * i_kPtVal * 100 * t.lot)
     i
 f_moDay() =>
     int i = f_moSlot()
@@ -2237,6 +2241,8 @@ f_moRow(int r) =>
                 ls += "\n" + mn + "   " + str.tostring(w) + "W " + str.tostring(l) + "L" + f_wr(w, l) +
                      " · " + str.tostring(pt, "+#;-#") + " pts (" + str.tostring(pt / i_kSlPts, "+#.#;-#.#") + "R)" +
                      " · $" + str.tostring(pt * kUsdLot1 * kRefLot, "+#,##0.##;-#,##0.##") +
+                     (i_lotOn ? " · fixed " + str.tostring(i_lotBase, "0.00") + " $" + str.tostring(pt * i_kPtVal * 100 * i_lotBase, "+#,##0;-#,##0") +
+                     " · lot test $" + str.tostring(kMoLot.get(i), "+#,##0;-#,##0") : "") +
                      (kMoTg.get(i) + kMoLs.get(i) > 0 ? " · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i)) : "") +
                      (kMoE.get(i) > 0 ? " · " + str.tostring(kMoE.get(i)) + " closed early" : "") +
                      " · " + str.tostring(kMoDay.get(i)) + " days"
@@ -2560,7 +2566,9 @@ if i_sumLog and barstate.islastconfirmedhistory
             break
         int k = kMoKey.get(i)
         mo += "\n" + kMoNm.get(k % 12) + " " + str.tostring(math.floor(k / 12) % 100, "00") + ": " + str.tostring(kMoW.get(i)) + "W " +
-             str.tostring(kMoL.get(i)) + "L · " + str.tostring(kMoPts.get(i), "+#;-#") + " pts · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i))
+             str.tostring(kMoL.get(i)) + "L · " + str.tostring(kMoPts.get(i), "+#;-#") + " pts · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i)) +
+             (i_lotOn ? " · fixed " + str.tostring(i_lotBase, "0.00") + " $" + str.tostring(kMoPts.get(i) * i_kPtVal * 100 * i_lotBase, "+#,##0;-#,##0") +
+             " · lot test $" + str.tostring(kMoLot.get(i), "+#,##0;-#,##0") : "")
     string rep = "=== KTR v4 SUMMARY · " + syminfo.ticker + " " + timeframe.period + " · " + kPerStr + " ===" +
          "\nEntry: " + kEntStr + " · " + kTpSlStr + " · daily limit " + (i_kDayOn ? "+" + str.tostring(i_kDayTp, "#") + "/-" + str.tostring(i_kDaySl, "#") : "off") +
          "\nFilters: " + fl + "\nWin/Loss: " + kWLStr + "\nNet: " + kNetStr + "\nDrawdown: " + f_ddTx() + "\nLot test: " + f_lotTx() + "\nAvg/day: " + kAvgStr +
