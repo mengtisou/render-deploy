@@ -1,8 +1,9 @@
 //@version=6
-indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("KTR v4", overlay=false, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ══════════════════════════════════════════════════════════════════
-// KTR v3 + EXPORT — KTR ONLY (the SMC 2026 ICT part is removed so the
+// KTR v4 — KTR ONLY + ❖ FILTERS (v3 + Export without the filters: ktr_v3_export.pine)
+// KTR ONLY (the SMC 2026 ICT part is removed so the
 // script fits TradingView's size limit; the full version stays in
 // smc_2026_ict_ktr_v3_export.pine)
 //
@@ -22,6 +23,10 @@ indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count
 //                 Funded, and blocks ❖ trades that could break a limit.
 // ⓪ OP SIDE FILTER (option, default Off) — price above the daily open (OP) → only BUY ❖,
 //                 price below OP → only SELL ❖. Set in the KTR group.
+// ⓪ ❖ FILTERS (options, default Off) — higher-TF trend (1H / 4H), rejection wick on the
+//                 ❖ candle, and 'wait 1 candle: the next candle must hold'.
+//                 Order flow filter (buy / sell volume pressure must agree with the ❖)
+//                 and strong one-way trend filter (ADX: no ❖ against a strong trend).
 // ⓪ ❖ ON 5 MIN (option, default Off) — the blue / red diamond still comes from the
 //                 chart candles (e.g. 15m), the ❖ confirms on the 1 / 3 / 5 min
 //                 candles after it and the trade starts at that candle's close.
@@ -97,6 +102,20 @@ i_ktrVolM  = input.float(1.0,   "Min relative volume for ❖",      group=G0, st
 i_ktrOpF   = input.string("Off", "OP side filter  (below OP → only SELL · above OP → only BUY)", group=G0,
      options=["Off", "On — ❖ entries only", "On — diamonds and ❖"],
      tooltip="OP = the daily open line. The side is decided by the CLOSE of the candle (price = close vs OP). Equal to OP = neither side.\nOff: no filter.\nOn — ❖ entries only: a BUY ❖ is allowed only when price is above OP, a SELL ❖ only when price is below OP. The blue / red diamonds still show, and a ❖ that is on the wrong side waits inside its confirm window until price is on the right side.\nOn — diamonds and ❖: the diamonds follow the same rule too (a blocked diamond does not use the 'min bars between alerts').\nTrades and statistics follow the ❖, so you can compare Off and On.")
+i_kHtf     = input.string("Off", "❖ only with the higher-TF trend",  group=G0,
+     options=["Off", "1H", "4H"],
+     tooltip="BUY ❖ only while the 1H (or 4H) KTR trend is up, SELL ❖ only while it is down. The trend is the same Supertrend as the yellow / red candles, taken from the LAST CLOSED 1H / 4H candle (no repaint). A ❖ against it waits inside its confirm window until the trend agrees. Stops BUY ❖ from a short spike inside a clear down move (and the other way round).")
+i_kWick    = input.bool (false, "Skip ❖ on a rejection candle (big wick against it)", group=G0,
+     tooltip="BUY ❖: skipped if the candle's upper wick (high − close) is bigger than the % below of the candle's range — price was pushed up and already rejected. SELL ❖: the lower wick (close − low). The ❖ waits inside its confirm window for a cleaner candle. With 'Entry ❖ confirm on lower TF' the 5m ❖ candle is checked.")
+i_kWickPct = input.int  (40,    "Max wick against the ❖ (% of candle)", group=G0, minval=5, maxval=95, step=5)
+i_kHold    = input.bool (false, "Wait 1 candle: next candle must hold",  group=G0,
+     tooltip="The ❖ is not traded on its own candle. It counts on the NEXT candle only if that candle closes above the middle of the ❖ candle (BUY) / below it (SELL); the trade starts at that next candle's close. A last-minute spike that is rejected right away is filtered out. Only for chart-candle ❖ (not with 'confirm on lower TF').")
+i_kOfOn    = input.bool (false, "❖ needs order flow on its side",     group=G0,
+     tooltip="Order flow = buying volume − selling volume of the last 'Order flow: delta lookback bars' candles (⑨ Display, 10), in % of all volume (the same number as the Order flow candle colouring). BUY ❖ only when it is at least +X %, SELL ❖ only when it is at most −X %. A ❖ without flow on its side (often a manipulation spike or a thin move) waits inside its confirm window. Note: OANDA gold has tick volume, not real exchange volume — the split into buy / sell is estimated from where each candle closes.")
+i_kOfMin   = input.int  (10,    "Min order flow for the ❖ (%)",       group=G0, minval=0, maxval=80, step=5)
+i_kAdxOn   = input.bool (false, "No ❖ against a strong one-way trend (ADX)", group=G0,
+     tooltip="ADX measures how strong the trend is (not its direction); DI+ / DI− give the direction. When ADX ≥ the level below, the market runs one way: a BUY ❖ is skipped while DI− > DI+ (strong down move) and a SELL ❖ while DI+ > DI− (strong up move). ❖ WITH the strong trend are still taken. Below the level (ranging / two-way market) nothing is blocked.")
+i_kAdxMin  = input.int  (25,    "Strong trend: ADX at least",         group=G0, minval=10, maxval=60)
 i_volLen   = input.int  (20,    "Pane: Boys relative volume length", group=G0)
 i_bullLen  = input.int  (14,    "Pane: Bullishness pressure length", group=G0)
 
@@ -435,6 +454,35 @@ bool ktrFlipDn = not ktrUp and ktrUp[1]
 float ktrRelVol = volume / ta.sma(volume, 20)
 bool  ktrVolOK  = not i_ktrVolC or ktrRelVol >= i_ktrVolM
 
+// ❖ filters (options): higher-TF trend (last closed 1H / 4H candle, no repaint) and rejection wick
+f_htfDir() =>
+    [hSt, hDir] = ta.supertrend(i_ktrSTf, i_ktrSTa)
+    hDir[1]
+string kHtfTf  = i_kHtf == "4H" ? "240" : "60"
+float  kHtfDir = request.security(syminfo.tickerid, kHtfTf, f_htfDir(), lookahead=barmerge.lookahead_on)
+bool   kHtfBuyOK  = i_kHtf == "Off" or na(kHtfDir) or kHtfDir < 0
+bool   kHtfSellOK = i_kHtf == "Off" or na(kHtfDir) or kHtfDir > 0
+f_wickOK(float h, float lo, float c, int dir) =>
+    float rng = h - lo
+    not i_kWick or rng <= 0 or (dir == 1 ? h - c : c - lo) <= rng * i_kWickPct / 100
+bool   kWickBuyOK  = f_wickOK(high, low, close, 1)
+bool   kWickSellOK = f_wickOK(high, low, close, -1)
+// order flow (buy − sell volume, % of volume, last i_ofLen candles) and strong one-way trend (ADX)
+float  kOfBv = close >= open ? volume : volume * (close - low)  / math.max(high - low, 0.0001)
+float  kOfSv = close <  open ? volume : volume * (high - close) / math.max(high - low, 0.0001)
+float  kOfD  = math.sum(kOfBv - kOfSv, i_ofLen) / math.max(math.sum(kOfBv + kOfSv, i_ofLen), 0.0001) * 100
+[kDiP, kDiM, kAdx] = ta.dmi(14, 14)
+// chart-candle ❖ use this candle · a 5m ❖ (lower TF) uses the last closed chart candle
+f_flowOK(int dir, int ago) =>
+    float d = kOfD[ago]
+    bool ofOK  = not i_kOfOn or na(d) or (dir == 1 ? d >= i_kOfMin : d <= -i_kOfMin)
+    bool adxOK = not (i_kAdxOn and kAdx[ago] >= i_kAdxMin) or (dir == 1 ? kDiP[ago] >= kDiM[ago] : kDiM[ago] >= kDiP[ago])
+    ofOK and adxOK
+bool   kFlowBuyOK   = f_flowOK(1, 0)
+bool   kFlowSellOK  = f_flowOK(-1, 0)
+bool   kFlowBuyOK1  = f_flowOK(1, 1)
+bool   kFlowSellOK1 = f_flowOK(-1, 1)
+
 // ❖ on lower-timeframe candles (option): the diamond still comes from the chart candle, the ❖ is the
 // first 1 / 3 / 5 min candle AFTER the diamond candle that confirms with the same rules
 // (its trend flips, or it closes beyond the diamond candle's high / low · Boys volume · OP side)
@@ -457,24 +505,30 @@ if kLtfOn and lCl.size() > 0
     for [j, c] in lCl
         bool up  = lUp.get(j)
         bool vOK = not i_ktrVolC or lRv.get(j) >= i_ktrVolM
-        if kBuyLive and kLtfBuy < 0 and vOK and (not ktrOpOn or na(ktr_op) or c > ktr_op) and
+        if kBuyLive and kLtfBuy < 0 and vOK and (not ktrOpOn or na(ktr_op) or c > ktr_op) and kHtfBuyOK and kFlowBuyOK1 and
+             f_wickOK(lHi.get(j), lLo.get(j), c, 1) and
              ((up and kLtfTr == -1) or c > ktrBuyHigh)
             kLtfBuy := j
-        if kSellLive and kLtfSell < 0 and vOK and (not ktrOpOn or na(ktr_op) or c < ktr_op) and
+        if kSellLive and kLtfSell < 0 and vOK and (not ktrOpOn or na(ktr_op) or c < ktr_op) and kHtfSellOK and kFlowSellOK1 and
+             f_wickOK(lHi.get(j), lLo.get(j), c, -1) and
              ((not up and kLtfTr == 1) or c < ktrSellLow)
             kLtfSell := j
         kLtfTr := up ? 1 : -1
 
-bool ktrEntryBuy  = kLtfOn ? kLtfBuy >= 0 :
-     ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and
+bool ktrSigBuy  = kLtfOn ? kLtfBuy >= 0 :
+     ktrShow and not ktrBuyDone  and bar_index - ktrBuyBar  <= i_ktrWin and ktrVolOK and ktrOpBuyOK and kHtfBuyOK and kWickBuyOK and kFlowBuyOK and
      (ktrFlipUp or (bar_index > ktrBuyBar  and close > ktrBuyHigh))
-bool ktrEntrySell = kLtfOn ? kLtfSell >= 0 :
-     ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and
+bool ktrSigSell = kLtfOn ? kLtfSell >= 0 :
+     ktrShow and not ktrSellDone and bar_index - ktrSellBar <= i_ktrWin and ktrVolOK and ktrOpSellOK and kHtfSellOK and kWickSellOK and kFlowSellOK and
      (ktrFlipDn or (bar_index > ktrSellBar and close < ktrSellLow))
-if ktrEntryBuy
+if ktrSigBuy
     ktrBuyDone := true
-if ktrEntrySell
+if ktrSigSell
     ktrSellDone := true
+// wait 1 candle (option): the ❖ counts on the next candle if it closes beyond the middle of the ❖ candle
+bool kHoldOn      = i_kHold and not kLtfOn
+bool ktrEntryBuy  = kHoldOn ? ktrSigBuy[1]  and close > (high[1] + low[1]) / 2 : ktrSigBuy
+bool ktrEntrySell = kHoldOn ? ktrSigSell[1] and close < (high[1] + low[1]) / 2 : ktrSigSell
 
 // ❖ price / time = the confirming LTF candle's close (chart candle's close when Off),
 // and the high / low of the chart candle's part after it — the trades check that part first on the next candle
