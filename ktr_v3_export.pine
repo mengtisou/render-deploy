@@ -43,6 +43,8 @@ indicator("KTR v3 + Export", overlay=false, max_boxes_count=500, max_lines_count
 // ⓪i ❖ OF THE DAY — Win / Loss + avg for the 1st, 2nd, 3rd and 4th+ ❖ trade of each
 //                 day, "only the first N ❖ a day" totals, and a day log with the dates.
 // 📆 PER MONTH   — W / L, pts, R and $ for every month (+ lot test $, 🎯 / ⛔ days).
+// ⛔ / 🎯 → NEXT DAY — W / L of the 1st and 2nd ❖ on the day after a ⛔ loss-limit
+//                 day and after a 🎯 target day, with the dates.
 // ⓪h AI EXPORT  — hidden 'AI …' Data Window columns for every ❖ trade (signal,
 //                 entry / TP / SL, features, WIN / LOSS label). Chart menu →
 //                 Export chart data → tools/ktr_ai_dataset.py → AI training table.
@@ -229,6 +231,8 @@ i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (
      tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
 i_moOn     = input.bool  (true,  "Per month row  (W / L, pts, $ for every month)", group=G0e,
      tooltip="Shows the average per month (≈ 21 trading days) and, on hover, every month: W / L, win rate, pts, R, $ at the start lot of ⓪j (0.01 when the lot test is off), the lot test $ (when on), 🎯 target / ⛔ loss-limit days and trading days. A trade counts in the month it closed. Uses the spread picked in ⓪b (●).")
+i_aftOn    = input.bool  (true,  "Day after ⛔ / 🎯: 1st + 2nd ❖ rows", group=G0e,
+     tooltip="Two rows: '⛔ → next day' and '🎯 → next day'. For the day right after a day that hit the ⛔ daily loss limit (or the 🎯 daily target), Win / Loss of that day's 1st ❖ trade and of its 2nd ❖ trade, with pts and win rate. Hover for the comparison with all days and the dates. Needs the daily limit ON (⓪b). 'Next day' = the next daily candle (Fri → Mon). Uses the spread picked in ⓪b (●).")
 i_nthLog   = input.bool  (true,  "❖ of the day: day log row  (date + result of each ❖ that day)", group=G0e,
      tooltip="Latest day with ❖ trades in the row; hover for the last 30 days, newest first: date, 1st / 2nd / 3rd … result and the day's pts. W = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running.")
 
@@ -825,6 +829,8 @@ f_aiRec(int ago, float code, float pts) =>
 
 // ❖ of the day (⓪i): the 1st / 2nd / 3rd / 4th+ ❖ trade of each day (picked spread) + a log per trade
 var int           kNthDay = 0                        // ❖ trades placed so far today
+var int           kPrevDay = 0                       // how the previous day ended: 0 normal · 1 ⛔ loss limit · 2 🎯 target
+var array<int>    kTrPrev  = array.new_int()         // per trade: kPrevDay of its day
 var array<int>    kNthW   = array.new_int(4, 0)      // [1st, 2nd, 3rd, 4th+]
 var array<int>    kNthL   = array.new_int(4, 0)
 var array<int>    kNthM   = array.new_int(4, 0)      // missed: pending order cancelled before it filled
@@ -947,6 +953,7 @@ if ktrNewDay and i_lotOn
             kLot := newLot
 
 if ktrNewDay
+    kPrevDay := kSt.get(kSel).dayWhy == "⛔ loss limit" ? 1 : kSt.get(kSel).dayWhy == "🎯 target hit" ? 2 : 0
     kDayId += 1
     kNthDay := 0
     for st in kSt
@@ -1554,6 +1561,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 if sc == kSel
                     kTrDay.push(time_tradingday)
                     kTrNth.push(0)
+                    kTrPrev.push(kPrevDay)
                     kTrCode.push(3)
                     kTrPts.push(0.0)
                     if i_kWLlab
@@ -1587,6 +1595,7 @@ if kTrack and barstate.isconfirmed and kDir != 0
                     kLotMaxU := math.max(kLotMaxU, kLot)
                     kTrDay.push(time_tradingday)
                     kTrNth.push(kNthDay)
+                    kTrPrev.push(kPrevDay)
                     kTrCode.push(9)
                     kTrPts.push(0.0)
                     aiTaken := 1
@@ -2224,6 +2233,53 @@ f_nthRow(int r, int sl) =>
          (sl == 0 ? "\nOnly the 1st ❖ each day: " + str.tostring(cp / kDaysN, "+#.#;-#.#") + " pts / day" : "") +
          (cnt > 0 ? "\n\nLatest (newest first):" + ls : "\nNo trade yet.")
     f_dRow(r, "❖ " + nm + " of day", v, CR, vc, size.tiny, tip)
+// day after a ⛔ / 🎯 day: 1st and 2nd ❖ of that day
+f_aftRow(int r, int typ) =>
+    array<int>   w  = array.new_int(2, 0)
+    array<int>   l  = array.new_int(2, 0)
+    array<int>   m  = array.new_int(2, 0)
+    array<float> pt = array.new_float(2, 0.0)
+    int    nd   = 0
+    int    last = -1
+    string ls   = ""
+    int    n    = kTrCode.size()
+    if n > 0
+        for i = n - 1 to 0
+            int nth = kTrNth.get(i)
+            if kTrPrev.get(i) == typ and nth >= 1 and nth <= 2
+                int c = kTrCode.get(i)
+                int s = nth - 1
+                if c == 1
+                    w.set(s, w.get(s) + 1)
+                else if c == -1
+                    l.set(s, l.get(s) + 1)
+                else if c == 0
+                    m.set(s, m.get(s) + 1)
+                pt.set(s, pt.get(s) + kTrPts.get(i))
+                int d = kTrDay.get(i)
+                if d != last
+                    nd   += 1
+                    last := d
+                    if nd <= 25
+                        ls += "\n" + str.format_time(d, "EEE dd MMM yy", "UTC") + "  "
+                if nd <= 25
+                    ls += "  " + f_nthTxt(nth) + " " + f_resTx(c, kTrPts.get(i), false)
+    string v   = "1st " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) +
+         " · 2nd " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1))
+    float  tp  = pt.get(0) + pt.get(1)
+    string nmT = typ == 1 ? "⛔ loss-limit" : "🎯 target"
+    string tip = "The day after a " + nmT + " day (" + str.tostring(nd) + " days) · spread " + str.tostring(kM.spr, "0.00") +
+         "\n1st ❖: " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) + " · " + str.tostring(pt.get(0), "+#;-#") + " pts" +
+         (m.get(0) > 0 ? " · " + str.tostring(m.get(0)) + " missed" : "") +
+         "\n2nd ❖: " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1)) + " · " + str.tostring(pt.get(1), "+#;-#") + " pts" +
+         (m.get(1) > 0 ? " · " + str.tostring(m.get(1)) + " missed" : "") +
+         "\n1st + 2nd: " + str.tostring(tp, "+#;-#") + " pts" + (nd > 0 ? " · " + str.tostring(tp / nd, "+#.#;-#.#") + " pts per such day" : "") +
+         "\n\nAll days for comparison: 1st " + str.tostring(kNthW.get(0)) + "W " + str.tostring(kNthL.get(0)) + "L" + f_wr(kNthW.get(0), kNthL.get(0)) +
+         " · 2nd " + str.tostring(kNthW.get(1)) + "W " + str.tostring(kNthL.get(1)) + "L" + f_wr(kNthW.get(1), kNthL.get(1)) +
+         (i_kDayOn ? "" : "\n⚠ Daily limit is OFF in ⓪b → there are no ⛔ / 🎯 days.") +
+         (nd > 0 ? "\n\nLatest (newest first):" + ls : "")
+    f_dRow(r, (typ == 1 ? "⛔" : "🎯") + " → next day", v, CR, nd == 0 ? CL : tp >= 0 ? KWIN : KLOSS, size.tiny, tip)
+
 f_dayLog(int r) =>
     string v   = "—"
     string tip = ""
@@ -2271,6 +2327,9 @@ if barstate.islast and i_showDash
             for sl = 0 to 3
                 if sl < 3 or kNthW.get(3) + kNthL.get(3) + kNthM.get(3) + kNthE.get(3) > 0
                     r := f_nthRow(r, sl)
+        if i_aftOn
+            r := f_aftRow(r, 1)
+            r := f_aftRow(r, 2)
         if i_nthLog
             r := f_dayLog(r)
         if i_wdOn
