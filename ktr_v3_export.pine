@@ -231,8 +231,8 @@ i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (
      tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
 i_moOn     = input.bool  (true,  "Per month row  (W / L, pts, $ for every month)", group=G0e,
      tooltip="Shows the average per month (≈ 21 trading days) and, on hover, every month: W / L, win rate, pts, R, $ at the start lot of ⓪j (0.01 when the lot test is off), the lot test $ (when on), 🎯 target / ⛔ loss-limit days and trading days. A trade counts in the month it closed. Uses the spread picked in ⓪b (●).")
-i_aftOn    = input.bool  (true,  "Day after ⛔ / 🎯: 1st + 2nd ❖ rows", group=G0e,
-     tooltip="Two rows: '⛔ → next day' and '🎯 → next day'. For the day right after a day that hit the ⛔ daily loss limit (or the 🎯 daily target), Win / Loss of that day's 1st ❖ trade and of its 2nd ❖ trade, with pts and win rate. Hover for the comparison with all days and the dates. Needs the daily limit ON (⓪b). 'Next day' = the next daily candle (Fri → Mon). Uses the spread picked in ⓪b (●).")
+i_aftOn    = input.bool  (true,  "Day after ⛔ / 🎯: 1st / 2nd / 3rd ❖ rows", group=G0e,
+     tooltip="Two rows: '⛔ → next day' and '🎯 → next day'. For the day right after a day that hit the ⛔ daily loss limit (or the 🎯 daily target), Win / Loss of that day's 1st, 2nd and 3rd ❖ trade, and how often the 1st and 2nd both lost ('L+L') and what the 3rd ❖ did then. Hover for pts, the comparison with all days, the W/L patterns and the dates. Needs the daily limit ON (⓪b). 'Next day' = the next daily candle (Fri → Mon). Uses the spread picked in ⓪b (●).")
 i_nthLog   = input.bool  (true,  "❖ of the day: day log row  (date + result of each ❖ that day)", group=G0e,
      tooltip="Latest day with ❖ trades in the row; hover for the last 30 days, newest first: date, 1st / 2nd / 3rd … result and the day's pts. W = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running.")
 
@@ -2233,21 +2233,35 @@ f_nthRow(int r, int sl) =>
          (sl == 0 ? "\nOnly the 1st ❖ each day: " + str.tostring(cp / kDaysN, "+#.#;-#.#") + " pts / day" : "") +
          (cnt > 0 ? "\n\nLatest (newest first):" + ls : "\nNo trade yet.")
     f_dRow(r, "❖ " + nm + " of day", v, CR, vc, size.tiny, tip)
-// day after a ⛔ / 🎯 day: 1st and 2nd ❖ of that day
+// day after a ⛔ / 🎯 day: 1st, 2nd and 3rd ❖ of that day + patterns (1st L and 2nd L → 3rd?)
+f_aftDay(array<int> pat, int c1, int c2, int c3) =>
+    // pat: [WW, WL, LW, LL, LL→3rd W, LL→3rd L, LL→no 3rd]
+    if c1 == 1 or c1 == -1
+        if c2 == 1 or c2 == -1
+            int k = (c1 == 1 ? 0 : 2) + (c2 == 1 ? 0 : 1)
+            pat.set(k, pat.get(k) + 1)
+            if k == 3
+                int j = c3 == 1 ? 4 : c3 == -1 ? 5 : 6
+                pat.set(j, pat.get(j) + 1)
+    pat
 f_aftRow(int r, int typ) =>
-    array<int>   w  = array.new_int(2, 0)
-    array<int>   l  = array.new_int(2, 0)
-    array<int>   m  = array.new_int(2, 0)
-    array<float> pt = array.new_float(2, 0.0)
+    array<int>   w   = array.new_int(3, 0)
+    array<int>   l   = array.new_int(3, 0)
+    array<int>   m   = array.new_int(3, 0)
+    array<float> pt  = array.new_float(3, 0.0)
+    array<int>   pat = array.new_int(7, 0)
     int    nd   = 0
     int    last = -1
+    int    c1   = 9
+    int    c2   = 9
+    int    c3   = 9
     string ls   = ""
     string dayS = ""
     int    n    = kTrCode.size()
     if n > 0
         for i = n - 1 to 0
             int nth = kTrNth.get(i)
-            if kTrPrev.get(i) == typ and nth >= 1 and nth <= 2
+            if kTrPrev.get(i) == typ and nth >= 1 and nth <= 3
                 int c = kTrCode.get(i)
                 int s = nth - 1
                 if c == 1
@@ -2259,28 +2273,47 @@ f_aftRow(int r, int typ) =>
                 pt.set(s, pt.get(s) + kTrPts.get(i))
                 int d = kTrDay.get(i)
                 if d != last
-                    if nd > 0 and nd <= 25
-                        ls += "\n" + str.format_time(last, "EEE dd MMM yy", "UTC") + "   " + dayS
+                    if nd > 0
+                        f_aftDay(pat, c1, c2, c3)
+                        if nd <= 25
+                            ls += "\n" + str.format_time(last, "EEE dd MMM yy", "UTC") + "   " + dayS
                     nd   += 1
                     last := d
                     dayS := ""
-                // newest first → put the earlier ❖ of the day in front (1st before 2nd)
+                    c1   := 9
+                    c2   := 9
+                    c3   := 9
+                if nth == 1
+                    c1 := c
+                else if nth == 2
+                    c2 := c
+                else
+                    c3 := c
+                // newest first → put the earlier ❖ of the day in front (1st · 2nd · 3rd)
                 dayS := f_nthTxt(nth) + " " + f_resTx(c, kTrPts.get(i), false) + (dayS == "" ? "" : "  ·  " + dayS)
-        if nd > 0 and nd <= 25
-            ls += "\n" + str.format_time(last, "EEE dd MMM yy", "UTC") + "   " + dayS
+        if nd > 0
+            f_aftDay(pat, c1, c2, c3)
+            if nd <= 25
+                ls += "\n" + str.format_time(last, "EEE dd MMM yy", "UTC") + "   " + dayS
     string v   = "1st " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) +
-         " · 2nd " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1))
-    float  tp  = pt.get(0) + pt.get(1)
+         " · 2nd " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1)) +
+         " · 3rd " + str.tostring(w.get(2)) + "W " + str.tostring(l.get(2)) + "L" + f_wr(w.get(2), l.get(2)) +
+         " · L+L " + str.tostring(pat.get(3)) + "×"
+    float  tp  = pt.get(0) + pt.get(1) + pt.get(2)
     string nmT = typ == 1 ? "⛔ loss-limit" : "🎯 target"
-    string tip = "The day after a " + nmT + " day (" + str.tostring(nd) + " days) · spread " + str.tostring(kM.spr, "0.00") +
-         "\n1st ❖: " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) + " · " + str.tostring(pt.get(0), "+#;-#") + " pts" +
-         (m.get(0) > 0 ? " · " + str.tostring(m.get(0)) + " missed" : "") +
-         "\n2nd ❖: " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1)) + " · " + str.tostring(pt.get(1), "+#;-#") + " pts" +
-         (m.get(1) > 0 ? " · " + str.tostring(m.get(1)) + " missed" : "") +
-         "\n1st + 2nd: " + str.tostring(tp, "+#;-#") + " pts" + (nd > 0 ? " · " + str.tostring(tp / nd, "+#.#;-#.#") + " pts per such day" : "") +
-         "\n\nAll days for comparison: 1st " + str.tostring(kNthW.get(0)) + "W " + str.tostring(kNthL.get(0)) + "L" + f_wr(kNthW.get(0), kNthL.get(0)) +
-         " · 2nd " + str.tostring(kNthW.get(1)) + "W " + str.tostring(kNthL.get(1)) + "L" + f_wr(kNthW.get(1), kNthL.get(1)) +
-         (i_kDayOn ? "" : "\n⚠ Daily limit is OFF in ⓪b → there are no ⛔ / 🎯 days.") +
+    string tip = "The day after a " + nmT + " day (" + str.tostring(nd) + " days) · spread " + str.tostring(kM.spr, "0.00")
+    for k = 0 to 2
+        tip += "\n" + f_nthTxt(k + 1) + " ❖: " + str.tostring(w.get(k)) + "W " + str.tostring(l.get(k)) + "L" + f_wr(w.get(k), l.get(k)) +
+             " · " + str.tostring(pt.get(k), "+#;-#") + " pts" + (m.get(k) > 0 ? " · " + str.tostring(m.get(k)) + " missed" : "") +
+             " · all days: " + str.tostring(kNthW.get(k)) + "W " + str.tostring(kNthL.get(k)) + "L" + f_wr(kNthW.get(k), kNthL.get(k))
+    tip += "\n1st + 2nd + 3rd: " + str.tostring(tp, "+#;-#") + " pts" + (nd > 0 ? " · " + str.tostring(tp / nd, "+#.#;-#.#") + " pts per such day" : "") +
+         "\n\n1st and 2nd (days with both closed W / L):" +
+         "\n  1st W · 2nd W: " + str.tostring(pat.get(0)) + " days" +
+         "\n  1st W · 2nd L: " + str.tostring(pat.get(1)) + " days" +
+         "\n  1st L · 2nd W: " + str.tostring(pat.get(2)) + " days" +
+         "\n  1st L · 2nd L: " + str.tostring(pat.get(3)) + " days  →  3rd ❖ then: " + str.tostring(pat.get(4)) + "W " +
+         str.tostring(pat.get(5)) + "L" + f_wr(pat.get(4), pat.get(5)) + (pat.get(6) > 0 ? " · no 3rd trade " + str.tostring(pat.get(6)) + "×" : "") +
+         (i_kDayOn ? "\n(daily limit −" + str.tostring(i_kDaySl, "#") + " pts can stop the day before a 3rd ❖)" : "\n⚠ Daily limit is OFF in ⓪b → there are no ⛔ / 🎯 days.") +
          (nd > 0 ? "\n\nLatest (newest first):" + ls : "")
     f_dRow(r, (typ == 1 ? "⛔" : "🎯") + " → next day", v, CR, nd == 0 ? CL : tp >= 0 ? KWIN : KLOSS, size.tiny, tip)
 
