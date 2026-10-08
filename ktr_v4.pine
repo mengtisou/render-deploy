@@ -168,9 +168,10 @@ i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
-i_lotOn    = input.bool  (false, "Lot test: + start lot after a ⛔ day, back after 🎯", group=G0b,
-     tooltip="Test only ($, nothing changes on the chart): after a day that hit the ⛔ daily loss limit the next day's lot = lot + start lot (0.01 → 0.02 …) up to the max lot; after a 🎯 target day it goes back to the start lot; other days keep it. Shown in the ❖ Net hover and the summary log next to the fixed start lot. $ = pts × 1 point price × 100 oz × lot.")
+i_lotOn    = input.bool  (false, "Lot test: bigger lot after a ⛔ day, back after 🎯", group=G0b,
+     tooltip="Test only ($, nothing changes on the chart): after a day that hit the ⛔ daily loss limit the next day's lot = lot + 'add after a ⛔ day' (e.g. 0.02 → 0.03) up to the max lot; after a 🎯 target day it goes back to the start lot; other days keep it. Shown in the ❖ Net hover and the summary log next to the fixed start lot. $ = pts × 1 point price × 100 oz × lot.")
 i_lotBase  = input.float (0.01,  "Lot test: start lot",               group=G0b, minval=0.01, step=0.01)
+i_lotStep  = input.float (0.01,  "Lot test: add after a ⛔ day",       group=G0b, minval=0.01, step=0.01)
 i_lotMax   = input.float (0.02,  "Lot test: max lot",                 group=G0b, minval=0.01, step=0.01)
 i_kBeOn    = input.bool  (false, "Break-even: move SL after +X pts",  group=G0b,
      tooltip="Once a live trade has been at least +X pts in profit (checked at the close of each candle, on the price it can exit at), its SL moves to the entry + 'lock' pts. If price then comes back to it, the trade ends at that price: not a LOSS, counted as 'closed early' (BE) with its pts. TP stays the same. Compare ❖ Net with this ON and OFF.")
@@ -1071,7 +1072,7 @@ var int kChartTm = time         // first candle loaded on the chart
 
 if ktrNewDay
     kPrevDay := kSt.get(kSel).dayWhy == "⛔ loss limit" ? 1 : kSt.get(kSel).dayWhy == "🎯 target hit" ? 2 : 0
-    kLot     := kPrevDay == 1 ? math.min(math.round(kLot + i_lotBase, 2), i_lotMax) : kPrevDay == 2 ? i_lotBase : kLot
+    kLot     := kPrevDay == 1 ? math.min(math.round(kLot + i_lotStep, 2), i_lotMax) : kPrevDay == 2 ? i_lotBase : kLot
     kDayId += 1
     kNthDay := 0
     for st in kSt
@@ -1844,7 +1845,7 @@ string kNetTip = "1R = SL = " + kSlTxt + " pts → a WIN is +" + str.tostring(i_
      "\n= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
      "\nSpread " + str.tostring(kM.spr, "0.00") + " is already inside the W / L (BUY opens on the ask, SELL closes on the ask)" +
      "\n\nDD = " + f_ddTx() + "\n(closed trades; open trades can go a bit deeper — keep extra room)" +
-     "\nLot test (+" + str.tostring(i_lotBase, "0.00") + " after ⛔, back after 🎯, max " + str.tostring(i_lotMax, "0.00") + "): " + f_lotTx()
+     "\nLot test (+" + str.tostring(i_lotStep, "0.00") + " after ⛔, back after 🎯, max " + str.tostring(i_lotMax, "0.00") + "): " + f_lotTx()
 
 // one dashboard row per spread: W / L and Net
 f_sprRow(int r, int sc) =>
@@ -2507,7 +2508,7 @@ if barstate.islast and i_showDash
         r := f_dRow(r, "❖ Avg / day",  kAvgStr, CH, kNetPts >= 0 ? KWIN : KLOSS, size.tiny, kAvgTip)
         if i_lotOn
             r := f_dRow(r, "💰 Lot test", f_lotTx(), CH, kLotSt.get(0) >= 0 ? KWIN : KLOSS, size.tiny,
-                 "Lot +" + str.tostring(i_lotBase, "0.00") + " after a ⛔ day (max " + str.tostring(i_lotMax, "0.00") + "), back to " +
+                 "Lot +" + str.tostring(i_lotStep, "0.00") + " after a ⛔ day (max " + str.tostring(i_lotMax, "0.00") + "), back to " +
                  str.tostring(i_lotBase, "0.00") + " after a 🎯 day · first $ = with this rule, 'vs fixed' = same trades at a fixed start lot · DD = biggest drop")
         if i_moOn
             r := f_moRow(r)
