@@ -168,6 +168,10 @@ i_kDayOn   = input.bool  (true,  "Daily limit",                       group=G0b,
      tooltip="Stop for the day once the day's closed ❖ trades reach the profit target or the loss limit: no new ❖ trades and pending orders are cancelled until the next daily candle. Trades already open still run to their own TP / SL.")
 i_kDayTp   = input.float (400,   "Daily profit target (points)",      group=G0b, minval=1, step=50)
 i_kDaySl   = input.float (300,   "Daily loss limit (points)",         group=G0b, minval=1, step=50)
+i_lotOn    = input.bool  (false, "Lot test: + start lot after a ⛔ day, back after 🎯", group=G0b,
+     tooltip="Test only ($, nothing changes on the chart): after a day that hit the ⛔ daily loss limit the next day's lot = lot + start lot (0.01 → 0.02 …) up to the max lot; after a 🎯 target day it goes back to the start lot; other days keep it. Shown in the ❖ Net hover and the summary log next to the fixed start lot. $ = pts × 1 point price × 100 oz × lot.")
+i_lotBase  = input.float (0.01,  "Lot test: start lot",               group=G0b, minval=0.01, step=0.01)
+i_lotMax   = input.float (0.02,  "Lot test: max lot",                 group=G0b, minval=0.01, step=0.01)
 i_kBeOn    = input.bool  (false, "Break-even: move SL after +X pts",  group=G0b,
      tooltip="Once a live trade has been at least +X pts in profit (checked at the close of each candle, on the price it can exit at), its SL moves to the entry + 'lock' pts. If price then comes back to it, the trade ends at that price: not a LOSS, counted as 'closed early' (BE) with its pts. TP stays the same. Compare ❖ Net with this ON and OFF.")
 i_kBePts   = input.float (100,   "Break-even after + (pts)",          group=G0b, minval=10, step=10)
@@ -260,8 +264,6 @@ i_repOn    = input.bool  (true,  "🔬 Filter report row  (what the ❖ filters 
      tooltip="Runs the v3 ❖ (same KTR rules, no ❖ filters) in the background and compares them with the filtered v4 ❖, using one SIMPLE trade test for both: entry at the ❖ close (BUY + spread), TP / SL as in ⓪b, no pending order, no daily limit, no other rules. Shows how many ❖ each filter removed and how those removed ❖ would have ended — if they are mostly LOSSES the filter helps, if mostly WINS it hurts. Numbers differ from the main Win / Loss rows because those use your full settings. Chart-candle ❖ only (not with 'confirm on lower TF').")
 i_aftOn    = input.bool  (true,  "Day after ⛔ / 🎯: 1st / 2nd / 3rd ❖ rows", group=G0e,
      tooltip="Two rows: '⛔ → next day' and '🎯 → next day'. For the day right after a day that hit the ⛔ daily loss limit (or the 🎯 daily target), Win / Loss of that day's 1st, 2nd and 3rd ❖ trade, and how often the 1st and 2nd both lost ('L+L') and what the 3rd ❖ did then. Hover for pts, the comparison with all days, the W/L patterns and the dates. Needs the daily limit ON (⓪b). 'Next day' = the next daily candle (Fri → Mon). Uses the spread picked in ⓪b (●).")
-i_nthLog   = input.bool  (true,  "❖ of the day: day log row  (date + result of each ❖ that day)", group=G0e,
-     tooltip="Latest day with ❖ trades in the row; hover for the last 30 days, newest first: date, 1st / 2nd / 3rd … result and the day's pts. W = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running.")
 
 
 
@@ -858,6 +860,7 @@ type KtrTrade
     int    sesId  = -1         // session (kSesId) the ❖ printed in
     bool   be     = false      // break-even: SL already moved
     float  tpPts  = 200.0      // TP of this trade in pts (London can have its own)
+    float  lot    = na         // lot test: lot of the day it was placed (picked spread)
 
 // results for one spread
 type KtrStats
@@ -972,6 +975,8 @@ bool   kSesOkNow = f_sesOk(kSesNow)
 
 // ❖ of the day (⓪i): the 1st / 2nd / 3rd / 4th+ ❖ trade of each day (picked spread) + a log per trade
 var int           kNthDay = 0                        // ❖ trades placed so far today
+var float         kLot     = i_lotBase               // lot test: lot for ❖ placed today
+var array<float>  kLotSt   = array.new_float(4, 0.0) // lot test: [$ result, its peak, its max drawdown, biggest lot used]
 var int           kPrevDay = 0                       // how the previous day ended: 0 normal · 1 ⛔ loss limit · 2 🎯 target
 var array<int>    kTrPrev  = array.new_int()         // per trade: kPrevDay of its day
 // 🧪 breakdown: per trade (same index as kTrCode) the group of each feature at the ❖
@@ -992,6 +997,11 @@ var array<int>    kTrNth  = array.new_int()          // per trade: 1st, 2nd … 
 var array<int>    kTrCode = array.new_int()          // per trade: 1 WIN · -1 LOSS · 0 missed · 2 closed early · 9 open
 var array<float>  kTrPts  = array.new_float()
 f_nthRec(KtrTrade t, int code, float pts) =>
+    if i_lotOn and not na(t.lot) and code != 0
+        float b = kLotSt.get(0) + pts * i_kPtVal * 100 * t.lot
+        kLotSt.set(0, b)
+        kLotSt.set(1, math.max(kLotSt.get(1), b))
+        kLotSt.set(2, math.max(kLotSt.get(2), kLotSt.get(1) - b))
     if t.tid >= 0
         int sl = math.min(t.nth, 4) - 1
         if code == 1
@@ -1061,6 +1071,7 @@ var int kChartTm = time         // first candle loaded on the chart
 
 if ktrNewDay
     kPrevDay := kSt.get(kSel).dayWhy == "⛔ loss limit" ? 1 : kSt.get(kSel).dayWhy == "🎯 target hit" ? 2 : 0
+    kLot     := kPrevDay == 1 ? math.min(math.round(kLot + i_lotBase, 2), i_lotMax) : kPrevDay == 2 ? i_lotBase : kLot
     kDayId += 1
     kNthDay := 0
     for st in kSt
@@ -1697,6 +1708,8 @@ if kTrack and barstate.isconfirmed and kDir != 0
                 if sc == kSel
                     kNthDay  += 1
                     kNew.nth := kNthDay
+                    kNew.lot := kLot
+                    kLotSt.set(3, math.max(kLotSt.get(3), kLot))
                     kNew.tid := kTrCode.size()
                     kTrDay.push(time_tradingday)
                     kTrNth.push(kNthDay)
@@ -1779,6 +1792,11 @@ var float kPk = 0.0
 var float kDD = 0.0
 kPk := math.max(kPk, kM.net)
 kDD := math.max(kDD, kPk - kM.net)
+f_lotTx() =>
+    not i_lotOn ? "off" : "$" + str.tostring(kLotSt.get(0), "+#,##0.##;-#,##0.##") + " · DD $" + str.tostring(kLotSt.get(2), "#,##0.##") +
+     "  vs fixed " + str.tostring(i_lotBase, "0.00") + ": $" + str.tostring(kM.net * i_kPtVal * 100 * i_lotBase, "+#,##0.##;-#,##0.##") +
+     " · DD $" + str.tostring(kDD * i_kPtVal * 100 * i_lotBase, "#,##0.##") + " · biggest lot " + str.tostring(kLotSt.get(3), "0.00") +
+     " · lot now " + str.tostring(kLot, "0.00")
 f_ddTx() =>
     "max drawdown " + str.tostring(kDD / i_kSlPts, "#.#") + "R = $" + str.tostring(kDD * i_kPtVal * 100 * 0.01, "#,##0") + " at 0.01 lot · $" +
      str.tostring(kDD * i_kPtVal * 100 * 0.10, "#,##0") + " at 0.10 · biggest safe lot for 12% of 10K ≈ " +
@@ -1825,7 +1843,8 @@ string kNetTip = "1R = SL = " + kSlTxt + " pts → a WIN is +" + str.tostring(i_
      " = " + str.tostring(kNetPts, "+#.##;-#.##") + " pts" +
      "\n= " + str.tostring(kNetPts * i_kPtVal, "+#.##;-#.##") + " in price  (1 pt = " + str.tostring(i_kPtVal) + ")" +
      "\nSpread " + str.tostring(kM.spr, "0.00") + " is already inside the W / L (BUY opens on the ask, SELL closes on the ask)" +
-     "\n\nDD = " + f_ddTx() + "\n(closed trades; open trades can go a bit deeper — keep extra room)"
+     "\n\nDD = " + f_ddTx() + "\n(closed trades; open trades can go a bit deeper — keep extra room)" +
+     "\nLot test (+" + str.tostring(i_lotBase, "0.00") + " after ⛔, back after 🎯, max " + str.tostring(i_lotMax, "0.00") + "): " + f_lotTx()
 
 // one dashboard row per spread: W / L and Net
 f_sprRow(int r, int sc) =>
@@ -2433,31 +2452,6 @@ f_aftRow(int r, int typ) =>
          (nd > 0 ? "\n\nLatest (newest first):" + ls : "")
     f_dRow(r, (typ == 1 ? "⛔" : "🎯") + " → next day", v, CR, nd == 0 ? CL : tp >= 0 ? KWIN : KLOSS, size.tiny, tip)
 
-f_dayLog(int r) =>
-    string v   = "—"
-    string tip = ""
-    int    nd  = 0
-    int    i   = kTrCode.size() - 1
-    while i >= 0 and nd < 30
-        int    d    = kTrDay.get(i)
-        string full = ""
-        string shrt = ""
-        float  dp   = 0.0
-        while i >= 0
-            if kTrDay.get(i) != d
-                break
-            full := (kTrNth.get(i) > 0 ? f_nthTxt(kTrNth.get(i)) + " " : "") + f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (full == "" ? "" : " · " + full)
-            shrt := f_resTx(kTrCode.get(i), kTrPts.get(i), false) + (shrt == "" ? "" : " · " + shrt)
-            dp   += kTrPts.get(i)
-            i    -= 1
-        string dt = str.format_time(d, "EEE dd MMM", "UTC")
-        if nd == 0
-            v := dt + ": " + shrt + " = " + str.tostring(dp, "+#;-#") + " pts"
-        tip := tip + "\n" + dt + "   " + full + "   = " + str.tostring(dp, "+#;-#") + " pts"
-        nd  += 1
-    f_dRow(r, "📅 Day log", v, CR, CL, size.tiny, "❖ trades per day, newest first (last " + str.tostring(nd) + " days with a ❖ trade) · spread " +
-         str.tostring(kM.spr, "0.00") + "\nW = win · L = loss · M = missed (pending not filled) · C = closed early · open = still running · skip = ❖ skipped after SL in a row" + tip)
-
 if barstate.islast and i_showDash
     int r = 0
     r := f_dRow(r, "KTR", syminfo.ticker, CH, color.white, size.small, "")
@@ -2487,8 +2481,6 @@ if barstate.islast and i_showDash
         if i_aftOn
             r := f_aftRow(r, 1)
             r := f_aftRow(r, 2)
-        if i_nthLog
-            r := f_dayLog(r)
         if i_wdOn
             for i = 0 to 4
                 r := f_wdRow(r, i)
@@ -2566,7 +2558,7 @@ if i_sumLog and barstate.islastconfirmedhistory
              str.tostring(kMoL.get(i)) + "L · " + str.tostring(kMoPts.get(i), "+#;-#") + " pts · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i))
     string rep = "=== KTR v4 SUMMARY · " + syminfo.ticker + " " + timeframe.period + " · " + kPerStr + " ===" +
          "\nEntry: " + kEntStr + " · " + kTpSlStr + " · daily limit " + (i_kDayOn ? "+" + str.tostring(i_kDayTp, "#") + "/-" + str.tostring(i_kDaySl, "#") : "off") +
-         "\nFilters: " + fl + "\nWin/Loss: " + kWLStr + "\nNet: " + kNetStr + "\nDrawdown: " + f_ddTx() + "\nAvg/day: " + kAvgStr +
+         "\nFilters: " + fl + "\nWin/Loss: " + kWLStr + "\nNet: " + kNetStr + "\nDrawdown: " + f_ddTx() + "\nLot test: " + f_lotTx() + "\nAvg/day: " + kAvgStr +
          "\n" + bt + "\n\n🔬 FILTERS: " + kRepStr + "\n" + kRepTip + "\n\n📆 MONTHS" + mo + "\n=== END ==="
     for ln in str.split(rep, "\n")
         if str.length(ln) > 0
