@@ -250,6 +250,8 @@ i_nthOn    = input.bool  (true,  "❖ of the day: 1st / 2nd / 3rd / 4th+ rows  (
      tooltip="Numbers the ❖ trades of each day in the order they were placed (1st, 2nd, 3rd, 4th or later) and shows Win / Loss, win rate, pts and the average pts per trade for each. Hover a row for the dates, and for 'only the first N ❖ each day' totals (= what you would get if you stopped after the 1st / 2nd / 3rd ❖ of the day). Only ❖ that became a trade or a pending order count: ❖ skipped by the daily limit, session OFF, news, prop limits or the hedging rule get no number. A day = the chart's daily candle (same as OP). Uses the spread picked in ⓪b (●).")
 i_moOn     = input.bool  (true,  "Per month row  (W / L, pts, $ for every month)", group=G0e,
      tooltip="Shows the average per month (≈ 21 trading days) and, on hover, every month: W / L, win rate, pts, R, $ at 0.01 lot, 🎯 target / ⛔ loss-limit days and trading days. A trade counts in the month it closed. Uses the spread picked in ⓪b (●).")
+i_sumLog   = input.bool  (true,  "📋 Summary report in Pine Logs  (copy all results at once)", group=G0e,
+     tooltip="Writes all results once into Pine Logs (indicator ⋯ menu → Pine Logs): settings, Win / Loss, Net, Avg / day, the 🧪 Breakdown, the 🔬 Filters report and every month — about 50 short lines. Copy them in one go and paste them in the chat instead of many screenshots. Written again each time the chart reloads or a setting changes.")
 i_brkOn    = input.bool  (true,  "🧪 Breakdown row  (W / L by type, session, trend, flow …)", group=G0e,
      tooltip="Every closed ❖ trade of the picked spread (WIN / LOSS) grouped by: diamond type, BUY / SELL, session, 1st / 2nd / 3rd / 4th+ ❖ of the day, with / against the 1H trend, order flow with / against, ADX (weak / strong with / strong against), and location vs OP in KTR steps (cheap = BUY below OP / SELL above OP). Each line: W / L, win rate, pts and R. Values are taken when the ❖ printed.")
 i_repOn    = input.bool  (true,  "🔬 Filter report row  (what the ❖ filters removed)", group=G0e,
@@ -2222,7 +2224,7 @@ var array<string> kBrkNm = array.from("Reversal ◇", "Continuation ◇", "Micro
      "With 1H trend", "Against 1H trend", "Order flow with ❖", "Order flow against ❖",
      "ADX weak (ranging)", "ADX strong, ❖ with it", "ADX strong, ❖ against it",
      "Cheap: > 1 step past OP", "Cheap: 0–1 step", "Expensive: 0–1 step", "Expensive: > 1 step (chasing)")
-f_brkRow(int r) =>
+f_brkTip() =>
     array<int>   w = array.new_int(24, 0)
     array<int>   l = array.new_int(24, 0)
     array<float> p = array.new_float(24, 0.0)
@@ -2258,6 +2260,9 @@ f_brkRow(int r) =>
     string v = "Rev " + str.tostring(w.get(0)) + "W " + str.tostring(l.get(0)) + "L" + f_wr(w.get(0), l.get(0)) +
          " · Cont " + str.tostring(w.get(1)) + "W " + str.tostring(l.get(1)) + "L" + f_wr(w.get(1), l.get(1)) +
          " · Micro " + str.tostring(w.get(2)) + "W " + str.tostring(l.get(2)) + "L" + f_wr(w.get(2), l.get(2))
+    [v, tip]
+f_brkRow(int r) =>
+    [v, tip] = f_brkTip()
     f_dRow(r, "🧪 Breakdown", v, CH, CL, size.tiny, tip + "\n\nHover-only list; small groups (< 20 trades) are not reliable.")
 
 // 🔬 filter report row
@@ -2530,3 +2535,25 @@ if barstate.islast
          text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 100))
     table.cell(tPaneBot, 0, 0, ktrUp ? "BULLISHNESS" : "BEARISHNESS",
          text_color=color.yellow, text_size=size.normal, bgcolor=color.new(color.black, 100))
+
+// 📋 summary report in Pine Logs (once, on the last historical candle)
+if i_sumLog and barstate.islastconfirmedhistory
+    [bv, bt] = f_brkTip()
+    string fl = "HTF " + i_kHtf + (i_kWick ? " · wick " + str.tostring(i_kWickPct) + "%" : "") + (i_kHold ? " · wait 1 candle" : "") +
+         (i_kOfOn ? " · order flow " + str.tostring(i_kOfMin) + "%" : "") + (i_kAdxOn ? " · ADX " + str.tostring(i_kAdxMin) : "") +
+         " · types " + (i_tRev ? "R" : "-") + (i_tCon ? "C" : "-") + (i_tMic ? "M" : "-") + " · BE " + (i_kBeOn ? str.tostring(i_kBePts, "#") + "+" + str.tostring(i_kBeLock, "#") : "off") +
+         " · skip after SL " + (i_kSkOn ? str.tostring(i_kSkN) + "/" + str.tostring(i_kSkM) : "off") + " · per session " + i_kSesLim
+    string mo = ""
+    for i = 0 to math.max(kMoKey.size() - 1, 0)
+        if i >= kMoKey.size()
+            break
+        int k = kMoKey.get(i)
+        mo += "\n" + kMoNm.get(k % 12) + " " + str.tostring(math.floor(k / 12) % 100, "00") + ": " + str.tostring(kMoW.get(i)) + "W " +
+             str.tostring(kMoL.get(i)) + "L · " + str.tostring(kMoPts.get(i), "+#;-#") + " pts · 🎯" + str.tostring(kMoTg.get(i)) + " ⛔" + str.tostring(kMoLs.get(i))
+    string rep = "=== KTR v4 SUMMARY · " + syminfo.ticker + " " + timeframe.period + " · " + kPerStr + " ===" +
+         "\nEntry: " + kEntStr + " · " + kTpSlStr + " · daily limit " + (i_kDayOn ? "+" + str.tostring(i_kDayTp, "#") + "/-" + str.tostring(i_kDaySl, "#") : "off") +
+         "\nFilters: " + fl + "\nWin/Loss: " + kWLStr + "\nNet: " + kNetStr + "\nAvg/day: " + kAvgStr +
+         "\n" + bt + "\n\n🔬 FILTERS: " + kRepStr + "\n" + kRepTip + "\n\n📆 MONTHS" + mo + "\n=== END ==="
+    for ln in str.split(rep, "\n")
+        if str.length(ln) > 0
+            log.info(ln)
